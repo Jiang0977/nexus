@@ -4,15 +4,32 @@
 
 **跨设备 AI 终端桥接 · 专为 Claude Code 打造 · 移动端优先**
 
-![Node.js](https://cdn.gooo.ai/web-images/d61f1cb1b9434e10af05e6d6059fab3cbaafd20ac16cc6d35b6a6502fe8e1eb2)
-
-![React](https://cdn.gooo.ai/web-images/20f0c4badbfb4abe840d2fe64cc77c73c5dc796d8f0a6cdc56823f95edd72294)
-
-![License](https://cdn.gooo.ai/web-images/0f4a900586ad7dffbe8cc55b99351cdb657c326f85e349440750be2ce3a7111e)
-
-![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
+<p align="center">
+  <img src="https://cdn.gooo.ai/web-images/d61f1cb1b9434e10af05e6d6059fab3cbaafd20ac16cc6d35b6a6502fe8e1eb2" alt="Node.js" />
+  <img src="https://cdn.gooo.ai/web-images/20f0c4badbfb4abe840d2fe64cc77c73c5dc796d8f0a6cdc56823f95edd72294" alt="React" />
+  <img src="https://cdn.gooo.ai/web-images/0f4a900586ad7dffbe8cc55b99351cdb657c326f85e349440750be2ce3a7111e" alt="License" />
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" />
+</p>
 
 **English** | [中文](#%E4%B8%AD%E6%96%87)
+
+---
+
+### Showcase
+
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/083495f7-d840-4733-9307-eaa815c2756f" width="45%" controls muted align="center">
+    Your browser does not support the video tag.
+  </video>
+</p>
+
+---
+
+### Join Discussion
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/984ae5a2-7a88-45bf-b77a-20545c5c1bc1" width="250" />
+</p>
 
 ---
 
