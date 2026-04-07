@@ -773,6 +773,7 @@ export default function Terminal({ token }: Props) {
       cursorBlink: true,
       cursorInactiveStyle: 'block',
       allowProposedApi: true,
+      screenReaderMode: true,
     })
 
     const fitAddon = new FitAddon()
@@ -807,12 +808,21 @@ export default function Terminal({ token }: Props) {
     const screen = container.querySelector('.xterm-screen') as HTMLElement
     if (screen) screen.style.userSelect = 'text'
 
-    // PC端：全局键盘捕获，确保所有快捷键直通终端（除白名单外）
+    // PC端：全局键盘捕获，仅拦截特殊键和快捷键；可打印字符走 xterm 原生路径（支持 IME）
     function onGlobalKeyDown(e: KeyboardEvent) {
+      // IME 组合输入期间不拦截
+      if (e.isComposing) return
+
       // 仅在PC宽屏模式且没有打开弹层时处理
       if (window.innerWidth < 768) return
       const anyOverlayOpen = showSessionDrawer || showSettings || showGeneralSettings || showNewSession || showNewWindow || showScrollback || showSessionManagerV2 || showFiles
       if (anyOverlayOpen) return
+
+      // 可打印字符（无修饰键）：不拦截，让 xterm 原生处理 → onData 回调发送
+      // 这样浏览器 IME 才能正常工作（compositionstart → compositionend → onData）
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        return
+      }
 
       // 白名单：这些快捷键保留给浏览器/应用使用
       const whitelist = [
@@ -838,16 +848,13 @@ export default function Terminal({ token }: Props) {
 
       if (isWhitelisted) return // 让浏览器处理
 
-      // 其他所有按键：阻止默认行为，发送到终端
+      // 特殊键和快捷键：阻止默认行为，手动转换为ANSI序列发送
       e.preventDefault()
 
-      // 转换按键为ANSI序列
       let seq = ''
       if (e.ctrlKey && e.key.length === 1) {
-        // Ctrl+字母 优先处理
+        // Ctrl+字母
         seq = String.fromCharCode(e.key.toLowerCase().charCodeAt(0) - 96)
-      } else if (e.key.length === 1) {
-        seq = e.key
       } else if (e.key === 'Enter') {
         seq = '\r'
       } else if (e.key === 'Tab') {
@@ -884,9 +891,14 @@ export default function Terminal({ token }: Props) {
     window.addEventListener('keydown', onGlobalKeyDown, true)
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-      // PC端让全局处理器处理，这里只返回true允许通过
       if (window.innerWidth >= 768) {
-        return false // xterm不处理，让全局处理器来
+        // IME 组合期间：让 xterm 原生处理
+        if (e.isComposing) return true
+        // 可打印字符（无修饰键）：让 xterm 处理 → textarea → onData
+        // 这样浏览器 IME 才能正常工作
+        if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) return true
+        // 特殊键（箭头、Enter、Tab 等）和快捷键：让全局 handler 处理
+        return false
       }
       // 移动端保持原有逻辑
       if (e.ctrlKey && ['w', 't', 'n', 'l', 'r'].includes(e.key.toLowerCase())) {
