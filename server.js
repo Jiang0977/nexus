@@ -723,6 +723,7 @@ app.get('/api/files', authMiddleware, (req, res) => {
           return {
             name: e.name,
             url: `/uploads/${dateDir}/${e.name}`,
+            fullPath: join(dirPath, e.name),
             size: stat.size,
             created: stat.mtimeMs,
           }

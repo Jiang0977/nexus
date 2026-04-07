@@ -7,6 +7,7 @@ type SortKey = 'name' | 'modified' | 'size'
 interface FileItem {
   name: string
   url: string
+  fullPath: string
   size: number
   created: number
 }
@@ -231,7 +232,7 @@ export default function FilePanel({ token, onClose }: Props) {
         ) : sortedFiles ? (
           <div className="bg-nexus-bg-2 rounded-lg border border-nexus-border overflow-hidden">
             {sortedFiles.map((file, idx) => {
-              const fullPath = `/mnt/c/Users/libra/work/nexus/data/uploads/${file.date}/${file.name}`
+              const fullPath = file.fullPath
               const isCopied = copiedUrl === file.url
               const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(file.name)
               return (
@@ -279,7 +280,7 @@ export default function FilePanel({ token, onClose }: Props) {
               </div>
               <div className="bg-nexus-bg-2 rounded-lg border border-nexus-border overflow-hidden">
                 {group.files.map((file, idx) => {
-                  const fullPath = `/mnt/c/Users/libra/work/nexus/data/uploads/${group.date}/${file.name}`
+                  const fullPath = file.fullPath
                   const isCopied = copiedUrl === file.url
                   const isImage = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(file.name)
                   return (
