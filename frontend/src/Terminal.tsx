@@ -403,11 +403,12 @@ export default function Terminal({ token }: Props) {
     // 走和 ResizeObserver 完全相同的路径：debounce + rAF
     setTimeout(() => {
       requestAnimationFrame(() => {
+        const wasAtBottom = !userScrolledRef.current
         fitAddon.fit()
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
         }
-        if (!userScrolledRef.current) term.scrollToBottom()
+        if (wasAtBottom) { userScrolledRef.current = false; term.scrollToBottom() }
       })
     }, 150)
   }, [])
@@ -443,11 +444,12 @@ export default function Terminal({ token }: Props) {
       // Debounce: 延迟执行，确保布局稳定（特别是工具栏动画结束后）
       debounceTimer = window.setTimeout(() => {
         rafId = requestAnimationFrame(() => {
+          const wasAtBottom = !userScrolledRef.current
           fitAddon.fit()
           if (wsRef.current?.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
           }
-          if (!userScrolledRef.current) term.scrollToBottom()
+          if (wasAtBottom) { userScrolledRef.current = false; term.scrollToBottom() }
           rafId = null
         })
       }, 150) // 150ms debounce 覆盖 CSS transition
@@ -1068,11 +1070,12 @@ export default function Terminal({ token }: Props) {
     }
 
     function sendResize() {
+      const wasAtBottom = !userScrolledRef.current
       fitAddonRef.current?.fit()
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
       }
-      if (!userScrolledRef.current) term.scrollToBottom()
+      if (wasAtBottom) { userScrolledRef.current = false; term.scrollToBottom() }
     }
 
     function onOrientationChange() {
