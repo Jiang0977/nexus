@@ -52,6 +52,7 @@ const {
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_WEBHOOK_SECRET,
   TELEGRAM_DEFAULT_SESSION = '',
+  GITHUB_REPO = 'librae8226/nexus4cc',
 } = process.env;
 
 if (!JWT_SECRET || !ACC_PASSWORD_HASH) {
@@ -288,6 +289,41 @@ app.post('/api/toolbar-config', authMiddleware, (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// GET /api/version — 当前版本号及工作区状态
+app.get('/api/version', authMiddleware, (req, res) => {
+  try {
+    const current = execSync('git describe --tags --abbrev=0', { cwd: __dirname }).toString().trim();
+    const dirty = execSync('git status --porcelain', { cwd: __dirname }).toString().trim();
+    res.json({ current, clean: dirty === '' });
+  } catch {
+    res.json({ current: 'unknown', clean: true });
+  }
+});
+
+// GET /api/version/latest — 代理 GitHub Releases API 获取最新版本
+app.get('/api/version/latest', authMiddleware, (req, res) => {
+  const options = {
+    hostname: 'api.github.com',
+    path: `/repos/${GITHUB_REPO}/releases/latest`,
+    headers: { 'User-Agent': 'nexus-update-check' },
+  };
+  https.get(options, (ghRes) => {
+    let data = '';
+    ghRes.on('data', chunk => { data += chunk; });
+    ghRes.on('end', () => {
+      try {
+        const json = JSON.parse(data);
+        if (!json.tag_name) return res.status(502).json({ error: 'no release found' });
+        res.json({ latest: json.tag_name, url: json.html_url });
+      } catch {
+        res.status(502).json({ error: 'invalid response from GitHub' });
+      }
+    });
+  }).on('error', () => {
+    res.status(502).json({ error: 'cannot reach GitHub' });
+  });
 });
 
 app.get('/api/browse', authMiddleware, (req, res) => {
@@ -1685,9 +1721,9 @@ wss.on('connection', (ws, req) => {
   entry.clients.add(ws);
   console.log(`Client connected to ${key} (clients: ${entry.clients.size})`);
 
-  // 发送最近输出（帮助快速恢复上下文）
+  // Send recent output so the screen isn't blank while waiting for the first repaint.
   if (entry.lastOutput) {
-    ws.send(entry.lastOutput.slice(-2000)); // 只发最后 2KB 避免洪水
+    ws.send(entry.lastOutput.slice(-2000));
   }
 
   ws.on('message', (msg) => {
