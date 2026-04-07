@@ -158,7 +158,17 @@
     "themeLight": "Light",
     "apiProfiles": "API Config Profiles",
     "apiProfilesDesc": "Manage API keys, model settings, and profiles for Claude sessions.",
-    "manageProfiles": "Manage Profiles"
+    "manageProfiles": "Manage Profiles",
+    "about": "About",
+    "currentVersion": "Current Version",
+    "checkUpdate": "Check for Updates",
+    "checking": "Checking…",
+    "upToDate": "Up to date",
+    "updateAvailable": "New version available: {{version}}",
+    "viewRelease": "View Release →",
+    "copyUpdateCmd": "Copy Update Command",
+    "dirtyWarning": "Local changes detected — please commit or stash before updating.",
+    "checkFailed": "Could not reach GitHub"
   },
   "apiConfig": {
     "title": "API Config Management",

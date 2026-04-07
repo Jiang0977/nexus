@@ -158,7 +158,17 @@
     "themeLight": "亮色",
     "apiProfiles": "API 配置 Profiles",
     "apiProfilesDesc": "管理 Claude 会话的 API Key、模型设置和 Profile。",
-    "manageProfiles": "管理 Profiles"
+    "manageProfiles": "管理 Profiles",
+    "about": "关于",
+    "currentVersion": "当前版本",
+    "checkUpdate": "检查更新",
+    "checking": "检查中…",
+    "upToDate": "已是最新版本",
+    "updateAvailable": "发现新版本：{{version}}",
+    "viewRelease": "查看 Release →",
+    "copyUpdateCmd": "复制更新命令",
+    "dirtyWarning": "本地有未提交的修改，请先处理后再升级。",
+    "checkFailed": "无法连接 GitHub"
   },
   "apiConfig": {
     "title": "API 配置管理",
