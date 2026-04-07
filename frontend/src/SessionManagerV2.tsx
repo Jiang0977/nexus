@@ -3,6 +3,39 @@ import { useTranslation } from 'react-i18next'
 import GhostShield from './GhostShield'
 import { Icon } from './icons'
 
+const STORAGE_KEY = 'nexus_token'
+
+/** Parse API error response into a user-friendly message.
+ *  For 401, clears the token and reloads (auto-logout). */
+async function parseApiError(r: Response, fallback?: string): Promise<string> {
+  if (r.status === 401) {
+    localStorage.removeItem(STORAGE_KEY)
+    window.location.reload()
+    return '' // unreachable after reload
+  }
+  try {
+    const data = await r.json()
+    if (data?.error) return data.error
+  } catch { /* response body not JSON */ }
+  const statusMessages: Record<number, string> = {
+    400: '请求参数有误',
+    403: '无访问权限',
+    404: '资源不存在',
+    409: '操作冲突，可能已存在',
+    500: '服务器内部错误',
+    502: '网关错误，服务可能未启动',
+    503: '服务暂时不可用',
+  }
+  return statusMessages[r.status] ?? fallback ?? `请求失败 (${r.status})`
+}
+
+/** Friendly message when fetch() itself throws (network unreachable). */
+function parseNetworkError(e: unknown): string {
+  if (e instanceof TypeError) return '无法连接服务器，请检查服务是否已启动'
+  if (e instanceof Error) return e.message
+  return '未知错误'
+}
+
 interface Channel {
   index: number
   name: string
@@ -101,10 +134,10 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
     setLoadingProjects(true)
     try {
       const r = await fetch('/api/projects', { headers })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.loadFailed'))); return }
       setProjects(await r.json())
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t('sessionMgr.loadFailed'))
+      setError(parseNetworkError(e))
     } finally {
       setLoadingProjects(false)
     }
@@ -142,11 +175,11 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
     if (project.name === currentProject) return
     try {
       const r = await fetch(`/api/projects/${encodeURIComponent(project.name)}/activate`, { method: 'POST', headers })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.switchFailed'))); return }
       const data = await r.json()
       onSwitchProject(project.name, data.lastChannel)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t('sessionMgr.switchFailed'))
+      setError(parseNetworkError(e))
     }
   }
 
@@ -156,11 +189,11 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
         method: 'POST',
         headers,
       })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.switchFailed'))); return }
       onSwitchChannel(channel.index)
       if (shouldClose) onClose()
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Switch failed')
+      setError(parseNetworkError(e))
     }
   }
 
@@ -176,10 +209,10 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newName }),
       })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.renameFailed'))); return }
       fetchChannels(currentProject)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t('sessionMgr.renameFailed'))
+      setError(parseNetworkError(e))
     }
   }
 
@@ -192,10 +225,10 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
         method: 'DELETE',
         headers,
       })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.closeFailed'))); return }
       fetchChannels(currentProject)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t('sessionMgr.closeFailed'))
+      setError(parseNetworkError(e))
     }
   }
 
@@ -210,11 +243,11 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newName }),
       })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.renameFailed'))); return }
       fetchProjects()
       if (project.name === currentProject) onSwitchProject(newName)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t('sessionMgr.renameFailed'))
+      setError(parseNetworkError(e))
     }
   }
 
@@ -223,14 +256,14 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
     setSidebarProjectMenu(null)
     try {
       const r = await fetch(`/api/projects/${encodeURIComponent(project.name)}`, { method: 'DELETE', headers })
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.closeFailed'))); return }
       fetchProjects()
       if (project.name === currentProject) {
         const remaining = projects.filter(p => p.name !== project.name)
         if (remaining.length > 0) handleProjectClick(remaining[0])
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : t('sessionMgr.closeFailed'))
+      setError(parseNetworkError(e))
     }
   }
 
