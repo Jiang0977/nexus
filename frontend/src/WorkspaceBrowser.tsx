@@ -1187,20 +1187,30 @@ function MarkdownPreview({ content, fontSize = 14 }: { content: string; fontSize
   return (
     <div
       className="markdown-body max-w-none text-nexus-text
+        [&_h1]:text-[2em] [&_h1]:font-bold [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:pb-1 [&_h1]:border-b [&_h1]:border-nexus-border
+        [&_h2]:text-[1.5em] [&_h2]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:pb-1 [&_h2]:border-b [&_h2]:border-nexus-border
+        [&_h3]:text-[1.25em] [&_h3]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1
+        [&_h4]:text-[1.1em] [&_h4]:font-semibold [&_h4]:mt-3 [&_h4]:mb-1
+        [&_h5]:text-[1em] [&_h5]:font-semibold [&_h5]:mt-2 [&_h5]:mb-1
+        [&_h6]:text-[0.9em] [&_h6]:font-semibold [&_h6]:mt-2 [&_h6]:mb-1 [&_h6]:text-nexus-text/70
+        [&_p]:my-2 [&_p]:leading-relaxed
+        [&_ul]:my-2 [&_ul]:pl-5 [&_ul]:list-disc
+        [&_ol]:my-2 [&_ol]:pl-5 [&_ol]:list-decimal
+        [&_li]:my-1
+        [&_blockquote]:my-3 [&_blockquote]:pl-3 [&_blockquote]:border-l-4 [&_blockquote]:border-nexus-accent/50 [&_blockquote]:text-nexus-text/70
+        [&_code]:font-mono [&_code]:text-[0.875em] [&_code]:bg-nexus-bg-2 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded
+        [&_pre]:my-3 [&_pre]:p-3 [&_pre]:bg-nexus-bg-2 [&_pre]:rounded [&_pre]:overflow-x-auto
+        [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:rounded-none
+        [&_hr]:my-4 [&_hr]:border-nexus-border
+        [&_a]:text-nexus-accent [&_a]:underline
+        [&_img]:max-w-full [&_img]:rounded
+        [&_strong]:font-semibold
         [&_table]:w-full [&_table]:border-collapse [&_table]:my-3
         [&_th]:border [&_th]:border-nexus-border [&_th]:bg-nexus-bg-2 [&_th]:p-2 [&_th]:text-left [&_th]:text-nexus-text
         [&_td]:border [&_td]:border-nexus-border [&_td]:p-2 [&_td]:text-nexus-text
         [&_tr:nth-child(even)]:bg-nexus-bg-2/50
         [&_input[type='checkbox']]:mr-2 [&_input[type='checkbox']]:accent-nexus-accent"
-      style={{
-        fontSize: `${fontSize}px`,
-        lineHeight: '1.6',
-        // 标题相对正文的缩放比例
-        '--h1-size': `${Math.round(fontSize * 2)}px`,
-        '--h2-size': `${Math.round(fontSize * 1.5)}px`,
-        '--h3-size': `${Math.round(fontSize * 1.25)}px`,
-        '--code-size': `${Math.round(fontSize * 0.85)}px`,
-      } as React.CSSProperties}
+      style={{ fontSize: `${fontSize}px`, lineHeight: '1.6' }}
       dangerouslySetInnerHTML={{ __html: cleanHtml }}
     />
   )
