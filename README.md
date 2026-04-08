@@ -20,7 +20,7 @@
 
 ---
 
-## Why Nexus?
+## Highlights
 
 | | |
 |---|---|
@@ -31,12 +31,30 @@
 
 ---
 
+## Why Nexus 4 CC?
+
+|                          | Anthropic Remote Control | Happy Coder | Omnara  | **nexus4cc** |
+|--------------------------|:---:|:---:|:---:|:---:|
+| Self-hosted              | ❌ | ❌ | ⚠️ | ✅ |
+| No subscription needed   | ❌ ($100+/mo) | ✅ | ❌ ($9/mo) | ✅ |
+| Data stays on your infra | ❌ | ❌ | ❌ | ✅ |
+| Real terminal (xterm)    | ❌ | ❌ | ❌ | ✅ |
+| Project & channel management | ❌ | ⚠️ | ⚠️ | ✅ |
+| Fire & forget            | ⚠️ (10min timeout) | ✅ (via relay) | ✅ (via relay) | ✅ (pure tmux) |
+| PWA / installable        | ❌ | ✅ (native app) | ✅ (native app) | ✅ |
+| Open source              | ❌ | ⚠️ partial | ✅ | ✅ |
+
+> **Project & channel management:** Organize work by directory-based projects, each with multiple channel-like sessions — switch between them instantly, like Slack channels for your terminal.
+
+---
+
 ## Features
 
 - 🔌 **WebSocket ↔ tmux bridge** — one PTY per window, real-time bidirectional I/O
 - 📱 **Mobile-first terminal** — xterm.js, swipe navigation, pinch-to-zoom, configurable soft toolbar
 - 🤖 **Task Panel** — launch Claude tasks, monitor via SSE streaming, async progress
 - 📂 **File browser** — browse, edit, upload workspace files (sort by name / modified / size)
+- 🗂️ **Project & channel management** — directory-based projects, each with channel-like sessions (like Slack channels for your terminal)
 - 🔀 **Multi-session** — switch tmux sessions instantly
 - 🎨 **PWA** — installable, dark / light themes
 - ⚡ **Zero overhead** — direct WebSocket pipe, no SSH
