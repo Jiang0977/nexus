@@ -7,7 +7,7 @@
 <p>
   <img src="https://cdn.gooo.ai/web-images/d61f1cb1b9434e10af05e6d6059fab3cbaafd20ac16cc6d35b6a6502fe8e1eb2" alt="Node.js" />
   <img src="https://cdn.gooo.ai/web-images/20f0c4badbfb4abe840d2fe64cc77c73c5dc796d8f0a6cdc56823f95edd72294" alt="React" />
-  <img src="https://cdn.gooo.ai/web-images/0f4a900586ad7dffbe8cc55b99351cdb657c326f85e349440750be2ce3a7111e" alt="License" />
+  <img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg" alt="License: GPL v3" />
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" />
 </p>
 
@@ -195,7 +195,15 @@ PRs and issues welcome! Whether it's a bug fix, new feature, or docs improvement
 
 ## License
 
-MIT — See [LICENSE.md](LICENSE.md)
+Nexus is dual-licensed under:
+
+1. **GNU General Public License v3.0** — free and open source
+2. **Commercial License** — for use cases that require flexibility beyond GPL
+
+For commercial licensing, please reach out directly to the authors:
+[librae8226](https://github.com/librae8226) · [faywong](https://github.com/faywong)
+
+See [LICENSE.md](LICENSE.md) for the full license text.
 
 ---
 
@@ -374,7 +382,14 @@ cd frontend && npm run dev
 
 ## 许可
 
-MIT — 见 [LICENSE.md](LICENSE.md)
+Nexus 采用双许可证授权：
+
+1. **GNU General Public License v3.0** — 开源免费
+2. **商业许可** — 适用于需要 GPL 之外灵活性的场景
+
+商业许可请联系作者：[librae8226](https://github.com/librae8226) · [faywong](https://github.com/faywong)
+
+完整许可文本见 [LICENSE.md](LICENSE.md)
 
 ---
 
