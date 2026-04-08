@@ -20,7 +20,7 @@ Brand tone: clean, confident, quietly impressive. No hype, no clutter.
 - Keep demo video as-is (no added description text)
 - Keep core product philosophy (NORTH-STAR.md unchanged)
 - Keep contact info (微信: librae8226)
-- Keep MIT license
+- Keep license info (now dual: GPL v3 / Commercial)
 
 ---
 
@@ -43,7 +43,7 @@ Rationale: Standard for international open-source projects. Chinese users are co
 # Nexus4CC
 ### Your Claude Code, Everywhere.
 
-[Node 20+] [MIT] [⭐ Stars] [🇨🇳 中文]
+[Node 20+] [GPL v3 / Commercial] [⭐ Stars] [🇨🇳 中文]
 ```
 
 Badges: flat-style (shields.io). Stars badge uses dynamic count.
@@ -117,7 +117,7 @@ Minimal table: Node 20+, tmux, Linux/WSL2.
 ### 11. Footer
 
 ```
-MIT License · Built with Claude Code, for Claude Code.
+Dual-licensed: GPL v3 / Commercial · Built with Claude Code, for Claude Code.
 ```
 
 ---
