@@ -37,8 +37,10 @@ export default function WorkspaceBrowser({ token, onClose, initialPath = '', cur
   // 路径状态：null 表示正在初始化
   const [currentPath, setCurrentPath] = useState<string | null>(null)
   const [entries, setEntries] = useState<FileEntry[]>([])
+  const [sizesReady, setSizesReady] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const abortRef = useRef<AbortController | null>(null)
 
   const headers = { Authorization: `Bearer ${token}` }
 
@@ -127,20 +129,38 @@ export default function WorkspaceBrowser({ token, onClose, initialPath = '', cur
 
   // 加载目录内容
   const loadEntries = useCallback(async (path: string) => {
+    // 取消上一个未完成的请求
+    if (abortRef.current) abortRef.current.abort()
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+
     setLoading(true)
     setError('')
+    setSizesReady(false)
     setSelectedName(null) // 切换目录时清除选中
     try {
-      const r = await fetch(`/api/workspace/files?path=${encodeURIComponent(path)}`, { headers })
+      const r = await fetch(`/api/workspace/files?path=${encodeURIComponent(path)}`, {
+        headers,
+        signal: ctrl.signal,
+      })
       if (!r.ok) throw new Error(await r.text())
       const data = await r.json()
       // data.path 是服务端返回的规范化绝对路径
       setCurrentPath(data.path)
-      setEntries(data.entries || [])
+      // Phase 1：先用 mtime 渲染列表（size 列占位）
+      setEntries((data.entries || []).map((e: FileEntry) => ({ ...e, size: undefined })))
+      setLoading(false)
+      // Phase 2：空闲帧批量填入 size
+      const allEntries: FileEntry[] = data.entries || []
+      requestIdleCallback(() => {
+        if (ctrl.signal.aborted) return
+        setEntries(allEntries)
+        setSizesReady(true)
+      })
     } catch (e: any) {
+      if ((e as any).name === 'AbortError') return
       setError(e.message || 'Failed to load')
       setEntries([])
-    } finally {
       setLoading(false)
     }
   }, [token])
@@ -498,9 +518,9 @@ export default function WorkspaceBrowser({ token, onClose, initialPath = '', cur
   // 检查是否有上级目录（简单判断：不是根目录且以 workspaceRoot 开头）
   const hasParent = currentPath !== '/' && currentPath !== ''
 
-  // 排序状态：默认按文件名升序
-  const [sortKey, setSortKey] = useState<'name' | 'modified' | 'size'>('name')
-  const [sortAsc, setSortAsc] = useState(true)
+  // 排序状态：默认按修改时间倒序
+  const [sortKey, setSortKey] = useState<'name' | 'modified' | 'size'>('modified')
+  const [sortAsc, setSortAsc] = useState(false)
   const [showSortMenu, setShowSortMenu] = useState(false)
 
   function handleSort(key: 'name' | 'modified' | 'size') {
@@ -699,9 +719,9 @@ export default function WorkspaceBrowser({ token, onClose, initialPath = '', cur
                     {entry.name}
                   </div>
                 </div>
-                {entry.type === 'file' && entry.size !== undefined && (
+                {entry.type === 'file' && (
                   <span className="text-nexus-muted text-xs shrink-0">
-                    {formatSize(entry.size)}
+                    {sizesReady && entry.size !== undefined ? formatSize(entry.size) : '—'}
                   </span>
                 )}
                 <span className="text-nexus-muted text-xs shrink-0">

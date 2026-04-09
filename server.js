@@ -9,6 +9,7 @@ import { exec, spawn, execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, normalize, isAbsolute } from 'path';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync, statSync, rmdirSync, renameSync, cpSync, rmSync } from 'fs';
+import { readdir, stat as statAsync } from 'fs/promises';
 import https from 'node:https';
 import multer from 'multer';
 
@@ -346,24 +347,24 @@ app.get('/api/browse', authMiddleware, (req, res) => {
 })
 
 // GET /api/workspace/files — 浏览文件系统（支持文件和目录，任意路径）
-app.get('/api/workspace/files', authMiddleware, (req, res) => {
+app.get('/api/workspace/files', authMiddleware, async (req, res) => {
   try {
     let p = req.query.path || WORKSPACE_ROOT
     if (p === '~') p = WORKSPACE_ROOT
     if (!isAbsolute(p)) p = join(WORKSPACE_ROOT, p)
     p = normalize(p)
-    const entries = readdirSync(p, { withFileTypes: true })
-      .filter(e => !e.name.startsWith('.')) // 隐藏文件不显示
-      .map(e => {
-        const fullPath = join(p, e.name)
-        const st = statSync(fullPath)
-        return {
-          name: e.name,
-          type: e.isDirectory() ? 'dir' : 'file',
-          size: e.isFile() ? st.size : undefined,
-          mtime: st.mtimeMs,
-        }
-      })
+    const dirents = await readdir(p, { withFileTypes: true })
+    const visible = dirents.filter(e => !e.name.startsWith('.'))
+    const entries = await Promise.all(visible.map(async e => {
+      const fullPath = join(p, e.name)
+      const st = await statAsync(fullPath)
+      return {
+        name: e.name,
+        type: e.isDirectory() ? 'dir' : 'file',
+        size: e.isFile() ? st.size : undefined,
+        mtime: st.mtimeMs,
+      }
+    }))
     res.json({ path: p, entries })
   } catch (err) {
     res.status(500).json({ error: err.message })
