@@ -117,7 +117,6 @@ Nexus is a **single-user, self-hosted tool** — not a multi-tenant platform.
 
 <p>
   <img src="https://github.com/user-attachments/assets/6960ca95-f26d-484b-aa66-56b5315e39d3" width="225" />
-  <img src="https://github.com/user-attachments/assets/984ae5a2-7a88-45bf-b77a-20545c5c1bc1" width="250" />
 </p>
 
 ---
