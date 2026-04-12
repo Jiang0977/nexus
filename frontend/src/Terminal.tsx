@@ -102,6 +102,8 @@ export function getInitialTheme(): ThemeMode {
 function applyNexusCssVars(mode: ThemeMode) {
   const isDark = mode === 'dark'
   const root = document.documentElement
+  root.classList.toggle('light', !isDark)
+  root.style.colorScheme = isDark ? 'dark' : 'light'
   root.style.setProperty('--nexus-bg',         isDark ? '#0f172a' : '#ffffff')   // slate-900 / white
   root.style.setProperty('--nexus-bg2',        isDark ? '#1e293b' : '#f1f5f9')   // slate-800 / slate-100
   root.style.setProperty('--nexus-menu-bg',    isDark ? '#1e293b' : '#ffffff')    // 面板/弹层背景
@@ -114,6 +116,9 @@ function applyNexusCssVars(mode: ThemeMode) {
   root.style.setProperty('--nexus-success',    '#22c55e')                         // green-500
   root.style.setProperty('--nexus-warning',    '#f59e0b')                         // amber-500
   root.style.setProperty('--nexus-error',      '#ef4444')                         // red-500
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute('content', isDark ? '#0f172a' : '#ffffff')
 }
 applyNexusCssVars(getInitialTheme())
 
@@ -1508,7 +1513,7 @@ EOF`}
 
       <input
         ref={inputRef}
-        className="fixed top-0 left-0 w-px h-px opacity-[0.01] text-base pointer-events-none -z-10"
+        className="nexus-input-proxy fixed top-0 left-0 w-px h-px opacity-[0.01] text-base pointer-events-none -z-10"
         autoComplete="off"
         autoCorrect="off"
         autoCapitalize="off"

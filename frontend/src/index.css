@@ -17,6 +17,7 @@
   --nexus-success: #22c55e;
   --nexus-warning: #f59e0b;
   --nexus-error: #ef4444;
+  color-scheme: dark;
 }
 
 /* Light theme */
@@ -33,6 +34,54 @@
   --nexus-success: #22c55e;
   --nexus-warning: #f59e0b;
   --nexus-error: #ef4444;
+  color-scheme: light;
+}
+
+html,
+body {
+  background: var(--nexus-bg);
+  color: var(--nexus-text);
+}
+
+/* Native controls must follow theme tokens, otherwise mobile browsers fall back to white form UI. */
+input,
+textarea,
+select {
+  color-scheme: inherit;
+}
+
+.nexus-input-proxy,
+.xterm .xterm-helper-textarea {
+  color: var(--nexus-text) !important;
+  background-color: var(--nexus-bg) !important;
+  border-color: var(--nexus-border) !important;
+  caret-color: var(--nexus-text) !important;
+  -webkit-text-fill-color: var(--nexus-text) !important;
+}
+
+/*
+ * Codex/TUI uses xterm 256-color background 255 for some input surfaces.
+ * xterm maps it to near-white by default, which clashes with our dark shell.
+ */
+:root:not(.light) .xterm .xterm-bg-255 {
+  background-color: var(--nexus-bg2) !important;
+}
+
+:root:not(.light) .xterm .xterm-bg-255.xterm-dim {
+  color: var(--nexus-text2) !important;
+}
+
+/*
+ * Some Codex approval prompts render as inverted-default background (257)
+ * with ANSI 255 foreground, which becomes light-on-light in dark mode.
+ */
+:root:not(.light) .xterm .xterm-bg-257.xterm-fg-255 {
+  background-color: var(--nexus-bg2) !important;
+  color: var(--nexus-text) !important;
+}
+
+:root:not(.light) .xterm .xterm-bg-257.xterm-fg-255.xterm-dim {
+  color: var(--nexus-text2) !important;
 }
 
 /* 移动端启用触摸覆盖层（桌面端保持 none，不拦截鼠标事件） */
