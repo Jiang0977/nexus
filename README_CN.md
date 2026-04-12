@@ -117,7 +117,6 @@ Nexus 是**单用户自托管工具**，不是多租户平台。
 
 <p>
   <img src="https://github.com/user-attachments/assets/6960ca95-f26d-484b-aa66-56b5315e39d3" width="225" />
-  <img src="https://github.com/user-attachments/assets/984ae5a2-7a88-45bf-b77a-20545c5c1bc1" width="250" />
 </p>
 
 欢迎加微信（librae8226）深入交流。
