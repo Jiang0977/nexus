@@ -2,6 +2,13 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import GhostShield from './GhostShield'
 import { Icon } from './icons'
+import {
+  CLAUDE_SHELL_TYPE,
+  DEFAULT_SHELL_TYPE,
+  ZSH_SHELL_TYPE,
+  usesClaudeProfile,
+  type ShellType,
+} from './shellType'
 
 interface BrowseResult {
   path: string
@@ -17,7 +24,7 @@ interface Config {
 interface Props {
   token: string
   onClose: () => void
-  onConfirm: (path: string, shellType: 'claude' | 'bash', profile?: string) => void
+  onConfirm: (path: string, shellType: ShellType, profile?: string) => void
 }
 
 // 检测是否为 PC 端（>= 768px）
@@ -36,7 +43,7 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
   const isDesktop = useIsDesktop()
   const [selectedPath, setSelectedPath] = useState(() => localStorage.getItem('nexus_last_path') || '/workspace')
   const [inputPath, setInputPath] = useState(() => localStorage.getItem('nexus_last_path') || '/workspace')
-  const [shellType, setShellType] = useState<'claude' | 'bash'>('claude')
+  const [shellType, setShellType] = useState<ShellType>(DEFAULT_SHELL_TYPE)
   const [configs, setConfigs] = useState<Config[]>([])
   const [selectedProfile, setSelectedProfile] = useState<string>(() => localStorage.getItem('nexus_last_profile') || '')
 
@@ -105,7 +112,7 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
   function handleConfirm() {
     const path = inputPath.trim()
     if (!path) return
-    const profile = shellType === 'claude' && selectedProfile ? selectedProfile : undefined
+    const profile = usesClaudeProfile(shellType) && selectedProfile ? selectedProfile : undefined
     localStorage.setItem('nexus_last_path', path)
     if (profile) localStorage.setItem('nexus_last_profile', profile)
     onConfirm(path, shellType, profile)
@@ -169,9 +176,9 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
                 <input
                   type="radio"
                   name="shellType"
-                  value="claude"
-                  checked={shellType === 'claude'}
-                  onChange={() => setShellType('claude')}
+                  value={CLAUDE_SHELL_TYPE}
+                  checked={shellType === CLAUDE_SHELL_TYPE}
+                  onChange={() => setShellType(CLAUDE_SHELL_TYPE)}
                 />
                 <span>{t('workspace.shellClaude')}</span>
               </label>
@@ -179,9 +186,9 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
                 <input
                   type="radio"
                   name="shellType"
-                  value="bash"
-                  checked={shellType === 'bash'}
-                  onChange={() => setShellType('bash')}
+                  value={ZSH_SHELL_TYPE}
+                  checked={shellType === ZSH_SHELL_TYPE}
+                  onChange={() => setShellType(ZSH_SHELL_TYPE)}
                 />
                 <span>{t('workspace.shellZsh')}</span>
               </label>
@@ -189,7 +196,7 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
           </div>
 
           {/* Profile 选择 (仅 claude 模式) */}
-          {shellType === 'claude' && (
+          {usesClaudeProfile(shellType) && (
             <div className="px-4 py-3 border-b border-nexus-border">
               <div className="text-[11px] text-nexus-text-2 tracking-wider uppercase mb-0">{t('workspace.profileLabel')}</div>
               <select

@@ -37,7 +37,7 @@
     "pathHelp": "Use ~ for home directory, or enter an absolute path",
     "shellType": "Shell Type",
     "shellClaude": "Claude",
-    "shellZsh": "Zsh",
+    "shellZsh": "Zsh (Default)",
     "profileLabel": "Claude Profile (optional)",
     "profileDefault": "Default profile",
     "profileHelp": "Uses the selected API key and model settings. Session data is stored in this workspace directory.",

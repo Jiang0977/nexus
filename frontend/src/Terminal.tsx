@@ -10,6 +10,8 @@ import SessionFAB from './SessionFAB'
 import GhostShield from './GhostShield'
 import { Icon } from './icons'
 import { getWindowStatus, STATUS_DOT_COLOR, STATUS_DOT_TITLE } from './windowStatus'
+import { pickBootstrapSession, sessionExists } from './sessionBootstrap.js'
+import { DEFAULT_SHELL_TYPE, type ShellType } from './shellType'
 
 const SessionManager = lazy(() => import('./SessionManager'))
 const SessionManagerV2 = lazy(() => import('./SessionManagerV2'))
@@ -192,6 +194,7 @@ export default function Terminal({ token }: Props) {
   const [tmuxSessions, setTmuxSessions] = useState<string[]>([])
   const [activeTmuxSession, setActiveTmuxSession] = useState<string>(() => localStorage.getItem('nexus_session') || '')
   const [wsSessionKey, setWsSessionKey] = useState<string>(() => localStorage.getItem('nexus_session') || '')
+  const [defaultTmuxSession, setDefaultTmuxSession] = useState('')
   const activeTmuxSessionRef = useRef(activeTmuxSession)
   activeTmuxSessionRef.current = activeTmuxSession
   const sessionManagerRef = useRef<SessionManagerV2Handle>(null)
@@ -204,6 +207,21 @@ export default function Terminal({ token }: Props) {
     channelCount: number
   }
   const [projects, setProjects] = useState<ProjectInfo[]>([])
+  const [projectsLoaded, setProjectsLoaded] = useState(false)
+
+  function clearSessionSelection() {
+    localStorage.removeItem('nexus_session')
+    localStorage.removeItem(WINDOW_KEY)
+    activeTmuxSessionRef.current = ''
+    setActiveTmuxSession('')
+    setWsSessionKey('')
+    setActiveWindowIndex(0)
+    setWindows([])
+    setWindowOutputs({})
+    windowsInitializedRef.current = false
+    windowsLoadedRef.current = true
+    setWindowsLoaded(true)
+  }
 
   // F-XX: Profile 检查与引导
   const [hasProfiles, setHasProfiles] = useState<boolean | null>(null)
@@ -231,16 +249,14 @@ export default function Terminal({ token }: Props) {
     fetch('/api/config', { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(d => {
-        if (d.tmuxSession && !localStorage.getItem('nexus_session')) {
-          setActiveTmuxSession(d.tmuxSession)
-          setWsSessionKey(d.tmuxSession)
-        }
+        setDefaultTmuxSession(d.tmuxSession || '')
       })
       .catch(() => {})
   }, [token])
 
   // 获取所有 tmux sessions 和 projects
   useEffect(() => {
+    setProjectsLoaded(false)
     const fetchSessions = async () => {
       try {
         const r = await fetch('/api/tmux-sessions', { headers: { Authorization: `Bearer ${token}` } })
@@ -256,7 +272,11 @@ export default function Terminal({ token }: Props) {
         if (r.ok) {
           setProjects(await r.json())
         }
-      } catch {}
+      } catch {
+        setProjects([])
+      } finally {
+        setProjectsLoaded(true)
+      }
     }
     fetchSessions()
     fetchProjects()
@@ -266,6 +286,32 @@ export default function Terminal({ token }: Props) {
     }, 10000)
     return () => clearInterval(interval)
   }, [token])
+
+  useEffect(() => {
+    if (!projectsLoaded) return
+
+    const storedSession = localStorage.getItem('nexus_session') || ''
+    const validStoredSession = sessionExists(storedSession, projects) ? storedSession : ''
+    if (storedSession && !validStoredSession) {
+      localStorage.removeItem('nexus_session')
+    }
+
+    if (sessionExists(activeTmuxSessionRef.current, projects)) return
+
+    const nextSession = pickBootstrapSession({
+      storedSession: validStoredSession,
+      activeSession: activeTmuxSessionRef.current,
+      defaultSession: defaultTmuxSession,
+      projects,
+    })
+
+    if (nextSession) {
+      handleSwitchSession(nextSession)
+      return
+    }
+
+    clearSessionSelection()
+  }, [projects, projectsLoaded, defaultTmuxSession])
 
   useEffect(() => {
     const check = () => setIsWidePC(window.innerWidth >= 768)
@@ -375,6 +421,11 @@ export default function Terminal({ token }: Props) {
 
   // 轮询各窗口输出（F-15 状态卡片）
   useEffect(() => {
+    if (!activeTmuxSession || windows.length === 0) {
+      setWindowOutputs({})
+      return
+    }
+
     async function fetchOutputs() {
       const outputs: Record<number, any> = {}
       for (const win of windows) {
@@ -386,8 +437,9 @@ export default function Terminal({ token }: Props) {
       setWindowOutputs(outputs)
     }
     const interval = setInterval(fetchOutputs, 3000)
+    fetchOutputs()
     return () => clearInterval(interval)
-  }, [windows.length, token, activeTmuxSession])
+  }, [windows.map(w => w.index).join(','), token, activeTmuxSession])
 
   
   const scrollToBottom = useCallback(() => {
@@ -486,7 +538,12 @@ export default function Terminal({ token }: Props) {
 
   async function fetchWindows() {
     try {
-      const session = activeTmuxSessionRef.current
+      const session = activeTmuxSessionRef.current.trim()
+      if (!session) {
+        setWindows([])
+        setWindowOutputs({})
+        return
+      }
       const r = await fetch(`/api/sessions?session=${encodeURIComponent(session)}`, { headers: { Authorization: `Bearer ${token}` } })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const d = await r.json()
@@ -590,7 +647,7 @@ export default function Terminal({ token }: Props) {
     }
   }
 
-  async function createSession(relPath: string, shellType: 'claude' | 'bash' = 'claude', profile?: string) {
+  async function createSession(relPath: string, shellType: ShellType = DEFAULT_SHELL_TYPE, profile?: string) {
     try {
       // F-20: 使用 /api/projects 创建新的 project（tmux session）
       const r = await fetch('/api/projects', {
@@ -609,7 +666,7 @@ export default function Terminal({ token }: Props) {
   }
 
   // F-19: 创建新窗口（继承当前项目目录）
-  async function createWindow(shellType: 'claude' | 'bash' = 'claude', profile?: string) {
+  async function createWindow(shellType: ShellType = DEFAULT_SHELL_TYPE, profile?: string) {
     try {
       const session = activeTmuxSessionRef.current
       // 获取当前 project 的路径
@@ -647,7 +704,7 @@ export default function Terminal({ token }: Props) {
     setShowNewSession(true)
   }
 
-  function handleCreateSession(path: string, shellType: 'claude' | 'bash', profile?: string) {
+  function handleCreateSession(path: string, shellType: ShellType, profile?: string) {
     setShowNewSession(false)
     createSession(path, shellType, profile)
   }
@@ -657,13 +714,17 @@ export default function Terminal({ token }: Props) {
     setShowNewWindow(true)
   }
 
-  function handleNewWindowConfirm(shellType: 'claude' | 'bash', profile?: string) {
+  function handleNewWindowConfirm(shellType: ShellType, profile?: string) {
     setShowNewWindow(false)
     createWindow(shellType, profile)
     setTimeout(() => sessionManagerRef.current?.refresh(), 500)
   }
 
   function handleSwitchSession(newSession: string, lastChannel?: number) {
+    if (!newSession) {
+      clearSessionSelection()
+      return
+    }
     localStorage.setItem('nexus_session', newSession)
     // 同步更新 ref，确保 fetchWindows 能立即读到新 session
     activeTmuxSessionRef.current = newSession
@@ -1166,6 +1227,11 @@ export default function Terminal({ token }: Props) {
 
   // Effect B: WebSocket connection (reconnects on window switch, xterm persists)
   useEffect(() => {
+    if (!activeTmuxSession || !windowsLoaded || windows.length === 0) {
+      setIsConnecting(false)
+      return
+    }
+
     setIsScrolledUp(false)
     // If this window had a saved scroll position, don't auto-scroll on incoming messages
     // until the restore timeout in attachToWindow fires and onScroll updates the ref.
@@ -1261,7 +1327,7 @@ export default function Terminal({ token }: Props) {
       clearTimeout(loadingTimer)
       wsRef.current?.close()
     }
-  }, [token, activeWindowIndex, wsSessionKey])
+  }, [token, activeWindowIndex, wsSessionKey, activeTmuxSession, windowsLoaded, windows.length])
 
   const isComposingRef = useRef(false)
 

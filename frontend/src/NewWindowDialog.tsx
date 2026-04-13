@@ -2,6 +2,13 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import GhostShield from './GhostShield'
 import { Icon } from './icons'
+import {
+  CLAUDE_SHELL_TYPE,
+  DEFAULT_SHELL_TYPE,
+  ZSH_SHELL_TYPE,
+  usesClaudeProfile,
+  type ShellType,
+} from './shellType'
 
 interface Config {
   id: string
@@ -11,12 +18,12 @@ interface Config {
 interface Props {
   token: string
   onClose: () => void
-  onConfirm: (shellType: 'claude' | 'bash', profile?: string) => void
+  onConfirm: (shellType: ShellType, profile?: string) => void
 }
 
 export default function NewWindowDialog({ token, onClose, onConfirm }: Props) {
   const { t } = useTranslation()
-  const [shellType, setShellType] = useState<'claude' | 'bash'>('claude')
+  const [shellType, setShellType] = useState<ShellType>(DEFAULT_SHELL_TYPE)
   const [configs, setConfigs] = useState<Config[]>([])
   const [selectedProfile, setSelectedProfile] = useState<string>(() => localStorage.getItem('nexus_last_profile') || '')
 
@@ -33,7 +40,7 @@ export default function NewWindowDialog({ token, onClose, onConfirm }: Props) {
   }, [token])
 
   function handleConfirm() {
-    const profile = shellType === 'claude' && selectedProfile ? selectedProfile : undefined
+    const profile = usesClaudeProfile(shellType) && selectedProfile ? selectedProfile : undefined
     if (profile) localStorage.setItem('nexus_last_profile', profile)
     onConfirm(shellType, profile)
   }
@@ -67,27 +74,27 @@ export default function NewWindowDialog({ token, onClose, onConfirm }: Props) {
                 <input
                   type="radio"
                   name="shellType"
-                  value="claude"
-                  checked={shellType === 'claude'}
-                  onChange={() => setShellType('claude')}
+                  value={CLAUDE_SHELL_TYPE}
+                  checked={shellType === CLAUDE_SHELL_TYPE}
+                  onChange={() => setShellType(CLAUDE_SHELL_TYPE)}
                 />
-                <span>Claude</span>
+                <span>{t('workspace.shellClaude')}</span>
               </label>
               <label className="flex items-center gap-2 text-nexus-text text-sm cursor-pointer">
                 <input
                   type="radio"
                   name="shellType"
-                  value="bash"
-                  checked={shellType === 'bash'}
-                  onChange={() => setShellType('bash')}
+                  value={ZSH_SHELL_TYPE}
+                  checked={shellType === ZSH_SHELL_TYPE}
+                  onChange={() => setShellType(ZSH_SHELL_TYPE)}
                 />
-                <span>Zsh</span>
+                <span>{t('workspace.shellZsh')}</span>
               </label>
             </div>
           </div>
 
           {/* Profile */}
-          {shellType === 'claude' && configs.length > 0 && (
+          {usesClaudeProfile(shellType) && configs.length > 0 && (
             <div>
               <div className="text-[11px] text-nexus-text-2 tracking-wider uppercase mb-2">{t('newChannel.profile')}</div>
               <select
