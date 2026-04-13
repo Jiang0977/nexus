@@ -2,6 +2,7 @@
   "name": "nexus-frontend",
   "version": "4.4.2",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
