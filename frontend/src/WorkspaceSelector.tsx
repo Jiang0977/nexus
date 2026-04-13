@@ -4,21 +4,28 @@ import GhostShield from './GhostShield'
 import { Icon } from './icons'
 import {
   CLAUDE_SHELL_TYPE,
+  CODEX_SHELL_TYPE,
   DEFAULT_SHELL_TYPE,
   ZSH_SHELL_TYPE,
-  usesClaudeProfile,
+  usesCodexProfile,
+  usesShellProfile,
   type ShellType,
 } from './shellType'
+import {
+  fetchProfilesForShell,
+  fetchProjectShellDefault,
+  getStoredProfileForShell,
+  getStoredShellType,
+  pickProfileForShell,
+  storeProfileForShell,
+  storeShellType,
+  type ShellProfileOption,
+} from './shellProfiles'
 
 interface BrowseResult {
   path: string
   parent: string | null
   dirs: { name: string; path: string }[]
-}
-
-interface Config {
-  id: string
-  label: string
 }
 
 interface Props {
@@ -43,9 +50,9 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
   const isDesktop = useIsDesktop()
   const [selectedPath, setSelectedPath] = useState(() => localStorage.getItem('nexus_last_path') || '/workspace')
   const [inputPath, setInputPath] = useState(() => localStorage.getItem('nexus_last_path') || '/workspace')
-  const [shellType, setShellType] = useState<ShellType>(DEFAULT_SHELL_TYPE)
-  const [configs, setConfigs] = useState<Config[]>([])
-  const [selectedProfile, setSelectedProfile] = useState<string>(() => localStorage.getItem('nexus_last_profile') || '')
+  const [shellType, setShellType] = useState<ShellType>(() => getStoredShellType() || DEFAULT_SHELL_TYPE)
+  const [profiles, setProfiles] = useState<ShellProfileOption[]>([])
+  const [selectedProfile, setSelectedProfile] = useState<string>(() => getStoredProfileForShell(getStoredShellType()))
 
   // 文件浏览器状态
   const [browsePath, setBrowsePath] = useState<string | null>(null)
@@ -75,24 +82,49 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
   }
 
   useEffect(() => {
-    fetchConfigs()
     browseDir(null)
   }, [])
 
-  async function fetchConfigs() {
-    try {
-      const r = await fetch('/api/configs', { headers })
-      if (r.ok) {
-        const data = await r.json()
-        setConfigs(data)
-        if (!localStorage.getItem('nexus_last_profile') && data.length > 0) {
-          setSelectedProfile(data[0].id)
-        }
-      }
-    } catch {
-      // ignore
+  useEffect(() => {
+    if (!usesShellProfile(shellType)) {
+      setProfiles([])
+      setSelectedProfile('')
+      return
     }
-  }
+
+    let cancelled = false
+    fetchProfilesForShell(token, shellType)
+      .then((data) => {
+        if (cancelled) return
+        setProfiles(data)
+        setSelectedProfile((current) => pickProfileForShell(shellType, data, current))
+      })
+      .catch(() => {
+        if (cancelled) return
+        setProfiles([])
+      })
+
+    return () => { cancelled = true }
+  }, [token, shellType])
+
+  useEffect(() => {
+    const trimmedPath = inputPath.trim()
+    const timer = window.setTimeout(() => {
+      fetchProjectShellDefault(token, trimmedPath)
+        .then((defaults) => {
+          const nextShellType = defaults?.shell_type || getStoredShellType()
+          setShellType(nextShellType)
+          if (usesShellProfile(nextShellType)) {
+            setSelectedProfile(defaults?.profile || getStoredProfileForShell(nextShellType))
+          } else {
+            setSelectedProfile('')
+          }
+        })
+        .catch(() => {})
+    }, 200)
+
+    return () => window.clearTimeout(timer)
+  }, [token, inputPath])
 
   function handleSelect(path: string) {
     setSelectedPath(path)
@@ -104,17 +136,28 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
     setSelectedPath(value)
   }
 
+  function handleShellChange(nextShellType: ShellType) {
+    setShellType(nextShellType)
+    storeShellType(nextShellType)
+    if (usesShellProfile(nextShellType)) {
+      setSelectedProfile(getStoredProfileForShell(nextShellType))
+    } else {
+      setSelectedProfile('')
+    }
+  }
+
   function handleProfileChange(id: string) {
     setSelectedProfile(id)
-    if (id) localStorage.setItem('nexus_last_profile', id)
+    if (id) storeProfileForShell(shellType, id)
   }
 
   function handleConfirm() {
     const path = inputPath.trim()
     if (!path) return
-    const profile = usesClaudeProfile(shellType) && selectedProfile ? selectedProfile : undefined
+    const profile = usesShellProfile(shellType) && selectedProfile ? selectedProfile : undefined
     localStorage.setItem('nexus_last_path', path)
-    if (profile) localStorage.setItem('nexus_last_profile', profile)
+    storeShellType(shellType)
+    if (profile) storeProfileForShell(shellType, profile)
     onConfirm(path, shellType, profile)
   }
 
@@ -131,6 +174,10 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
     if (parts.length <= 3) return '/' + parts.join('/')
     return '.../' + parts.slice(-2).join('/')
   }
+
+  const profileLabelKey = usesCodexProfile(shellType) ? 'workspace.profileLabelCodex' : 'workspace.profileLabelClaude'
+  const profileDefaultKey = usesCodexProfile(shellType) ? 'workspace.profileDefaultCodex' : 'workspace.profileDefaultClaude'
+  const profileHelpKey = usesCodexProfile(shellType) ? 'workspace.profileHelpCodex' : 'workspace.profileHelpClaude'
 
   return (
     <div className={isDesktop ? 'fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-5' : 'fixed inset-0 bg-black/60 z-[100]'}>
@@ -178,7 +225,7 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
                   name="shellType"
                   value={CLAUDE_SHELL_TYPE}
                   checked={shellType === CLAUDE_SHELL_TYPE}
-                  onChange={() => setShellType(CLAUDE_SHELL_TYPE)}
+                  onChange={() => handleShellChange(CLAUDE_SHELL_TYPE)}
                 />
                 <span>{t('workspace.shellClaude')}</span>
               </label>
@@ -186,32 +233,42 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
                 <input
                   type="radio"
                   name="shellType"
+                  value={CODEX_SHELL_TYPE}
+                  checked={shellType === CODEX_SHELL_TYPE}
+                  onChange={() => handleShellChange(CODEX_SHELL_TYPE)}
+                />
+                <span>{t('workspace.shellCodex')}</span>
+              </label>
+              <label className="flex items-center gap-2 text-nexus-text text-sm cursor-pointer">
+                <input
+                  type="radio"
+                  name="shellType"
                   value={ZSH_SHELL_TYPE}
                   checked={shellType === ZSH_SHELL_TYPE}
-                  onChange={() => setShellType(ZSH_SHELL_TYPE)}
+                  onChange={() => handleShellChange(ZSH_SHELL_TYPE)}
                 />
                 <span>{t('workspace.shellZsh')}</span>
               </label>
             </div>
           </div>
 
-          {/* Profile 选择 (仅 claude 模式) */}
-          {usesClaudeProfile(shellType) && (
+          {/* Profile 选择 */}
+          {usesShellProfile(shellType) && (
             <div className="px-4 py-3 border-b border-nexus-border">
-              <div className="text-[11px] text-nexus-text-2 tracking-wider uppercase mb-0">{t('workspace.profileLabel')}</div>
+              <div className="text-[11px] text-nexus-text-2 tracking-wider uppercase mb-0">{t(profileLabelKey)}</div>
               <select
                 className="bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text text-sm px-2.5 py-2 w-full outline-none mt-2"
                 value={selectedProfile}
                 onChange={(e) => handleProfileChange(e.target.value)}
               >
-                <option value="">{t('workspace.profileDefault')}</option>
-                {configs.map((cfg) => (
+                <option value="">{t(profileDefaultKey)}</option>
+                {profiles.map((cfg) => (
                   <option key={cfg.id} value={cfg.id}>
                     {cfg.label}
                   </option>
                 ))}
               </select>
-              <div className="text-nexus-muted text-[11px] mt-1.5">{t('workspace.profileHelp')}</div>
+              <div className="text-nexus-muted text-[11px] mt-1.5">{t(profileHelpKey)}</div>
             </div>
           )}
 
@@ -273,7 +330,7 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
         {/* 底部按钮 */}
         <div className="flex gap-3 px-4 py-3 border-t border-nexus-border shrink-0 justify-end">
           <button className="bg-transparent border border-nexus-border rounded-md text-nexus-text-2 cursor-pointer text-sm px-4 py-2" onPointerDown={onClose}>{t('common.cancel')}</button>
-          <button className="bg-nexus-accent border-none rounded-md text-white cursor-pointer text-sm font-semibold px-4 py-2" onPointerDown={handleConfirm}>{t('common.create')}</button>
+          <button className="bg-nexus-accent border-none rounded-md text-white cursor-pointer text-sm font-semibold px-4 py-2" onClick={handleConfirm}>{t('common.create')}</button>
         </div>
       </div>
     </div>

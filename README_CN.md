@@ -93,6 +93,8 @@ npm start
 
 通过 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) 或 [Tailscale](https://tailscale.com/) 安全暴露服务，无需端口转发。
 
+线上更新、重启、验证与回滚请直接按 **[DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md)** 执行。
+
 ---
 
 ## 环境要求
@@ -121,6 +123,7 @@ Nexus 是**单用户自托管工具**，不是多租户平台。
 | 文档 | 说明 |
 |---|---|
 | [QUICKSTART.md](docs/QUICKSTART.md) | 手把手配置指南 |
+| [DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md) | 线上更新、重启、验证、回滚标准操作 |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构设计 |
 | [ROADMAP.md](docs/ROADMAP.md) | 未来规划 |
 | [📖 Nexus 的故事](docs/story.md) | 为什么造了这个东西 |

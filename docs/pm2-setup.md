@@ -1,5 +1,9 @@
 # PM2 配置与启动指南 (nexus)
 
+> 历史文档。当前线上部署以 `systemd` 为准，不再以 PM2 作为权威运行方式。
+>
+> 线上更新、重启、验证与回滚请改看 [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)。
+
 ## ecosystem.config.js 内容
 ```js
 module.exports = {

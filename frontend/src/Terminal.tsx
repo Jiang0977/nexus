@@ -230,10 +230,14 @@ export default function Terminal({ token }: Props) {
   // 检查是否有 profile
   useEffect(() => {
     if (hasProfiles !== null) return // 已经检查过了
-    fetch('/api/configs', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json())
-      .then(configs => {
-        const hasAny = Array.isArray(configs) && configs.length > 0
+    Promise.all([
+      fetch('/api/configs', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
+      fetch('/api/codex-configs', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
+    ])
+      .then(([claudeConfigs, codexConfigs]) => {
+        const hasAny =
+          (Array.isArray(claudeConfigs) && claudeConfigs.length > 0) ||
+          (Array.isArray(codexConfigs) && codexConfigs.length > 0)
         setHasProfiles(hasAny)
         if (!hasAny) {
           setShowProfileGuide(true)
@@ -1517,9 +1521,9 @@ export default function Terminal({ token }: Props) {
               <div className="w-16 h-16 bg-nexus-accent/10 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Icon name="settings" size={32} className="text-nexus-accent" />
               </div>
-              <h2 className="text-nexus-text text-xl font-bold mb-2">需要创建 Claude Profile</h2>
+              <h2 className="text-nexus-text text-xl font-bold mb-2">需要创建会话 Profile</h2>
               <p className="text-nexus-text-2 text-sm">
-                检测到还没有配置 Claude API Profile。在使用 Nexus 之前，需要先创建一个配置文件。
+                检测到还没有配置 Claude 或 Codex Profile。你可以先在设置里创建，或者按下面的示例手动写入 Claude 配置。
               </p>
             </div>
 
@@ -1546,15 +1550,19 @@ EOF`}
             <div className="flex flex-col gap-3">
               <button
                 onClick={() => {
-                  fetch('/api/configs', { headers: { Authorization: `Bearer ${token}` } })
-                    .then(r => r.json())
-                    .then(configs => {
-                      const hasAny = Array.isArray(configs) && configs.length > 0
+                  Promise.all([
+                    fetch('/api/configs', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
+                    fetch('/api/codex-configs', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
+                  ])
+                    .then(([claudeConfigs, codexConfigs]) => {
+                      const hasAny =
+                        (Array.isArray(claudeConfigs) && claudeConfigs.length > 0) ||
+                        (Array.isArray(codexConfigs) && codexConfigs.length > 0)
                       if (hasAny) {
                         setHasProfiles(true)
                         setShowProfileGuide(false)
                       } else {
-                        alert('仍未检测到 Profile，请先执行上方命令创建')
+                        alert('仍未检测到 Profile，请先在设置中创建，或执行上方命令写入配置')
                       }
                     })
                 }}
@@ -1952,6 +1960,7 @@ EOF`}
         <Suspense fallback={null}>
           <NewWindowDialog
             token={token}
+            projectPath={projects.find(p => p.name === activeTmuxSession)?.path}
             onClose={() => setShowNewWindow(false)}
             onConfirm={handleNewWindowConfirm}
           />

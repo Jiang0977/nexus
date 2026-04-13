@@ -4,51 +4,97 @@ import GhostShield from './GhostShield'
 import { Icon } from './icons'
 import {
   CLAUDE_SHELL_TYPE,
+  CODEX_SHELL_TYPE,
   DEFAULT_SHELL_TYPE,
   ZSH_SHELL_TYPE,
-  usesClaudeProfile,
+  usesCodexProfile,
+  usesShellProfile,
   type ShellType,
 } from './shellType'
-
-interface Config {
-  id: string
-  label: string
-}
+import {
+  fetchProfilesForShell,
+  fetchProjectShellDefault,
+  getStoredProfileForShell,
+  getStoredShellType,
+  pickProfileForShell,
+  storeProfileForShell,
+  storeShellType,
+  type ShellProfileOption,
+} from './shellProfiles'
 
 interface Props {
   token: string
+  projectPath?: string
   onClose: () => void
   onConfirm: (shellType: ShellType, profile?: string) => void
 }
 
-export default function NewWindowDialog({ token, onClose, onConfirm }: Props) {
+export default function NewWindowDialog({ token, projectPath = '', onClose, onConfirm }: Props) {
   const { t } = useTranslation()
-  const [shellType, setShellType] = useState<ShellType>(DEFAULT_SHELL_TYPE)
-  const [configs, setConfigs] = useState<Config[]>([])
-  const [selectedProfile, setSelectedProfile] = useState<string>(() => localStorage.getItem('nexus_last_profile') || '')
+  const [shellType, setShellType] = useState<ShellType>(() => getStoredShellType() || DEFAULT_SHELL_TYPE)
+  const [profiles, setProfiles] = useState<ShellProfileOption[]>([])
+  const [selectedProfile, setSelectedProfile] = useState<string>(() => getStoredProfileForShell(getStoredShellType()))
 
   useEffect(() => {
-    fetch('/api/configs', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : [])
-      .then((data: Config[]) => {
-        setConfigs(data)
-        if (!localStorage.getItem('nexus_last_profile') && data.length > 0) {
-          setSelectedProfile(data[0].id)
+    if (!usesShellProfile(shellType)) {
+      setProfiles([])
+      setSelectedProfile('')
+      return
+    }
+
+    let cancelled = false
+    fetchProfilesForShell(token, shellType)
+      .then((data) => {
+        if (cancelled) return
+        setProfiles(data)
+        setSelectedProfile((current) => pickProfileForShell(shellType, data, current))
+      })
+      .catch(() => {
+        if (cancelled) return
+        setProfiles([])
+      })
+
+    return () => { cancelled = true }
+  }, [token, shellType])
+
+  useEffect(() => {
+    fetchProjectShellDefault(token, projectPath)
+      .then((defaults) => {
+        const nextShellType = defaults?.shell_type || getStoredShellType()
+        setShellType(nextShellType)
+        if (usesShellProfile(nextShellType)) {
+          setSelectedProfile(defaults?.profile || getStoredProfileForShell(nextShellType))
+        } else {
+          setSelectedProfile('')
         }
       })
       .catch(() => {})
-  }, [token])
+  }, [token, projectPath])
 
   function handleConfirm() {
-    const profile = usesClaudeProfile(shellType) && selectedProfile ? selectedProfile : undefined
-    if (profile) localStorage.setItem('nexus_last_profile', profile)
+    const profile = usesShellProfile(shellType) && selectedProfile ? selectedProfile : undefined
+    storeShellType(shellType)
+    if (profile) storeProfileForShell(shellType, profile)
     onConfirm(shellType, profile)
+  }
+
+  function handleShellChange(nextShellType: ShellType) {
+    setShellType(nextShellType)
+    storeShellType(nextShellType)
+    if (usesShellProfile(nextShellType)) {
+      setSelectedProfile(getStoredProfileForShell(nextShellType))
+    } else {
+      setSelectedProfile('')
+    }
   }
 
   function handleProfileChange(id: string) {
     setSelectedProfile(id)
-    if (id) localStorage.setItem('nexus_last_profile', id)
+    if (id) storeProfileForShell(shellType, id)
   }
+
+  const profileLabelKey = usesCodexProfile(shellType) ? 'newChannel.profileCodex' : 'newChannel.profileClaude'
+  const profileDefaultKey = usesCodexProfile(shellType) ? 'newChannel.profileDefaultCodex' : 'newChannel.profileDefaultClaude'
 
   return (
     <div className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-5">
@@ -76,7 +122,7 @@ export default function NewWindowDialog({ token, onClose, onConfirm }: Props) {
                   name="shellType"
                   value={CLAUDE_SHELL_TYPE}
                   checked={shellType === CLAUDE_SHELL_TYPE}
-                  onChange={() => setShellType(CLAUDE_SHELL_TYPE)}
+                  onChange={() => handleShellChange(CLAUDE_SHELL_TYPE)}
                 />
                 <span>{t('workspace.shellClaude')}</span>
               </label>
@@ -84,9 +130,19 @@ export default function NewWindowDialog({ token, onClose, onConfirm }: Props) {
                 <input
                   type="radio"
                   name="shellType"
+                  value={CODEX_SHELL_TYPE}
+                  checked={shellType === CODEX_SHELL_TYPE}
+                  onChange={() => handleShellChange(CODEX_SHELL_TYPE)}
+                />
+                <span>{t('workspace.shellCodex')}</span>
+              </label>
+              <label className="flex items-center gap-2 text-nexus-text text-sm cursor-pointer">
+                <input
+                  type="radio"
+                  name="shellType"
                   value={ZSH_SHELL_TYPE}
                   checked={shellType === ZSH_SHELL_TYPE}
-                  onChange={() => setShellType(ZSH_SHELL_TYPE)}
+                  onChange={() => handleShellChange(ZSH_SHELL_TYPE)}
                 />
                 <span>{t('workspace.shellZsh')}</span>
               </label>
@@ -94,16 +150,16 @@ export default function NewWindowDialog({ token, onClose, onConfirm }: Props) {
           </div>
 
           {/* Profile */}
-          {usesClaudeProfile(shellType) && configs.length > 0 && (
+          {usesShellProfile(shellType) && (
             <div>
-              <div className="text-[11px] text-nexus-text-2 tracking-wider uppercase mb-2">{t('newChannel.profile')}</div>
+              <div className="text-[11px] text-nexus-text-2 tracking-wider uppercase mb-2">{t(profileLabelKey)}</div>
               <select
                 className="bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text text-sm px-2.5 py-2 w-full outline-none"
                 value={selectedProfile}
                 onChange={e => handleProfileChange(e.target.value)}
               >
-                <option value="">{t('newChannel.profileDefault')}</option>
-                {configs.map(cfg => (
+                <option value="">{t(profileDefaultKey)}</option>
+                {profiles.map(cfg => (
                   <option key={cfg.id} value={cfg.id}>{cfg.label}</option>
                 ))}
               </select>
@@ -121,7 +177,7 @@ export default function NewWindowDialog({ token, onClose, onConfirm }: Props) {
           </button>
           <button
             className="bg-nexus-accent border-none rounded-md text-white cursor-pointer text-sm font-semibold px-4 py-2"
-            onPointerDown={handleConfirm}
+            onClick={handleConfirm}
           >
             {t('common.create')}
           </button>
