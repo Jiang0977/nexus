@@ -1,0 +1,26 @@
+[Unit]
+Description=Persistent tmux server for Nexus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=jiang
+Group=jiang
+WorkingDirectory=/home/jiang/workspace/typescript/nexus4cc
+Environment=HOME=/home/jiang
+Environment=USER=jiang
+Environment=SHELL=/bin/bash
+Environment=LANG=C.UTF-8
+Environment=LC_ALL=C.UTF-8
+Environment=PATH=/home/jiang/.local/bin:/home/jiang/.nvm/versions/node/v22.22.2/bin:/home/jiang/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RuntimeDirectory=nexus-tmux
+PIDFile=/run/nexus-tmux/nexus-tmux.pid
+ExecStart=/usr/bin/bash /home/jiang/workspace/typescript/nexus4cc/scripts/nexus-tmux-service.sh start
+ExecStop=/usr/bin/bash /home/jiang/workspace/typescript/nexus4cc/scripts/nexus-tmux-service.sh stop
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

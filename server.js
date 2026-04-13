@@ -15,6 +15,7 @@ import multer from 'multer';
 import { SERVER_ONLY_ENV_KEYS, sanitizeInteractiveEnv, wrapInteractiveShellCommand } from './interactiveEnv.js';
 import { resolvePassiveAttachTarget } from './tmuxSessionPolicy.js';
 import { normalizeShellType, usesClaudeProfile } from './frontend/src/shellType.js';
+import { createGracefulShutdown } from './gracefulShutdown.js';
 
 // 加载 .env 文件（如果存在）
 try {
@@ -45,6 +46,7 @@ if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const app = express();
 app.use(express.json());
+const activeTaskChildren = new Set();
 
 const {
   JWT_SECRET,
@@ -1286,6 +1288,7 @@ function runTask(prompt, cwd, opts = {}) {
     env: sanitizeInteractiveEnv(process.env, proxyEnv),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
+  activeTaskChildren.add(child)
 
   let output = ''
   let errorOutput = ''
@@ -1302,6 +1305,7 @@ function runTask(prompt, cwd, opts = {}) {
   })
 
   child.on('close', (code) => {
+    activeTaskChildren.delete(child)
     const status = code === 0 ? 'success' : 'error'
     updateTask(taskId, {
       status,
@@ -1740,6 +1744,21 @@ function ensureWindowPty(session, windowIndex) {
 // WebSocket 服务 — 支持 /ws?token=xxx&window=<index>
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
+const shutdown = createGracefulShutdown({
+  server,
+  wss,
+  ptyMap,
+  taskChildren: activeTaskChildren,
+});
+
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    shutdown(signal).catch((error) => {
+      console.error(`Graceful shutdown failed after ${signal}:`, error);
+      process.exit(1);
+    });
+  });
+}
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, 'http://x');
