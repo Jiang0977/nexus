@@ -12,6 +12,9 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlink
 import { readdir, stat as statAsync } from 'fs/promises';
 import https from 'node:https';
 import multer from 'multer';
+import { SERVER_ONLY_ENV_KEYS, sanitizeInteractiveEnv, wrapInteractiveShellCommand } from './interactiveEnv.js';
+import { resolvePassiveAttachTarget } from './tmuxSessionPolicy.js';
+import { normalizeShellType, usesClaudeProfile } from './frontend/src/shellType.js';
 
 // 加载 .env 文件（如果存在）
 try {
@@ -57,6 +60,18 @@ const {
   GITHUB_REPO = 'librae8226/nexus4cc',
 } = process.env;
 
+for (const key of SERVER_ONLY_ENV_KEYS) delete process.env[key];
+
+const DEFAULT_INTERACTIVE_SHELL = wrapInteractiveShellCommand('exec zsh -i');
+
+function clearTmuxServerOnlyEnv() {
+  for (const key of SERVER_ONLY_ENV_KEYS) {
+    try {
+      execSync(`tmux set-environment -gru ${key} 2>/dev/null`);
+    } catch {}
+  }
+}
+
 if (!JWT_SECRET || !ACC_PASSWORD_HASH) {
   console.error('ERROR: JWT_SECRET and ACC_PASSWORD_HASH must be set in environment');
   process.exit(1);
@@ -98,7 +113,8 @@ app.post('/api/auth/login', async (req, res) => {
 // - 提供 rel_path: 设置 NEXUS_CWD 并在此目录创建窗口（新项目）
 // - 不提供 rel_path: 读取 NEXUS_CWD 并在此目录创建窗口（新窗口）
 app.post('/api/windows', authMiddleware, (req, res) => {
-  const { rel_path, shell_type = 'claude', profile } = req.body || {};
+  const { rel_path, profile } = req.body || {};
+  const shellType = normalizeShellType(req.body?.shell_type);
   const tmuxSession = req.query.session || TMUX_SESSION;
 
   let cwd;
@@ -137,20 +153,20 @@ app.post('/api/windows', authMiddleware, (req, res) => {
   const proxyPrefix = proxyExports ? `${proxyExports}; ` : '';
 
   let shellCmd;
-  if (shell_type === 'bash') {
-    shellCmd = `${proxyPrefix}exec zsh -i`;
+  if (!usesClaudeProfile(shellType)) {
+    shellCmd = `${proxyPrefix}${DEFAULT_INTERACTIVE_SHELL}`;
   } else {
     if (profile) {
       const runScript = join(__dirname, 'nexus-run-claude.sh');
-      shellCmd = `${proxyPrefix}bash "${runScript}" ${profile} ${cwd}`;
+      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand(`bash "${runScript}" ${profile} ${cwd}`)}`;
     } else {
-      shellCmd = `${proxyPrefix}claude --dangerously-skip-permissions; exec zsh -i`;
+      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand('claude --dangerously-skip-permissions; exec zsh -i')}`;
     }
   }
 
   // 确保 tmux session 存在
   try {
-    execSync(`tmux has-session -t ${tmuxSession} 2>/dev/null || tmux new-session -d -s ${tmuxSession} -n shell "zsh"`);
+    execSync(`tmux has-session -t ${tmuxSession} 2>/dev/null || tmux new-session -d -s ${tmuxSession} -n shell "${DEFAULT_INTERACTIVE_SHELL}"`);
   } catch {}
 
   // 将代理变量设置到 tmux session 环境
@@ -163,17 +179,18 @@ app.post('/api/windows', authMiddleware, (req, res) => {
   const cmd = `tmux new-window -t ${tmuxSession} -c "${cwd}" -n "${name}" "${shellCmd}"`;
   exec(cmd, (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ name, cwd, shell_type, profile: profile || null, session: tmuxSession });
+    res.json({ name, cwd, shell_type: shellType, profile: profile || null, session: tmuxSession });
   });
 });
 
 // POST /api/sessions — 在 tmux 中创建新 window
 // body: { rel_path, shell_type?, profile?, session? }
-//   shell_type: 'claude' | 'bash' (default: 'claude')
+//   shell_type: 'claude' | 'bash' (default: 'bash' => interactive zsh)
 //   当 shell_type='claude' 时，profile 可选，使用 nexus-run-claude.sh 启动
-//   当 shell_type='bash' 时，直接启动 bash
+//   当 shell_type='bash' 时，直接启动 zsh
 app.post('/api/sessions', authMiddleware, (req, res) => {
-  const { rel_path, shell_type = 'claude', profile, session } = req.body || {};
+  const { rel_path, profile, session } = req.body || {};
+  const shellType = normalizeShellType(req.body?.shell_type);
   const tmuxSession = session || TMUX_SESSION;
   if (!rel_path) return res.status(400).json({ error: 'rel_path required' });
   const cwd = rel_path.startsWith('/') ? rel_path : `${WORKSPACE_ROOT}/${rel_path}`;
@@ -193,20 +210,20 @@ app.post('/api/sessions', authMiddleware, (req, res) => {
   const proxyPrefix = proxyExports ? `${proxyExports}; ` : '';
 
   let shellCmd;
-  if (shell_type === 'bash') {
-    shellCmd = `${proxyPrefix}exec zsh -i`;
+  if (!usesClaudeProfile(shellType)) {
+    shellCmd = `${proxyPrefix}${DEFAULT_INTERACTIVE_SHELL}`;
   } else {
     if (profile) {
       const runScript = join(__dirname, 'nexus-run-claude.sh');
-      shellCmd = `${proxyPrefix}bash "${runScript}" ${profile} ${cwd}`;
+      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand(`bash "${runScript}" ${profile} ${cwd}`)}`;
     } else {
-      shellCmd = `${proxyPrefix}claude --dangerously-skip-permissions; exec zsh -i`;
+      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand('claude --dangerously-skip-permissions; exec zsh -i')}`;
     }
   }
 
   // 确保 tmux session 存在
   try {
-    execSync(`tmux has-session -t ${tmuxSession} 2>/dev/null || tmux new-session -d -s ${tmuxSession} -n shell "zsh"`);
+    execSync(`tmux has-session -t ${tmuxSession} 2>/dev/null || tmux new-session -d -s ${tmuxSession} -n shell "${DEFAULT_INTERACTIVE_SHELL}"`);
   } catch {}
 
   // 将代理变量设置到 tmux session 环境，新窗口才能继承
@@ -219,7 +236,7 @@ app.post('/api/sessions', authMiddleware, (req, res) => {
   const cmd = `tmux new-window -t ${tmuxSession} -c "${cwd}" -n "${name}" "${shellCmd}"`;
   exec(cmd, (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ name, cwd, shell_type, profile: profile || null, session: tmuxSession });
+    res.json({ name, cwd, shell_type: shellType, profile: profile || null, session: tmuxSession });
   });
 });
 
@@ -939,7 +956,8 @@ app.get('/api/projects/:name/channels', authMiddleware, (req, res) => {
 // body: { path, shell_type?, profile? }
 // project 名称基于路径自动生成
 app.post('/api/projects', authMiddleware, (req, res) => {
-  const { path, shell_type = 'claude', profile } = req.body || {}
+  const { path, profile } = req.body || {}
+  const shellType = normalizeShellType(req.body?.shell_type)
   if (!path) return res.status(400).json({ error: 'path required' })
 
   const cwd = path.startsWith('/') ? path : `${WORKSPACE_ROOT}/${path}`
@@ -973,14 +991,14 @@ app.post('/api/projects', authMiddleware, (req, res) => {
   const proxyPrefix = proxyExports ? `${proxyExports}; ` : ''
 
   let shellCmd
-  if (shell_type === 'bash') {
-    shellCmd = `${proxyPrefix}exec zsh -i`
+  if (!usesClaudeProfile(shellType)) {
+    shellCmd = `${proxyPrefix}${DEFAULT_INTERACTIVE_SHELL}`
   } else {
     if (profile) {
       const runScript = join(__dirname, 'nexus-run-claude.sh')
-      shellCmd = `${proxyPrefix}bash "${runScript}" ${profile} ${cwd}`
+      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand(`bash "${runScript}" ${profile} ${cwd}`)}`
     } else {
-      shellCmd = `${proxyPrefix}claude --dangerously-skip-permissions; exec zsh -i`
+      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand('claude --dangerously-skip-permissions; exec zsh -i')}`
     }
   }
 
@@ -1001,13 +1019,14 @@ app.post('/api/projects', authMiddleware, (req, res) => {
     return res.status(500).json({ error: 'failed to create project: ' + err.message })
   }
 
-  res.json({ name: finalName, path: cwd, shell_type, profile: profile || null })
+  res.json({ name: finalName, path: cwd, shell_type: shellType, profile: profile || null })
 })
 
 // POST /api/projects/:name/channels — 在指定 Project 中新建 Channel（window）
 app.post('/api/projects/:name/channels', authMiddleware, (req, res) => {
   const sessionName = req.params.name
-  const { shell_type = 'claude', profile, path: bodyPath } = req.body || {}
+  const { profile, path: bodyPath } = req.body || {}
+  const shellType = normalizeShellType(req.body?.shell_type)
 
   // 优先使用前端传入的 path，其次读取 NEXUS_CWD，最后 fallback 到 WORKSPACE_ROOT
   let cwd = WORKSPACE_ROOT
@@ -1045,27 +1064,27 @@ app.post('/api/projects/:name/channels', authMiddleware, (req, res) => {
   const proxyPrefix = proxyExports ? `${proxyExports}; ` : ''
 
   let shellCmd
-  if (shell_type === 'bash') {
-    shellCmd = `${proxyPrefix}exec zsh -i`
+  if (!usesClaudeProfile(shellType)) {
+    shellCmd = `${proxyPrefix}${DEFAULT_INTERACTIVE_SHELL}`
   } else {
     if (profile) {
       const runScript = join(__dirname, 'nexus-run-claude.sh')
-      shellCmd = `${proxyPrefix}bash "${runScript}" ${profile} ${cwd}`
+      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand(`bash "${runScript}" ${profile} ${cwd}`)}`
     } else {
-      shellCmd = `${proxyPrefix}claude --dangerously-skip-permissions; exec zsh -i`
+      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand('claude --dangerously-skip-permissions; exec zsh -i')}`
     }
   }
 
   // 确保 session 存在
   try {
-    execSync(`tmux has-session -t ${sessionName} 2>/dev/null || tmux new-session -d -s ${sessionName} -n shell "zsh"`)
+    execSync(`tmux has-session -t ${sessionName} 2>/dev/null || tmux new-session -d -s ${sessionName} -n shell "${DEFAULT_INTERACTIVE_SHELL}"`)
   } catch {}
 
   // 创建新 window
   const cmd = `tmux new-window -t ${sessionName} -c "${cwd}" -n "${channelName}" "${shellCmd}"`
   exec(cmd, (err) => {
     if (err) return res.status(500).json({ error: err.message })
-    res.json({ name: channelName, cwd, shell_type, profile: profile || null, project: sessionName })
+    res.json({ name: channelName, cwd, shell_type: shellType, profile: profile || null, project: sessionName })
   })
 })
 
@@ -1175,7 +1194,7 @@ app.delete('/api/sessions/:id', authMiddleware, (req, res) => {
     const windowCount = parseInt(countOut.trim()) || 0
     if (windowCount <= 1) {
       // Last window: create a new shell first to keep the session alive
-      exec(`tmux new-window -t ${session} -n shell "zsh"`, () => {
+      exec(`tmux new-window -t ${session} -n shell "${DEFAULT_INTERACTIVE_SHELL}"`, () => {
         exec(`tmux kill-window -t ${session}:${index}`, (err) => {
           if (err) return res.status(500).json({ error: err.message })
           res.json({ ok: true })
@@ -1264,7 +1283,7 @@ function runTask(prompt, cwd, opts = {}) {
   if (profile) claudeArgs.push('--profile', profile)
   const child = spawn('claude', claudeArgs, {
     cwd,
-    env: { ...process.env, ...proxyEnv },
+    env: sanitizeInteractiveEnv(process.env, proxyEnv),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
@@ -1645,30 +1664,40 @@ function ptyKey(session, windowIndex) {
   return `${session}:${windowIndex}`;
 }
 
+function tmuxSessionExists(session) {
+  try {
+    execSync(`tmux has-session -t ${session} 2>/dev/null`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function listWindowIndices(session) {
+  try {
+    const output = execSync(`tmux list-windows -t ${session} -F "#I"`).toString().trim();
+    if (!output) return [];
+    return output
+      .split('\n')
+      .map((line) => Number.parseInt(line, 10))
+      .filter((index) => Number.isInteger(index) && index >= 0);
+  } catch {
+    return [];
+  }
+}
+
 function ensureWindowPty(session, windowIndex) {
   const key = ptyKey(session, windowIndex);
   if (ptyMap.has(key)) return { key, entry: ptyMap.get(key) };
 
-  // 确保 tmux session 存在
-  try {
-    execSync(`tmux has-session -t ${session} 2>/dev/null || tmux new-session -d -s ${session} -n shell "zsh"`);
-  } catch {}
+  const target = resolvePassiveAttachTarget({
+    sessionExists: tmuxSessionExists(session),
+    existingWindows: listWindowIndices(session),
+    requestedWindowIndex: windowIndex,
+  });
+  if (!target.ok) return { error: target.reason };
 
-  // 检查窗口是否存在，不存在则 fallback 到第一个可用窗口
-  let targetWindow = windowIndex;
-  try {
-    const windows = execSync(`tmux list-windows -t ${session} -F "#I"`).toString().trim().split('\n');
-    if (!windows.includes(String(windowIndex))) {
-      if (windows.length > 0) {
-        targetWindow = parseInt(windows[0], 10);
-      } else {
-        execSync(`tmux new-window -t ${session} -n shell "zsh"`);
-        targetWindow = 0;
-      }
-    }
-  } catch {
-    targetWindow = 0;
-  }
+  const targetWindow = target.windowIndex;
 
   const actualKey = ptyKey(session, targetWindow);
   if (ptyMap.has(actualKey)) return { key: actualKey, entry: ptyMap.get(actualKey) }; // reuse if fallback exists
@@ -1677,7 +1706,7 @@ function ensureWindowPty(session, windowIndex) {
     name: 'xterm-256color',
     cols: 120,
     rows: 30,
-    env: { ...process.env, LANG: 'C.UTF-8', TERM: 'xterm-256color' },
+    env: sanitizeInteractiveEnv(process.env, { LANG: 'C.UTF-8', TERM: 'xterm-256color' }),
   });
 
   const entry = { pty: ptyProc, clients: new Set(), clientSizes: new Map(), lastOutput: '', lastActivity: Date.now() };
@@ -1726,7 +1755,13 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
-  const { key, entry } = ensureWindowPty(session, windowIndex);
+  const ensured = ensureWindowPty(session, windowIndex);
+  if (ensured.error) {
+    ws.close(4004, ensured.error);
+    return;
+  }
+
+  const { key, entry } = ensured;
   entry.clients.add(ws);
   console.log(`Client connected to ${key} (clients: ${entry.clients.size})`);
 
@@ -1811,10 +1846,9 @@ server.listen(Number(PORT), HOST, () => {
   console.log(`Nexus listening on ${HOST}:${PORT}`);
   console.log(`tmux session: ${TMUX_SESSION}`);
   console.log(`workspace: ${WORKSPACE_ROOT}`);
-  // 启动时确保默认 tmux session 存在，窗口名使用 WORKSPACE_ROOT 的目录名
+  clearTmuxServerOnlyEnv();
   try {
-    const defaultWindowName = WORKSPACE_ROOT.replace(/^\/+|\/+$/, '').split('/').pop() || '~'
-    execSync(`tmux has-session -t ${TMUX_SESSION} 2>/dev/null || tmux new-session -d -s ${TMUX_SESSION} -n "${defaultWindowName}" -c "${WORKSPACE_ROOT}" "zsh"`);
+    execSync(`tmux has-session -t ${TMUX_SESSION} 2>/dev/null`);
     console.log(`tmux session '${TMUX_SESSION}' ready`);
   } catch (e) { console.warn('tmux session init failed:', e.message); }
 });
