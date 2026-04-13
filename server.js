@@ -5,17 +5,34 @@ import * as pty from 'node-pty';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { createServer } from 'node:http';
-import { exec, spawn, execSync } from 'child_process';
+import { exec, spawn, execSync, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, normalize, isAbsolute, basename } from 'path';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync, statSync, rmdirSync, renameSync, cpSync, rmSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync, statSync, rmdirSync, renameSync, cpSync, rmSync, mkdtempSync } from 'fs';
 import { readdir, stat as statAsync } from 'fs/promises';
 import https from 'node:https';
 import multer from 'multer';
 import { SERVER_ONLY_ENV_KEYS, sanitizeInteractiveEnv, wrapInteractiveShellCommand } from './interactiveEnv.js';
 import { resolvePassiveAttachTarget } from './tmuxSessionPolicy.js';
-import { normalizeShellType, usesClaudeProfile } from './frontend/src/shellType.js';
+import { normalizeShellType } from './frontend/src/shellType.js';
 import { createGracefulShutdown } from './gracefulShutdown.js';
+import {
+  deleteCodexConfig,
+  listCodexConfigs,
+  materializeCodexHome,
+  readCodexConfig,
+  resolveCodexRuntimeDir,
+  sanitizeCodexConfigId,
+  saveCodexConfig,
+} from './codexConfig.js';
+import {
+  importCcSwitchProvider,
+  listCcSwitchProviders,
+  resolveCcSwitchTargetProfileId,
+} from './ccSwitchConfig.js';
+import { getProjectDefault, saveProjectDefault } from './projectDefaults.js';
+import { buildInteractiveShellCommand, collectProxyVars, shellQuote } from './shellLaunch.js';
+import { readGlobalClaudeConfig, readGlobalCodexConfig } from './systemConfig.js';
 
 // 加载 .env 文件（如果存在）
 try {
@@ -38,10 +55,17 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, 'data');
 const TOOLBAR_CONFIG_FILE = join(DATA_DIR, 'toolbar-config.json');
 const CONFIGS_DIR = join(DATA_DIR, 'configs');
+const CODEX_CONFIGS_DIR = join(DATA_DIR, 'codex-configs');
+const CODEX_RUNTIME_DIR = join(DATA_DIR, 'codex-runtime');
+const CODEX_VALIDATE_DIR = join(DATA_DIR, 'codex-validate');
+const PROJECT_DEFAULTS_FILE = join(DATA_DIR, 'project-shell-defaults.json');
 const TASKS_FILE = join(DATA_DIR, 'tasks.json');
 const UPLOADS_DIR = join(DATA_DIR, 'uploads');
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 if (!existsSync(CONFIGS_DIR)) mkdirSync(CONFIGS_DIR, { recursive: true });
+if (!existsSync(CODEX_CONFIGS_DIR)) mkdirSync(CODEX_CONFIGS_DIR, { recursive: true });
+if (!existsSync(CODEX_RUNTIME_DIR)) mkdirSync(CODEX_RUNTIME_DIR, { recursive: true });
+if (!existsSync(CODEX_VALIDATE_DIR)) mkdirSync(CODEX_VALIDATE_DIR, { recursive: true });
 if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const app = express();
@@ -65,6 +89,7 @@ const {
 for (const key of SERVER_ONLY_ENV_KEYS) delete process.env[key];
 
 const DEFAULT_INTERACTIVE_SHELL = wrapInteractiveShellCommand('exec zsh -i');
+const SYNC_METADATA_KEYS = ['SYNC_SOURCE', 'SYNC_SOURCE_ID', 'SYNC_SOURCE_NAME'];
 
 function clearTmuxServerOnlyEnv() {
   for (const key of SERVER_ONLY_ENV_KEYS) {
@@ -72,6 +97,184 @@ function clearTmuxServerOnlyEnv() {
       execSync(`tmux set-environment -gru ${key} 2>/dev/null`);
     } catch {}
   }
+}
+
+function resolveWorkspacePath(inputPath) {
+  if (!inputPath) return WORKSPACE_ROOT
+  return inputPath.startsWith('/') ? inputPath : `${WORKSPACE_ROOT}/${inputPath}`
+}
+
+function readSessionWorkspacePath(sessionName) {
+  try {
+    const envOutput = execSync(`tmux show-environment -t ${shellQuote(sessionName)} NEXUS_CWD 2>/dev/null`).toString().trim()
+    const match = envOutput.match(/^NEXUS_CWD=(.+)$/)
+    if (match) return match[1]
+  } catch {}
+  return WORKSPACE_ROOT
+}
+
+function ensureTmuxSession(sessionName) {
+  try {
+    execSync(
+      `tmux has-session -t ${shellQuote(sessionName)} 2>/dev/null || tmux new-session -d -s ${shellQuote(sessionName)} -n shell ${shellQuote(DEFAULT_INTERACTIVE_SHELL)}`,
+    )
+  } catch {}
+}
+
+function setTmuxSessionEnv(sessionName, key, value) {
+  try {
+    execSync(`tmux set-environment -t ${shellQuote(sessionName)} ${key} ${shellQuote(value)} 2>/dev/null`)
+  } catch {}
+}
+
+function applyProxyEnvToSession(sessionName, proxyVars) {
+  for (const [key, value] of Object.entries(proxyVars)) {
+    setTmuxSessionEnv(sessionName, key, value)
+  }
+}
+
+function buildShellCommand(shellType, profile, cwd) {
+  const proxyVars = collectProxyVars(process.env, CLAUDE_PROXY)
+  return {
+    proxyVars,
+    shellCmd: buildInteractiveShellCommand({
+      shellType,
+      profile,
+      cwd,
+      scriptsDir: __dirname,
+      defaultInteractiveShell: DEFAULT_INTERACTIVE_SHELL,
+      proxyVars,
+    }),
+  }
+}
+
+function rememberProjectDefault(cwd, shellType, profile) {
+  saveProjectDefault(PROJECT_DEFAULTS_FILE, { path: cwd, shellType, profile })
+}
+
+function getTmuxWindowId(sessionName, windowIndex) {
+  try {
+    return execSync(
+      `tmux display-message -t ${shellQuote(`${sessionName}:${windowIndex}`)} -p '#{window_id}' 2>/dev/null`,
+    ).toString().trim()
+  } catch {
+    return ''
+  }
+}
+
+function cleanupCodexRuntime(windowId) {
+  if (!windowId) return
+  const runtimeDir = resolveCodexRuntimeDir(CODEX_RUNTIME_DIR, windowId)
+  rmSync(runtimeDir, { recursive: true, force: true })
+}
+
+function cleanupCodexRuntimeForWindow(sessionName, windowIndex) {
+  cleanupCodexRuntime(getTmuxWindowId(sessionName, windowIndex))
+}
+
+function cleanupCodexRuntimeForSession(sessionName) {
+  try {
+    const stdout = execSync(`tmux list-windows -t ${shellQuote(sessionName)} -F '#{window_id}' 2>/dev/null`).toString().trim()
+    stdout.split('\n').filter(Boolean).forEach(cleanupCodexRuntime)
+  } catch {}
+}
+
+function listTmuxWindowIds(sessionName) {
+  try {
+    return execSync(`tmux list-windows -t ${shellQuote(sessionName)} -F '#{window_id}' 2>/dev/null`)
+      .toString()
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function resolveCodexExecutable() {
+  try {
+    const result = spawnSync('bash', ['-lc', 'which -a codex | tail -1'], { encoding: 'utf8' })
+    const executable = result.status === 0 ? result.stdout.trim() : ''
+    return executable || 'codex'
+  } catch {
+    return 'codex'
+  }
+}
+
+function summarizeCodexValidationFailure(result) {
+  const stderr = String(result.stderr || '').trim()
+  const stdout = String(result.stdout || '').trim()
+  if (result.error?.message) return result.error.message
+  if (stderr) return stderr.split('\n').slice(-8).join('\n')
+  if (stdout) return stdout.split('\n').slice(-8).join('\n')
+  return `codex exited with status ${result.status ?? 'unknown'}`
+}
+
+function sanitizeProfileId(id) {
+  return sanitizeCodexConfigId(id)
+}
+
+function mergeSyncMetadata(currentConfig = {}, nextConfig = {}) {
+  const merged = { ...nextConfig }
+  for (const key of SYNC_METADATA_KEYS) {
+    if (!(key in merged) && currentConfig?.[key]) {
+      merged[key] = currentConfig[key]
+    }
+  }
+  return merged
+}
+
+function listClaudeConfigs(configDir = CONFIGS_DIR) {
+  try {
+    const files = readdirSync(configDir, { withFileTypes: true })
+      .filter(f => f.isFile() && f.name.endsWith('.json'))
+      .map(f => ({
+        name: f.name,
+        mtime: statSync(join(configDir, f.name)).mtimeMs,
+      }))
+      .sort((a, b) => b.mtime - a.mtime)
+      .map(f => f.name);
+    return files.map(f => {
+      const id = f.replace('.json', '');
+      try {
+        const data = JSON.parse(readFileSync(join(configDir, f), 'utf8'));
+        return { id, label: data.label || id, ...data };
+      } catch {
+        return { id, label: id };
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+function readClaudeConfig(configDir, id) {
+  const sanitizedId = sanitizeProfileId(id)
+  if (!sanitizedId) return null
+  const filePath = join(configDir, `${sanitizedId}.json`)
+  if (!existsSync(filePath)) return null
+  try {
+    const data = JSON.parse(readFileSync(filePath, 'utf8'))
+    return { id: sanitizedId, label: data.label || sanitizedId, ...data }
+  } catch {
+    return { id: sanitizedId, label: sanitizedId }
+  }
+}
+
+function saveClaudeConfig(configDir, id, config = {}) {
+  const sanitizedId = sanitizeProfileId(id)
+  if (!sanitizedId) throw new Error('invalid id')
+  const currentConfig = readClaudeConfig(configDir, sanitizedId) || {}
+  const nextConfig = mergeSyncMetadata(currentConfig, config)
+  writeFileSync(join(configDir, `${sanitizedId}.json`), JSON.stringify(nextConfig, null, 2), 'utf8')
+  return { id: sanitizedId, config: { id: sanitizedId, ...nextConfig } }
+}
+
+function saveCodexConfigWithMetadata(configDir, id, config = {}) {
+  const currentConfig = readCodexConfig(configDir, id) || {}
+  const mergedConfig = mergeSyncMetadata(currentConfig, config)
+  const savedId = saveCodexConfig(configDir, id, mergedConfig)
+  return { id: savedId, config: readCodexConfig(configDir, savedId) }
 }
 
 if (!JWT_SECRET || !ACC_PASSWORD_HASH) {
@@ -122,65 +325,32 @@ app.post('/api/windows', authMiddleware, (req, res) => {
   let cwd;
   if (rel_path) {
     // 新项目：设置 NEXUS_CWD
-    cwd = rel_path.startsWith('/') ? rel_path : `${WORKSPACE_ROOT}/${rel_path}`;
+    cwd = resolveWorkspacePath(rel_path);
     try {
-      execSync(`tmux set-environment -t ${tmuxSession} NEXUS_CWD "${cwd}"`);
+      setTmuxSessionEnv(tmuxSession, 'NEXUS_CWD', cwd);
     } catch (err) {
       return res.status(500).json({ error: 'failed to set NEXUS_CWD: ' + err.message });
     }
   } else {
     // 新窗口：读取 NEXUS_CWD
-    try {
-      const envOutput = execSync(`tmux show-environment -t ${tmuxSession} NEXUS_CWD 2>/dev/null`).toString().trim();
-      const match = envOutput.match(/^NEXUS_CWD=(.+)$/);
-      cwd = match ? match[1] : WORKSPACE_ROOT;
-    } catch {
-      cwd = WORKSPACE_ROOT;
-    }
+    cwd = readSessionWorkspacePath(tmuxSession);
   }
 
   // 窗口名称基于目录
   const name = cwd.replace(/^\/+|\/+$/g, '').replace(/\//g, '-') || 'window';
 
-  // 构建 shell 命令
-  const proxyVars = {
-    ...(process.env.HTTP_PROXY  ? { HTTP_PROXY:  process.env.HTTP_PROXY  } : {}),
-    ...(process.env.HTTPS_PROXY ? { HTTPS_PROXY: process.env.HTTPS_PROXY } : {}),
-    ...(process.env.ALL_PROXY   ? { ALL_PROXY:   process.env.ALL_PROXY   } : {}),
-    ...(process.env.http_proxy  ? { http_proxy:  process.env.http_proxy  } : {}),
-    ...(process.env.https_proxy ? { https_proxy: process.env.https_proxy } : {}),
-    ...(CLAUDE_PROXY ? { ALL_PROXY: CLAUDE_PROXY, HTTPS_PROXY: CLAUDE_PROXY, HTTP_PROXY: CLAUDE_PROXY, NEXUS_PROXY: CLAUDE_PROXY } : {}),
-  };
-  const proxyExports = Object.entries(proxyVars).map(([k, v]) => `export ${k}='${v}'`).join('; ');
-  const proxyPrefix = proxyExports ? `${proxyExports}; ` : '';
-
-  let shellCmd;
-  if (!usesClaudeProfile(shellType)) {
-    shellCmd = `${proxyPrefix}${DEFAULT_INTERACTIVE_SHELL}`;
-  } else {
-    if (profile) {
-      const runScript = join(__dirname, 'nexus-run-claude.sh');
-      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand(`bash "${runScript}" ${profile} ${cwd}`)}`;
-    } else {
-      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand('claude --dangerously-skip-permissions; exec zsh -i')}`;
-    }
-  }
+  const { proxyVars, shellCmd } = buildShellCommand(shellType, profile, cwd);
 
   // 确保 tmux session 存在
-  try {
-    execSync(`tmux has-session -t ${tmuxSession} 2>/dev/null || tmux new-session -d -s ${tmuxSession} -n shell "${DEFAULT_INTERACTIVE_SHELL}"`);
-  } catch {}
+  ensureTmuxSession(tmuxSession);
 
   // 将代理变量设置到 tmux session 环境
-  for (const [key, value] of Object.entries(proxyVars)) {
-    try {
-      execSync(`tmux set-environment -t ${tmuxSession} ${key} "${value}" 2>/dev/null`);
-    } catch {}
-  }
+  applyProxyEnvToSession(tmuxSession, proxyVars);
 
-  const cmd = `tmux new-window -t ${tmuxSession} -c "${cwd}" -n "${name}" "${shellCmd}"`;
+  const cmd = `tmux new-window -t ${shellQuote(tmuxSession)} -c ${shellQuote(cwd)} -n ${shellQuote(name)} ${shellQuote(shellCmd)}`;
   exec(cmd, (err) => {
     if (err) return res.status(500).json({ error: err.message });
+    rememberProjectDefault(cwd, shellType, profile);
     res.json({ name, cwd, shell_type: shellType, profile: profile || null, session: tmuxSession });
   });
 });
@@ -195,86 +365,64 @@ app.post('/api/sessions', authMiddleware, (req, res) => {
   const shellType = normalizeShellType(req.body?.shell_type);
   const tmuxSession = session || TMUX_SESSION;
   if (!rel_path) return res.status(400).json({ error: 'rel_path required' });
-  const cwd = rel_path.startsWith('/') ? rel_path : `${WORKSPACE_ROOT}/${rel_path}`;
+  const cwd = resolveWorkspacePath(rel_path);
   const name = cwd.replace(/^\/+|\/+$/g, '').replace(/\//g, '-') || 'session';
 
-  // 收集代理变量（宿主机环境 + CLAUDE_PROXY 覆盖）
-  const proxyVars = {
-    ...(process.env.HTTP_PROXY  ? { HTTP_PROXY:  process.env.HTTP_PROXY  } : {}),
-    ...(process.env.HTTPS_PROXY ? { HTTPS_PROXY: process.env.HTTPS_PROXY } : {}),
-    ...(process.env.ALL_PROXY   ? { ALL_PROXY:   process.env.ALL_PROXY   } : {}),
-    ...(process.env.http_proxy  ? { http_proxy:  process.env.http_proxy  } : {}),
-    ...(process.env.https_proxy ? { https_proxy: process.env.https_proxy } : {}),
-    ...(CLAUDE_PROXY ? { ALL_PROXY: CLAUDE_PROXY, HTTPS_PROXY: CLAUDE_PROXY, HTTP_PROXY: CLAUDE_PROXY, NEXUS_PROXY: CLAUDE_PROXY } : {}),
-  };
-
-  const proxyExports = Object.entries(proxyVars).map(([k, v]) => `export ${k}='${v}'`).join('; ');
-  const proxyPrefix = proxyExports ? `${proxyExports}; ` : '';
-
-  let shellCmd;
-  if (!usesClaudeProfile(shellType)) {
-    shellCmd = `${proxyPrefix}${DEFAULT_INTERACTIVE_SHELL}`;
-  } else {
-    if (profile) {
-      const runScript = join(__dirname, 'nexus-run-claude.sh');
-      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand(`bash "${runScript}" ${profile} ${cwd}`)}`;
-    } else {
-      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand('claude --dangerously-skip-permissions; exec zsh -i')}`;
-    }
-  }
+  const { proxyVars, shellCmd } = buildShellCommand(shellType, profile, cwd);
 
   // 确保 tmux session 存在
-  try {
-    execSync(`tmux has-session -t ${tmuxSession} 2>/dev/null || tmux new-session -d -s ${tmuxSession} -n shell "${DEFAULT_INTERACTIVE_SHELL}"`);
-  } catch {}
+  ensureTmuxSession(tmuxSession);
 
   // 将代理变量设置到 tmux session 环境，新窗口才能继承
-  for (const [key, value] of Object.entries(proxyVars)) {
-    try {
-      execSync(`tmux set-environment -t ${tmuxSession} ${key} "${value}" 2>/dev/null`);
-    } catch {}
-  }
+  applyProxyEnvToSession(tmuxSession, proxyVars);
 
-  const cmd = `tmux new-window -t ${tmuxSession} -c "${cwd}" -n "${name}" "${shellCmd}"`;
+  const cmd = `tmux new-window -t ${shellQuote(tmuxSession)} -c ${shellQuote(cwd)} -n ${shellQuote(name)} ${shellQuote(shellCmd)}`;
   exec(cmd, (err) => {
     if (err) return res.status(500).json({ error: err.message });
+    rememberProjectDefault(cwd, shellType, profile);
     res.json({ name, cwd, shell_type: shellType, profile: profile || null, session: tmuxSession });
   });
 });
 
 // GET /api/configs — 列出所有 claude 配置 profile
 app.get('/api/configs', authMiddleware, (req, res) => {
-  try {
-    const files = readdirSync(CONFIGS_DIR, { withFileTypes: true })
-      .filter(f => f.isFile() && f.name.endsWith('.json'))
-      .map(f => ({
-        name: f.name,
-        mtime: statSync(join(CONFIGS_DIR, f.name)).mtimeMs,
-      }))
-      .sort((a, b) => b.mtime - a.mtime)
-      .map(f => f.name);
-    const configs = files.map(f => {
-      const id = f.replace('.json', '');
-      try {
-        const data = JSON.parse(readFileSync(join(CONFIGS_DIR, f), 'utf8'));
-        return { id, label: data.label || id, ...data };
-      } catch {
-        return { id, label: id };
-      }
-    });
-    res.json(configs);
-  } catch {
-    res.json([]);
-  }
+  res.json(listClaudeConfigs(CONFIGS_DIR));
 });
 
 // POST /api/configs/:id — 创建或更新配置 profile
 app.post('/api/configs/:id', authMiddleware, (req, res) => {
+  try {
+    const { id } = saveClaudeConfig(CONFIGS_DIR, req.params.id, req.body || {});
+    res.json({ ok: true, id });
+  } catch (err) {
+    const status = err.message === 'invalid id' ? 400 : 500;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// POST /api/configs/:id/sync-current — 用当前系统 live Claude 配置覆盖现有 profile
+app.post('/api/configs/:id/sync-current', authMiddleware, (req, res) => {
   const id = req.params.id.replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
   if (!id) return res.status(400).json({ error: 'invalid id' });
+
+  const filePath = join(CONFIGS_DIR, `${id}.json`);
+  if (!existsSync(filePath)) {
+    return res.status(404).json({ error: 'config not found' });
+  }
+
+  const imported = readGlobalClaudeConfig();
+  if (!imported) {
+    return res.status(404).json({ error: 'global ~/.claude/settings.json not found' });
+  }
+
   try {
-    writeFileSync(join(CONFIGS_DIR, `${id}.json`), JSON.stringify(req.body, null, 2), 'utf8');
-    res.json({ ok: true, id });
+    const current = readClaudeConfig(CONFIGS_DIR, id) || {};
+
+    const { config } = saveClaudeConfig(CONFIGS_DIR, id, {
+      ...imported,
+      label: String(current.label || imported.label || id).trim() || id,
+    });
+    res.json({ ok: true, id, config });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -289,6 +437,189 @@ app.delete('/api/configs/:id', authMiddleware, (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// GET /api/codex-configs — 列出所有 codex 配置 profile
+app.get('/api/codex-configs', authMiddleware, (req, res) => {
+  res.json(listCodexConfigs(CODEX_CONFIGS_DIR));
+});
+
+// POST /api/codex-configs/import-global — 导入当前用户 ~/.codex
+app.post('/api/codex-configs/import-global', authMiddleware, (req, res) => {
+  const imported = readGlobalCodexConfig();
+  if (!imported) {
+    return res.status(404).json({ error: 'global ~/.codex not found' });
+  }
+
+  try {
+    const preferredId = String(req.body?.id || '').trim();
+    const baseId = preferredId.replace(/[^a-z0-9_-]/gi, '-').toLowerCase() || 'imported';
+    let nextId = baseId;
+    let counter = 1;
+    while (existsSync(join(CODEX_CONFIGS_DIR, `${nextId}.json`))) {
+      nextId = `${baseId}-${counter++}`;
+    }
+
+    const { id, config } = saveCodexConfigWithMetadata(CODEX_CONFIGS_DIR, nextId, imported);
+    res.json({ ok: true, id, config });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/codex-configs/:id/sync-current — 用当前系统 live Codex 配置覆盖现有 profile
+app.post('/api/codex-configs/:id/sync-current', authMiddleware, (req, res) => {
+  const existing = readCodexConfig(CODEX_CONFIGS_DIR, req.params.id);
+  if (!existing) return res.status(404).json({ error: 'config not found' });
+
+  const imported = readGlobalCodexConfig();
+  if (!imported) {
+    return res.status(404).json({ error: 'global ~/.codex not found' });
+  }
+
+  try {
+    const { id, config } = saveCodexConfigWithMetadata(CODEX_CONFIGS_DIR, req.params.id, {
+      ...imported,
+      label: String(existing.label || imported.label || req.params.id).trim() || req.params.id,
+    });
+    res.json({ ok: true, id, config });
+  } catch (err) {
+    const status = err.message === 'invalid id' ? 400 : 500;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// POST /api/codex-configs/:id/validate — 活体验证 codex profile
+app.post('/api/codex-configs/:id/validate', authMiddleware, (req, res) => {
+  const config = readCodexConfig(CODEX_CONFIGS_DIR, req.params.id);
+  if (!config) return res.status(404).json({ error: 'config not found' });
+
+  const tempHome = mkdtempSync(join(CODEX_VALIDATE_DIR, 'validate-'));
+  const outputFile = join(tempHome, 'last-message.txt');
+  try {
+    materializeCodexHome({ config, homeDir: tempHome, projectPath: __dirname });
+    const proxyVars = collectProxyVars(process.env, CLAUDE_PROXY);
+    const result = spawnSync(
+      resolveCodexExecutable(),
+      [
+        'exec',
+        '--skip-git-repo-check',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--color',
+        'never',
+        '-C',
+        __dirname,
+        '-o',
+        outputFile,
+        'Reply with EXACTLY: OK',
+      ],
+      {
+        env: sanitizeInteractiveEnv(process.env, {
+          HOME: tempHome,
+          ...proxyVars,
+        }),
+        encoding: 'utf8',
+        timeout: 45000,
+      },
+    );
+
+    if (result.error) {
+      const status = result.error.code === 'ETIMEDOUT' ? 504 : 500;
+      return res.status(status).json({ ok: false, error: result.error.message });
+    }
+
+    if (result.status !== 0) {
+      return res.status(400).json({ ok: false, error: summarizeCodexValidationFailure(result) });
+    }
+
+    const message = existsSync(outputFile) ? readFileSync(outputFile, 'utf8').trim() : 'OK';
+    res.json({ ok: true, message: message || 'OK' });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+// POST /api/codex-configs/:id — 创建或更新 codex profile
+app.post('/api/codex-configs/:id', authMiddleware, (req, res) => {
+  try {
+    const { id } = saveCodexConfigWithMetadata(CODEX_CONFIGS_DIR, req.params.id, req.body || {});
+    res.json({ ok: true, id });
+  } catch (err) {
+    const status = err.message === 'invalid id' ? 400 : 500;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// GET /api/cc-switch/providers?kind=claude|codex — 读取 cc-switch provider 列表
+app.get('/api/cc-switch/providers', authMiddleware, (req, res) => {
+  const kind = String(req.query.kind || '').trim();
+  if (kind !== 'claude' && kind !== 'codex') {
+    return res.status(400).json({ error: 'invalid kind' });
+  }
+
+  const existingProfiles = kind === 'claude'
+    ? listClaudeConfigs(CONFIGS_DIR)
+    : listCodexConfigs(CODEX_CONFIGS_DIR);
+
+  res.json(listCcSwitchProviders({ kind, existingProfiles }));
+});
+
+// POST /api/cc-switch/providers/:kind/:providerId/import — 从 cc-switch 覆盖导入单个 provider
+app.post('/api/cc-switch/providers/:kind/:providerId/import', authMiddleware, (req, res) => {
+  const kind = String(req.params.kind || '').trim();
+  if (kind !== 'claude' && kind !== 'codex') {
+    return res.status(400).json({ error: 'invalid kind' });
+  }
+
+  const existingProfiles = kind === 'claude'
+    ? listClaudeConfigs(CONFIGS_DIR)
+    : listCodexConfigs(CODEX_CONFIGS_DIR);
+
+  const imported = importCcSwitchProvider({
+    kind,
+    providerId: req.params.providerId,
+  });
+  if (!imported) {
+    return res.status(404).json({ error: 'provider not found' });
+  }
+
+  const targetId = resolveCcSwitchTargetProfileId(existingProfiles, {
+    id: req.params.providerId,
+    name: imported.SYNC_SOURCE_NAME || imported.label,
+  });
+
+  try {
+    if (kind === 'claude') {
+      const { id, config } = saveClaudeConfig(CONFIGS_DIR, targetId, imported);
+      return res.json({ ok: true, id, config });
+    }
+
+    const { id, config } = saveCodexConfigWithMetadata(CODEX_CONFIGS_DIR, targetId, imported);
+    res.json({ ok: true, id, config });
+  } catch (err) {
+    const status = err.message === 'invalid id' ? 400 : 500;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// DELETE /api/codex-configs/:id — 删除 codex profile
+app.delete('/api/codex-configs/:id', authMiddleware, (req, res) => {
+  try {
+    deleteCodexConfig(CODEX_CONFIGS_DIR, req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/project-defaults?path=/abs/path — 读取指定项目路径的 shell/profile 默认值
+app.get('/api/project-defaults', authMiddleware, (req, res) => {
+  const rawPath = String(req.query.path || '').trim();
+  if (!rawPath) return res.json(null);
+  const projectPath = resolveWorkspacePath(rawPath);
+  res.json(getProjectDefault(PROJECT_DEFAULTS_FILE, projectPath));
 });
 
 // GET /api/toolbar-config — 读取工具栏配置
@@ -962,7 +1293,7 @@ app.post('/api/projects', authMiddleware, (req, res) => {
   const shellType = normalizeShellType(req.body?.shell_type)
   if (!path) return res.status(400).json({ error: 'path required' })
 
-  const cwd = path.startsWith('/') ? path : `${WORKSPACE_ROOT}/${path}`
+  const cwd = resolveWorkspacePath(path)
 
   // project 名称基于路径：把 / 替换成 -，并去除首尾 -
   let projectName = cwd.replace(/^\/+|\/+$/g, '').replace(/\//g, '-')
@@ -980,29 +1311,7 @@ app.post('/api/projects', authMiddleware, (req, res) => {
     }
   } catch {}
 
-  // 构建 shell 命令
-  const proxyVars = {
-    ...(process.env.HTTP_PROXY  ? { HTTP_PROXY:  process.env.HTTP_PROXY  } : {}),
-    ...(process.env.HTTPS_PROXY ? { HTTPS_PROXY: process.env.HTTPS_PROXY } : {}),
-    ...(process.env.ALL_PROXY   ? { ALL_PROXY:   process.env.ALL_PROXY   } : {}),
-    ...(process.env.http_proxy  ? { http_proxy:  process.env.http_proxy  } : {}),
-    ...(process.env.https_proxy ? { https_proxy: process.env.https_proxy } : {}),
-    ...(CLAUDE_PROXY ? { ALL_PROXY: CLAUDE_PROXY, HTTPS_PROXY: CLAUDE_PROXY, HTTP_PROXY: CLAUDE_PROXY, NEXUS_PROXY: CLAUDE_PROXY } : {}),
-  }
-  const proxyExports = Object.entries(proxyVars).map(([k, v]) => `export ${k}='${v}'`).join('; ')
-  const proxyPrefix = proxyExports ? `${proxyExports}; ` : ''
-
-  let shellCmd
-  if (!usesClaudeProfile(shellType)) {
-    shellCmd = `${proxyPrefix}${DEFAULT_INTERACTIVE_SHELL}`
-  } else {
-    if (profile) {
-      const runScript = join(__dirname, 'nexus-run-claude.sh')
-      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand(`bash "${runScript}" ${profile} ${cwd}`)}`
-    } else {
-      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand('claude --dangerously-skip-permissions; exec zsh -i')}`
-    }
-  }
+  const { proxyVars, shellCmd } = buildShellCommand(shellType, profile, cwd)
 
   // 初始窗口名使用目录名[-profile名]（取路径最后一部分）
   const dirName = cwd.replace(/^\/+|\/+$/g, '').split('/').pop() || '~'
@@ -1010,17 +1319,16 @@ app.post('/api/projects', authMiddleware, (req, res) => {
 
   // 创建 tmux session（如果不存在）
   try {
-    execSync(`tmux new-session -d -s ${finalName} -n "${initialWindowName}" -c "${cwd}" "${shellCmd}"`)
+    execSync(`tmux new-session -d -s ${shellQuote(finalName)} -n ${shellQuote(initialWindowName)} -c ${shellQuote(cwd)} ${shellQuote(shellCmd)}`)
     // 设置 NEXUS_CWD
-    execSync(`tmux set-environment -t ${finalName} NEXUS_CWD "${cwd}"`)
+    setTmuxSessionEnv(finalName, 'NEXUS_CWD', cwd)
     // 设置代理变量
-    for (const [key, value] of Object.entries(proxyVars)) {
-      try { execSync(`tmux set-environment -t ${finalName} ${key} "${value}" 2>/dev/null`) } catch {}
-    }
+    applyProxyEnvToSession(finalName, proxyVars)
   } catch (err) {
     return res.status(500).json({ error: 'failed to create project: ' + err.message })
   }
 
+  rememberProjectDefault(cwd, shellType, profile)
   res.json({ name: finalName, path: cwd, shell_type: shellType, profile: profile || null })
 })
 
@@ -1033,13 +1341,9 @@ app.post('/api/projects/:name/channels', authMiddleware, (req, res) => {
   // 优先使用前端传入的 path，其次读取 NEXUS_CWD，最后 fallback 到 WORKSPACE_ROOT
   let cwd = WORKSPACE_ROOT
   if (bodyPath) {
-    cwd = bodyPath
+    cwd = resolveWorkspacePath(bodyPath)
   } else {
-    try {
-      const envOutput = execSync(`tmux show-environment -t ${sessionName} NEXUS_CWD 2>/dev/null`).toString().trim()
-      const match = envOutput.match(/^NEXUS_CWD=(.+)$/)
-      if (match) cwd = match[1]
-    } catch {}
+    cwd = readSessionWorkspacePath(sessionName)
   }
 
   // Channel 命名：profile 名[-序号]
@@ -1053,39 +1357,17 @@ app.post('/api/projects/:name/channels', authMiddleware, (req, res) => {
     }
   } catch {}
 
-  // 构建 shell 命令
-  const proxyVars = {
-    ...(process.env.HTTP_PROXY  ? { HTTP_PROXY:  process.env.HTTP_PROXY  } : {}),
-    ...(process.env.HTTPS_PROXY ? { HTTPS_PROXY: process.env.HTTPS_PROXY } : {}),
-    ...(process.env.ALL_PROXY   ? { ALL_PROXY:   process.env.ALL_PROXY   } : {}),
-    ...(process.env.http_proxy  ? { http_proxy:  process.env.http_proxy  } : {}),
-    ...(process.env.https_proxy ? { https_proxy: process.env.https_proxy } : {}),
-    ...(CLAUDE_PROXY ? { ALL_PROXY: CLAUDE_PROXY, HTTPS_PROXY: CLAUDE_PROXY, HTTP_PROXY: CLAUDE_PROXY, NEXUS_PROXY: CLAUDE_PROXY } : {}),
-  }
-  const proxyExports = Object.entries(proxyVars).map(([k, v]) => `export ${k}='${v}'`).join('; ')
-  const proxyPrefix = proxyExports ? `${proxyExports}; ` : ''
-
-  let shellCmd
-  if (!usesClaudeProfile(shellType)) {
-    shellCmd = `${proxyPrefix}${DEFAULT_INTERACTIVE_SHELL}`
-  } else {
-    if (profile) {
-      const runScript = join(__dirname, 'nexus-run-claude.sh')
-      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand(`bash "${runScript}" ${profile} ${cwd}`)}`
-    } else {
-      shellCmd = `${proxyPrefix}${wrapInteractiveShellCommand('claude --dangerously-skip-permissions; exec zsh -i')}`
-    }
-  }
+  const { proxyVars, shellCmd } = buildShellCommand(shellType, profile, cwd)
 
   // 确保 session 存在
-  try {
-    execSync(`tmux has-session -t ${sessionName} 2>/dev/null || tmux new-session -d -s ${sessionName} -n shell "${DEFAULT_INTERACTIVE_SHELL}"`)
-  } catch {}
+  ensureTmuxSession(sessionName)
+  applyProxyEnvToSession(sessionName, proxyVars)
 
   // 创建新 window
-  const cmd = `tmux new-window -t ${sessionName} -c "${cwd}" -n "${channelName}" "${shellCmd}"`
+  const cmd = `tmux new-window -t ${shellQuote(sessionName)} -c ${shellQuote(cwd)} -n ${shellQuote(channelName)} ${shellQuote(shellCmd)}`
   exec(cmd, (err) => {
     if (err) return res.status(500).json({ error: err.message })
+    rememberProjectDefault(cwd, shellType, profile)
     res.json({ name: channelName, cwd, shell_type: shellType, profile: profile || null, project: sessionName })
   })
 })
@@ -1157,13 +1439,15 @@ app.delete('/api/projects/:name', authMiddleware, (req, res) => {
   const sessionName = req.params.name
   // 验证 session 存在
   try {
-    execSync(`tmux has-session -t ${sessionName}`)
+    execSync(`tmux has-session -t ${shellQuote(sessionName)}`)
   } catch {
     return res.status(404).json({ error: 'project not found' })
   }
+  const windowIds = listTmuxWindowIds(sessionName)
   // kill session
-  exec(`tmux kill-session -t ${sessionName}`, (err) => {
+  exec(`tmux kill-session -t ${shellQuote(sessionName)}`, (err) => {
     if (err) return res.status(500).json({ error: err.message })
+    windowIds.forEach(cleanupCodexRuntime)
     res.json({ ok: true })
   })
 })
@@ -1190,21 +1474,24 @@ app.get('/api/sessions', authMiddleware, (req, res) => {
 app.delete('/api/sessions/:id', authMiddleware, (req, res) => {
   const index = req.params.id
   const session = req.query.session || TMUX_SESSION
+  const windowId = getTmuxWindowId(session, index)
   // Check window count first; if this is the last window, create a fallback
   // window before killing so the tmux session is not destroyed.
-  exec(`tmux list-windows -t ${session} -F "#{window_index}" 2>/dev/null | wc -l`, (countErr, countOut) => {
+  exec(`tmux list-windows -t ${shellQuote(session)} -F "#{window_index}" 2>/dev/null | wc -l`, (countErr, countOut) => {
     const windowCount = parseInt(countOut.trim()) || 0
     if (windowCount <= 1) {
       // Last window: create a new shell first to keep the session alive
-      exec(`tmux new-window -t ${session} -n shell "${DEFAULT_INTERACTIVE_SHELL}"`, () => {
-        exec(`tmux kill-window -t ${session}:${index}`, (err) => {
+      exec(`tmux new-window -t ${shellQuote(session)} -n shell ${shellQuote(DEFAULT_INTERACTIVE_SHELL)}`, () => {
+        exec(`tmux kill-window -t ${shellQuote(`${session}:${index}`)}`, (err) => {
           if (err) return res.status(500).json({ error: err.message })
+          cleanupCodexRuntime(windowId)
           res.json({ ok: true })
         })
       })
     } else {
-      exec(`tmux kill-window -t ${session}:${index}`, (err) => {
+      exec(`tmux kill-window -t ${shellQuote(`${session}:${index}`)}`, (err) => {
         if (err) return res.status(500).json({ error: err.message })
+        cleanupCodexRuntime(windowId)
         res.json({ ok: true })
       })
     }

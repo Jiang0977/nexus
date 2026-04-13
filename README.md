@@ -93,6 +93,8 @@ Default login password: `nexus123` (user can change it in `.env` after setup).
 
 Expose securely without port forwarding via [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) or [Tailscale](https://tailscale.com/).
 
+For production updates, restart, verification, and rollback, use **[DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md)** as the single source of truth.
+
 ---
 
 ## Requirements
@@ -121,6 +123,7 @@ Nexus is a **single-user, self-hosted tool** — not a multi-tenant platform.
 | Doc | |
 |---|---|
 | [QUICKSTART.md](docs/QUICKSTART.md) | Step-by-step setup guide |
+| [DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md) | Production update, restart, verification, and rollback runbook |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design |
 | [ROADMAP.md](docs/ROADMAP.md) | What's next |
 | [📖 The story behind Nexus](docs/story.md) | Why this was built |
