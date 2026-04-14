@@ -17,6 +17,8 @@ import { resolvePassiveAttachTarget } from './tmuxSessionPolicy.js';
 import { normalizeShellType } from './frontend/src/shellType.js';
 import { createGracefulShutdown } from './gracefulShutdown.js';
 import {
+  buildCodexValidationConfig,
+  detectCodexAuthMode,
   deleteCodexConfig,
   listCodexConfigs,
   materializeCodexHome,
@@ -90,6 +92,8 @@ for (const key of SERVER_ONLY_ENV_KEYS) delete process.env[key];
 
 const DEFAULT_INTERACTIVE_SHELL = wrapInteractiveShellCommand('exec zsh -i');
 const SYNC_METADATA_KEYS = ['SYNC_SOURCE', 'SYNC_SOURCE_ID', 'SYNC_SOURCE_NAME'];
+const CODEX_LOGIN_STATUS_TIMEOUT_MS = 15000;
+const CODEX_EXEC_VALIDATE_TIMEOUT_MS = 120000;
 
 function clearTmuxServerOnlyEnv() {
   for (const key of SERVER_ONLY_ENV_KEYS) {
@@ -208,6 +212,27 @@ function summarizeCodexValidationFailure(result) {
   if (stderr) return stderr.split('\n').slice(-8).join('\n')
   if (stdout) return stdout.split('\n').slice(-8).join('\n')
   return `codex exited with status ${result.status ?? 'unknown'}`
+}
+
+function summarizeCodexCommandSuccess(result) {
+  const stdout = String(result.stdout || '').trim()
+  const stderr = String(result.stderr || '').trim()
+  return stdout || stderr || 'OK'
+}
+
+function codexTimeoutMessage(step, timeoutMs) {
+  return `codex ${step} timed out after ${Math.round(timeoutMs / 1000)}s`
+}
+
+function runCodexValidationCommand(tempHome, proxyVars, args, timeout) {
+  return spawnSync(resolveCodexExecutable(), args, {
+    env: sanitizeInteractiveEnv(process.env, {
+      HOME: tempHome,
+      ...proxyVars,
+    }),
+    encoding: 'utf8',
+    timeout,
+  })
 }
 
 function sanitizeProfileId(id) {
@@ -497,13 +522,51 @@ app.post('/api/codex-configs/:id/validate', authMiddleware, (req, res) => {
   const tempHome = mkdtempSync(join(CODEX_VALIDATE_DIR, 'validate-'));
   const outputFile = join(tempHome, 'last-message.txt');
   try {
-    materializeCodexHome({ config, homeDir: tempHome, projectPath: __dirname });
+    const validationConfig = buildCodexValidationConfig(config)
+    const authMode = detectCodexAuthMode(validationConfig)
+    const requiresExecValidation = authMode !== 'chatgpt'
+      || Boolean(validationConfig.OPENAI_API_KEY)
+      || Boolean(validationConfig.BASE_URL)
+
+    materializeCodexHome({
+      config: validationConfig,
+      homeDir: tempHome,
+      projectPath: __dirname,
+      includeSharedState: false,
+    });
     const proxyVars = collectProxyVars(process.env, CLAUDE_PROXY);
-    const result = spawnSync(
-      resolveCodexExecutable(),
+    const loginStatusResult = runCodexValidationCommand(
+      tempHome,
+      proxyVars,
+      ['login', 'status'],
+      CODEX_LOGIN_STATUS_TIMEOUT_MS,
+    )
+
+    if (loginStatusResult.error) {
+      const status = loginStatusResult.error.code === 'ETIMEDOUT' ? 504 : 500;
+      const error = loginStatusResult.error.code === 'ETIMEDOUT'
+        ? codexTimeoutMessage('login status', CODEX_LOGIN_STATUS_TIMEOUT_MS)
+        : loginStatusResult.error.message
+      return res.status(status).json({ ok: false, error });
+    }
+
+    if (loginStatusResult.status !== 0) {
+      return res.status(400).json({ ok: false, error: summarizeCodexValidationFailure(loginStatusResult) });
+    }
+
+    const loginStatusMessage = summarizeCodexCommandSuccess(loginStatusResult)
+
+    if (!requiresExecValidation) {
+      return res.json({ ok: true, message: loginStatusMessage || 'Logged in using ChatGPT' })
+    }
+
+    const result = runCodexValidationCommand(
+      tempHome,
+      proxyVars,
       [
         'exec',
         '--skip-git-repo-check',
+        '--ephemeral',
         '--dangerously-bypass-approvals-and-sandbox',
         '--color',
         'never',
@@ -513,19 +576,15 @@ app.post('/api/codex-configs/:id/validate', authMiddleware, (req, res) => {
         outputFile,
         'Reply with EXACTLY: OK',
       ],
-      {
-        env: sanitizeInteractiveEnv(process.env, {
-          HOME: tempHome,
-          ...proxyVars,
-        }),
-        encoding: 'utf8',
-        timeout: 45000,
-      },
-    );
+      CODEX_EXEC_VALIDATE_TIMEOUT_MS,
+    )
 
     if (result.error) {
       const status = result.error.code === 'ETIMEDOUT' ? 504 : 500;
-      return res.status(status).json({ ok: false, error: result.error.message });
+      const error = result.error.code === 'ETIMEDOUT'
+        ? codexTimeoutMessage('exec validation', CODEX_EXEC_VALIDATE_TIMEOUT_MS)
+        : result.error.message
+      return res.status(status).json({ ok: false, error });
     }
 
     if (result.status !== 0) {
