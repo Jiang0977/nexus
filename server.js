@@ -32,6 +32,7 @@ import {
   listCcSwitchProviders,
   resolveCcSwitchTargetProfileId,
 } from './ccSwitchConfig.js';
+import { deleteCodexSession, findProjectCodexSession, listProjectCodexSessions } from './codexSessions.js';
 import { getProjectDefault, saveProjectDefault } from './projectDefaults.js';
 import { buildInteractiveShellCommand, collectProxyVars, shellQuote } from './shellLaunch.js';
 import { readGlobalClaudeConfig, readGlobalCodexConfig } from './systemConfig.js';
@@ -60,6 +61,7 @@ const CONFIGS_DIR = join(DATA_DIR, 'configs');
 const CODEX_CONFIGS_DIR = join(DATA_DIR, 'codex-configs');
 const CODEX_RUNTIME_DIR = join(DATA_DIR, 'codex-runtime');
 const CODEX_VALIDATE_DIR = join(DATA_DIR, 'codex-validate');
+const SHARED_CODEX_HOME = join(process.env.HOME || '', '.codex');
 const PROJECT_DEFAULTS_FILE = join(DATA_DIR, 'project-shell-defaults.json');
 const TASKS_FILE = join(DATA_DIR, 'tasks.json');
 const UPLOADS_DIR = join(DATA_DIR, 'uploads');
@@ -73,6 +75,7 @@ if (!existsSync(UPLOADS_DIR)) mkdirSync(UPLOADS_DIR, { recursive: true });
 const app = express();
 app.use(express.json());
 const activeTaskChildren = new Set();
+const codexResumeDedupMap = new Map();
 
 const {
   JWT_SECRET,
@@ -117,6 +120,18 @@ function readSessionWorkspacePath(sessionName) {
   return WORKSPACE_ROOT
 }
 
+function resolveProjectPath(sessionName) {
+  const sessionPath = readSessionWorkspacePath(sessionName)
+  if (sessionPath && sessionPath !== WORKSPACE_ROOT) return sessionPath
+
+  try {
+    const panePath = execSync(`tmux display-message -t ${shellQuote(sessionName)} -p '#{pane_current_path}' 2>/dev/null`).toString().trim()
+    if (panePath) return panePath
+  } catch {}
+
+  return sessionPath || WORKSPACE_ROOT
+}
+
 function ensureTmuxSession(sessionName) {
   try {
     execSync(
@@ -137,7 +152,7 @@ function applyProxyEnvToSession(sessionName, proxyVars) {
   }
 }
 
-function buildShellCommand(shellType, profile, cwd) {
+function buildShellCommand(shellType, profile, cwd, options = {}) {
   const proxyVars = collectProxyVars(process.env, CLAUDE_PROXY)
   return {
     proxyVars,
@@ -145,6 +160,7 @@ function buildShellCommand(shellType, profile, cwd) {
       shellType,
       profile,
       cwd,
+      resumeSessionId: options.resumeSessionId || '',
       scriptsDir: __dirname,
       defaultInteractiveShell: DEFAULT_INTERACTIVE_SHELL,
       proxyVars,
@@ -154,6 +170,75 @@ function buildShellCommand(shellType, profile, cwd) {
 
 function rememberProjectDefault(cwd, shellType, profile) {
   saveProjectDefault(PROJECT_DEFAULTS_FILE, { path: cwd, shellType, profile })
+}
+
+function buildCodexResumeWindowName(sessionName, sessionInfo) {
+  const titleSlug = String(sessionInfo?.title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 18)
+  const shortId = String(sessionInfo?.id || '').slice(0, 8) || 'history'
+  const baseName = titleSlug ? `codex-${titleSlug}` : `codex-${shortId}`
+
+  try {
+    const existing = execSync(`tmux list-windows -t ${shellQuote(sessionName)} -F "#{window_name}" 2>/dev/null`)
+      .toString()
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+    let candidate = baseName
+    let counter = 1
+    while (existing.includes(candidate)) {
+      candidate = `${baseName}-${counter++}`
+    }
+    return candidate
+  } catch {
+    return baseName
+  }
+}
+
+function createTmuxWindowSync(sessionName, cwd, windowName, shellCmd) {
+  const output = execSync(
+    `tmux new-window -P -F "#{window_index}|#{window_name}" -t ${shellQuote(sessionName)} -c ${shellQuote(cwd)} -n ${shellQuote(windowName)} ${shellQuote(shellCmd)}`,
+    { encoding: 'utf8' },
+  ).trim()
+  const [index, name] = output.split('|')
+  return {
+    index: Number(index),
+    name: name || windowName,
+  }
+}
+
+async function runDedupedCodexResume(key, action) {
+  const now = Date.now()
+  for (const [entryKey, entry] of codexResumeDedupMap.entries()) {
+    if (entry.expiresAt <= now) codexResumeDedupMap.delete(entryKey)
+  }
+
+  const existing = codexResumeDedupMap.get(key)
+  if (existing && existing.expiresAt > now) {
+    if (existing.promise) {
+      const result = await existing.promise
+      return { ...result, deduped: true }
+    }
+    return { ...existing.result, deduped: true }
+  }
+
+  const promise = Promise.resolve().then(action)
+  codexResumeDedupMap.set(key, { expiresAt: now + 15000, promise })
+
+  try {
+    const result = await promise
+    codexResumeDedupMap.set(key, {
+      expiresAt: Date.now() + 15000,
+      result,
+    })
+    return { ...result, deduped: false }
+  } catch (error) {
+    codexResumeDedupMap.delete(key)
+    throw error
+  }
 }
 
 function getTmuxWindowId(sessionName, windowIndex) {
@@ -1319,6 +1404,147 @@ app.get('/api/session-cwd', authMiddleware, (req, res) => {
 
   const relative = cwd.startsWith(WORKSPACE_ROOT) ? cwd.slice(WORKSPACE_ROOT.length).replace(/^\/+/, '') : ''
   res.json({ cwd, relative })
+})
+
+// GET /api/codex-sessions?project=<name>&limit=<n>&cursor=<offset>
+app.get('/api/codex-sessions', authMiddleware, (req, res) => {
+  const projectName = String(req.query.project || '').trim()
+  if (!projectName) {
+    return res.status(400).json({ error: 'project required' })
+  }
+
+  try {
+    execSync(`tmux has-session -t ${shellQuote(projectName)} 2>/dev/null`)
+  } catch {
+    return res.status(404).json({ error: 'project not found' })
+  }
+
+  try {
+    const result = listProjectCodexSessions({
+      projectName,
+      projectPath: resolveProjectPath(projectName),
+      codexHome: SHARED_CODEX_HOME,
+      limit: req.query.limit,
+      cursor: req.query.cursor,
+    })
+    res.json(result)
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'failed to list codex sessions' })
+  }
+})
+
+// POST /api/codex-sessions/:id/resume
+app.post('/api/codex-sessions/:id/resume', authMiddleware, async (req, res) => {
+  const sessionId = String(req.params.id || '').trim()
+  const projectName = String(req.body?.project || req.query.project || '').trim()
+
+  if (!sessionId) {
+    return res.status(400).json({ error: 'session id required' })
+  }
+  if (!projectName) {
+    return res.status(400).json({ error: 'project required' })
+  }
+
+  try {
+    execSync(`tmux has-session -t ${shellQuote(projectName)} 2>/dev/null`)
+  } catch {
+    return res.status(404).json({ error: 'project not found' })
+  }
+
+  const projectPath = resolveProjectPath(projectName)
+  const sessionInfo = findProjectCodexSession({
+    sessionId,
+    projectName,
+    projectPath,
+    codexHome: SHARED_CODEX_HOME,
+  })
+  if (!sessionInfo) {
+    return res.status(404).json({ error: 'codex session not found in project' })
+  }
+
+  try {
+    const result = await runDedupedCodexResume(`${projectName}:${sessionId}`, async () => {
+      const resumeCwd = sessionInfo.cwd || projectPath
+      const { proxyVars, shellCmd } = buildShellCommand('codex', '', resumeCwd, {
+        resumeSessionId: sessionId,
+      })
+
+      ensureTmuxSession(projectName)
+      applyProxyEnvToSession(projectName, proxyVars)
+
+      const createdWindow = createTmuxWindowSync(
+        projectName,
+        resumeCwd,
+        buildCodexResumeWindowName(projectName, sessionInfo),
+        shellCmd,
+      )
+
+      try {
+        execSync(`tmux select-window -t ${shellQuote(`${projectName}:${createdWindow.index}`)} 2>/dev/null`)
+      } catch {}
+      try {
+        execSync(`tmux set-environment -t ${shellQuote(projectName)} NEXUS_LAST_CHANNEL ${createdWindow.index} 2>/dev/null`)
+      } catch {}
+
+      return {
+        ok: true,
+        project: projectName,
+        channelIndex: createdWindow.index,
+        channelName: createdWindow.name,
+        sessionId,
+      }
+    })
+
+    res.json(result)
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'failed to resume codex session' })
+  }
+})
+
+// DELETE /api/codex-sessions/:id
+app.delete('/api/codex-sessions/:id', authMiddleware, (req, res) => {
+  const sessionId = String(req.params.id || '').trim()
+  const projectName = String(req.body?.project || req.query.project || '').trim()
+
+  if (!sessionId) {
+    return res.status(400).json({ error: 'session id required' })
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(sessionId)) {
+    return res.status(400).json({ error: 'invalid session id' })
+  }
+  if (!projectName) {
+    return res.status(400).json({ error: 'project required' })
+  }
+
+  try {
+    execSync(`tmux has-session -t ${shellQuote(projectName)} 2>/dev/null`)
+  } catch {
+    return res.status(404).json({ error: 'project not found' })
+  }
+
+  const projectPath = resolveProjectPath(projectName)
+  const sessionInfo = findProjectCodexSession({
+    sessionId,
+    projectName,
+    projectPath,
+    codexHome: SHARED_CODEX_HOME,
+  })
+  if (!sessionInfo) {
+    return res.status(404).json({ error: 'codex session not found in project' })
+  }
+
+  try {
+    const result = deleteCodexSession({
+      sessionId,
+      codexHome: SHARED_CODEX_HOME,
+    })
+    res.json({
+      ok: true,
+      sessionId: result.id,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'failed to delete codex session' })
+  }
 })
 
 // GET /api/projects/:name/channels — 列出指定 Project 的 Channels（windows）

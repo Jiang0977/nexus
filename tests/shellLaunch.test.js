@@ -57,6 +57,20 @@ test('buildInteractiveShellCommand always routes Codex through isolated launcher
   assert.match(command, /"" "\/workspace\/demo"/)
 })
 
+test('buildInteractiveShellCommand passes resume session id to Codex launcher when provided', () => {
+  const command = buildInteractiveShellCommand({
+    shellType: 'codex',
+    profile: '',
+    cwd: '/workspace/demo',
+    scriptsDir: '/srv/nexus',
+    defaultInteractiveShell: DEFAULT_INTERACTIVE_SHELL,
+    resumeSessionId: 'session-123',
+  })
+
+  assert.match(command, /nexus-run-codex\.sh/)
+  assert.match(command, /"" "\/workspace\/demo" "session-123"/)
+})
+
 test('buildInteractiveShellCommand falls back to default interactive shell for zsh', () => {
   const command = buildInteractiveShellCommand({
     shellType: 'bash',

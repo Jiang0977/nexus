@@ -7,11 +7,12 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import Toolbar from './Toolbar'
 import SessionFAB from './SessionFAB'
+import DraggableFab from './DraggableFab'
 import GhostShield from './GhostShield'
 import { Icon } from './icons'
 import { getWindowStatus, STATUS_DOT_COLOR, STATUS_DOT_TITLE } from './windowStatus'
 import { pickBootstrapSession, sessionExists } from './sessionBootstrap.js'
-import { DEFAULT_SHELL_TYPE, type ShellType } from './shellType'
+import { CODEX_SHELL_TYPE, DEFAULT_SHELL_TYPE, type ShellType } from './shellType'
 
 const SessionManager = lazy(() => import('./SessionManager'))
 const SessionManagerV2 = lazy(() => import('./SessionManagerV2'))
@@ -20,6 +21,7 @@ const NewWindowDialog = lazy(() => import('./NewWindowDialog'))
 const FilePanel = lazy(() => import('./FilePanel'))
 const WorkspaceBrowser = lazy(() => import('./WorkspaceBrowser'))
 const GeneralSettings = lazy(() => import('./GeneralSettings'))
+const CodexSessionsPanel = lazy(() => import('./CodexSessionsPanel'))
 
 interface TmuxWindow {
   index: number
@@ -36,6 +38,7 @@ const THEME_KEY = 'nexus_theme'
 const WINDOW_KEY = 'nexus_window'
 const TAP_THRESHOLD = 8
 const MAX_UPLOAD_NOTIFICATIONS = 5
+const DESKTOP_SIDEBAR_WIDTH = 350
 
 export type ThemeMode = 'dark' | 'light'
 
@@ -139,9 +142,11 @@ export default function Terminal({ token }: Props) {
   const [showSettings, setShowSettings] = useState(false)
   const [showGeneralSettings, setShowGeneralSettings] = useState(false)
   const [showSessionManagerV2, setShowSessionManagerV2] = useState(false)
+  const [showCodexSessions, setShowCodexSessions] = useState(false)
   const [showNewSession, setShowNewSession] = useState(false)
   const [showNewWindow, setShowNewWindow] = useState(false)
   const [showSessionDrawer, setShowSessionDrawer] = useState(false)
+  const [sidebarPrimaryView, setSidebarPrimaryView] = useState<'sessions' | 'codex'>('sessions')
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialTheme)
 
   const [isWidePC, setIsWidePC] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768)
@@ -704,6 +709,19 @@ export default function Terminal({ token }: Props) {
     }
   }
 
+  function openCodexHistory() {
+    if (isWidePC) {
+      setSidebarCollapsed(false)
+      setSidebarPrimaryView('codex')
+      return
+    }
+    setShowCodexSessions(true)
+  }
+
+  function startNewCodexWindow() {
+    createWindow(CODEX_SHELL_TYPE)
+  }
+
   function openNewSessionDialog() {
     setShowNewSession(true)
   }
@@ -887,7 +905,7 @@ export default function Terminal({ token }: Props) {
 
       // 仅在PC宽屏模式且没有打开弹层时处理
       if (window.innerWidth < 768) return
-      const anyOverlayOpen = showSessionDrawer || showSettings || showGeneralSettings || showNewSession || showNewWindow || showScrollback || showSessionManagerV2 || showFiles
+      const anyOverlayOpen = showSessionDrawer || showSettings || showGeneralSettings || showNewSession || showNewWindow || showScrollback || showSessionManagerV2 || showCodexSessions || showFiles
       if (anyOverlayOpen) return
 
       // 可打印字符（无修饰键）：不拦截，让 xterm 原生处理 → onData 回调发送
@@ -1431,7 +1449,7 @@ export default function Terminal({ token }: Props) {
 
   // Overlay guard: when any overlay opens, set xterm textarea to readOnly
   // to prevent virtual keyboard from appearing when keyboard dismisses
-  const anyOverlayOpen = showSessionDrawer || showSettings || showGeneralSettings || showNewSession || showNewWindow || showScrollback || showSessionManagerV2 || showFiles
+  const anyOverlayOpen = showSessionDrawer || showSettings || showGeneralSettings || showNewSession || showNewWindow || showScrollback || showSessionManagerV2 || showCodexSessions || showFiles
   useEffect(() => {
     if (isWidePC) return
     const ta = termRef.current?.textarea
@@ -1628,7 +1646,7 @@ EOF`}
             {/* Collapsible Sidebar */}
             <div
               className="flex-shrink-0 flex flex-col bg-nexus-bg"
-              style={{ width: sidebarCollapsed ? 48 : 220, overflow: 'hidden' }}
+              style={{ width: sidebarCollapsed ? 48 : DESKTOP_SIDEBAR_WIDTH, overflow: 'hidden' }}
             >
               {sidebarCollapsed ? (
                 /* Collapsed Sidebar - Icon Only */
@@ -1719,6 +1737,14 @@ EOF`}
                       <Icon name="paperclip" size={18} />
                     </button>
 
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setSidebarCollapsed(false); setSidebarPrimaryView('codex'); localStorage.setItem('nexus_sidebar_collapsed', 'false'); }}
+                      className="w-12 h-10 bg-transparent border-none text-nexus-text-2 flex items-center justify-center cursor-pointer"
+                      title={t('codexSessions.title')}
+                    >
+                      <Icon name="history" size={18} />
+                    </button>
+
                     <div className="flex-1" />
 
                     <button
@@ -1749,21 +1775,55 @@ EOF`}
                   >
                     <Icon name="chevronLeft" size={16} />
                   </button>
+                  <div className="px-3 pt-3 pb-2 border-b border-nexus-border">
+                    <div className="inline-flex items-center gap-1 rounded-lg border border-nexus-border bg-nexus-bg-2 p-1">
+                      <button
+                        onClick={() => setSidebarPrimaryView('sessions')}
+                        className={`border-none rounded-md text-sm px-3 py-1.5 cursor-pointer transition-colors ${sidebarPrimaryView === 'sessions' ? 'bg-nexus-accent text-white' : 'bg-transparent text-nexus-text-2'}`}
+                      >
+                        {t('sessionMgr.title')}
+                      </button>
+                      <button
+                        onClick={() => setSidebarPrimaryView('codex')}
+                        className={`border-none rounded-md text-sm px-3 py-1.5 cursor-pointer transition-colors ${sidebarPrimaryView === 'codex' ? 'bg-nexus-accent text-white' : 'bg-transparent text-nexus-text-2'}`}
+                      >
+                        {t('codexSessions.title')}
+                      </button>
+                    </div>
+                  </div>
                   <div
                     className="flex-1 min-h-0 overflow-hidden"
                   >
-                    <SessionManagerV2
-                      ref={sessionManagerRef}
-                      token={token}
-                      currentProject={activeTmuxSession}
-                      currentChannelIndex={activeWindowIndex}
-                      onClose={() => {}}
-                      onSwitchProject={(name) => handleSwitchSession(name)}
-                      onSwitchChannel={(idx) => attachToWindow(idx)}
-                      onNewProject={openNewSessionDialog}
-                      onNewChannel={handleCreateWindow}
-                      layout="sidebar"
-                    />
+                    {sidebarPrimaryView === 'sessions' ? (
+                      <SessionManagerV2
+                        ref={sessionManagerRef}
+                        token={token}
+                        currentProject={activeTmuxSession}
+                        currentChannelIndex={activeWindowIndex}
+                        onClose={() => {}}
+                        onSwitchProject={(name) => handleSwitchSession(name)}
+                        onSwitchChannel={(idx) => attachToWindow(idx)}
+                        onNewProject={openNewSessionDialog}
+                        onNewChannel={handleCreateWindow}
+                        layout="sidebar"
+                      />
+                    ) : (
+                      <Suspense fallback={null}>
+                        <CodexSessionsPanel
+                          token={token}
+                          projectName={activeTmuxSession}
+                          layout="sidebar"
+                          onResumeSuccess={(index) => {
+                            attachToWindow(index)
+                            sessionManagerRef.current?.refresh()
+                          }}
+                          onStartNewCodex={() => {
+                            startNewCodexWindow()
+                            sessionManagerRef.current?.refresh()
+                          }}
+                        />
+                      </Suspense>
+                    )}
                   </div>
                   <div className="border-t border-nexus-border shrink-0" onClick={(e) => e.stopPropagation()}>
                     <Toolbar {...toolbarProps} embedded />
@@ -1799,6 +1859,27 @@ EOF`}
               <button className="absolute bottom-3 right-3 w-9 h-9 rounded-full bg-nexus-accent border-none text-white text-lg cursor-pointer z-50 flex items-center justify-center shadow-lg backdrop-blur-sm" onClick={scrollToBottom} title="滚到底部"><Icon name="arrowDown" size={16} /></button>
             )}
           </div>
+          {!!activeTmuxSession && (
+            <DraggableFab
+              onClick={openCodexHistory}
+              storageKey="nexus_codex_history_fab_pos"
+              title={t('codexSessions.title')}
+              size={48}
+              bottomInset={toolbarHeightRef.current}
+              defaultSide="left"
+              zIndex={349}
+              style={{
+                background: 'var(--nexus-bg2)',
+                color: 'var(--nexus-text)',
+                border: '1px solid var(--nexus-border)',
+                boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
+                backdropFilter: 'blur(6px)',
+              }}
+              ariaLabel={t('codexSessions.title')}
+            >
+              <Icon name="history" size={20} />
+            </DraggableFab>
+          )}
           <SessionFAB onClick={() => setShowSessionManagerV2(v => !v)} windowCount={windows.length} bottomInset={toolbarHeightRef.current} />
           <div ref={toolbarWrapRef}><Toolbar {...toolbarProps} /></div>
         </div>
@@ -1922,6 +2003,25 @@ EOF`}
             token={token}
             onClose={() => setShowWorkspace(false)}
             currentSession={activeTmuxSession}
+          />
+        </Suspense>
+      )}
+      {showCodexSessions && (
+        <Suspense fallback={null}>
+          <CodexSessionsPanel
+            token={token}
+            projectName={activeTmuxSession}
+            layout="modal"
+            onClose={() => setShowCodexSessions(false)}
+            onResumeSuccess={(index) => {
+              attachToWindow(index)
+              sessionManagerRef.current?.refresh()
+            }}
+            onStartNewCodex={() => {
+              startNewCodexWindow()
+              setShowCodexSessions(false)
+              sessionManagerRef.current?.refresh()
+            }}
           />
         </Suspense>
       )}
