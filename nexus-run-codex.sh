@@ -1,14 +1,15 @@
 #!/bin/bash
 # nexus-run-codex.sh — 以隔离 HOME 启动 codex，会话绑定到 tmux window_id
-# 用法: nexus-run-codex.sh <profile_id?> <project_absolute_path>
+# 用法: nexus-run-codex.sh <profile_id?> <project_absolute_path> <resume_session_id?>
 
 set -euo pipefail
 
 PROFILE="${1:-}"
 PROJECT="${2:-}"
+RESUME_SESSION_ID="${3:-}"
 
 if [ -z "$PROJECT" ]; then
-    echo "[Nexus] Usage: nexus-run-codex.sh <profile?> <project_path>"
+    echo "[Nexus] Usage: nexus-run-codex.sh <profile?> <project_path> <resume_session_id?>"
     exit 1
 fi
 
@@ -75,7 +76,11 @@ echo "╚═══════════════════════�
 echo ""
 
 while true; do
-    "$CODEX_BIN" --dangerously-bypass-approvals-and-sandbox --no-alt-screen || true
+    if [ -n "$RESUME_SESSION_ID" ]; then
+        "$CODEX_BIN" resume "$RESUME_SESSION_ID" --dangerously-bypass-approvals-and-sandbox --no-alt-screen || true
+    else
+        "$CODEX_BIN" --dangerously-bypass-approvals-and-sandbox --no-alt-screen || true
+    fi
     echo ""
     echo "[Nexus] Codex exited.  r=restart  b=bash shell  q=quit window"
     read -r REPLY

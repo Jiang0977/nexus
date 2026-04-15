@@ -1,6 +1,6 @@
 # ROADMAP — Nexus
 
-**锚点**: `docs/NORTH-STAR.md` | **PRD**: `docs/PRD.md` (v1 Complete) | **更新**: 2026-04-01
+**锚点**: `docs/NORTH-STAR.md` | **PRD**: `docs/PRD.md` (v1 Complete) | **更新**: 2026-04-14
 
 ---
 
@@ -15,6 +15,7 @@ All F-01 to F-18 complete.
 | ANSI output in task history | Add `-e` flag; frontend ansi-to-html |
 | F-19 Project-Window hierarchy | tmux env NEXUS_CWD per-session |
 | F-20 Unified session manager | Slack-style Project/Channel UI |
+| Codex history sessions tab | Project-scoped Codex history panel + resume flow; design: `docs/designs/codex-history-sessions-tab.md` |
 | Open-source polish | Git history rewrite, rate limits, etc. |
 
 ---

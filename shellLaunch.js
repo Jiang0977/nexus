@@ -36,6 +36,7 @@ export function buildInteractiveShellCommand({
   scriptsDir,
   defaultInteractiveShell,
   proxyVars = {},
+  resumeSessionId = '',
 }) {
   const proxyPrefix = buildProxyExportPrefix(proxyVars)
   let command = defaultInteractiveShell
@@ -52,7 +53,7 @@ export function buildInteractiveShellCommand({
   } else if (usesCodexProfile(shellType)) {
     const runScript = join(scriptsDir, 'nexus-run-codex.sh')
     command = wrapInteractiveShellCommand(
-      `bash ${shellQuote(runScript)} ${shellQuote(profile || '')} ${shellQuote(cwd)}`,
+      `bash ${shellQuote(runScript)} ${shellQuote(profile || '')} ${shellQuote(cwd)} ${shellQuote(resumeSessionId || '')}`,
     )
   }
 
