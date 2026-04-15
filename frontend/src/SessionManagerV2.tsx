@@ -353,7 +353,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
       clickTimerRef.current = null
       doSwitchChannel(channel, true)
     } else {
-      clickTimerRef.current = setTimeout(() => {
+      clickTimerRef.current = window.setTimeout(() => {
         clickTimerRef.current = null
         if (pendingChannelRef.current) doSwitchChannel(pendingChannelRef.current, false)
       }, 250)

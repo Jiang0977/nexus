@@ -4,20 +4,52 @@ import { shellQuote } from './shellLaunch.js'
 
 export const TMUX_CODEX_RESUME_SESSION_OPTION = '@nexus_codex_resume_session_id'
 
+/**
+ * @typedef {{
+ *   windowId: string,
+ *   index: number,
+ *   resumeSessionId: string,
+ * }} TmuxCodexResumeWindow
+ *
+ * @typedef {{
+ *   sessionName?: string,
+ *   execSyncImpl?: typeof execSync,
+ * }} ListTmuxCodexResumeWindowsOptions
+ *
+ * @typedef {{
+ *   windowTarget?: string,
+ *   sessionId?: string,
+ *   execSyncImpl?: typeof execSync,
+ * }} MarkTmuxWindowAsCodexResumeSessionOptions
+ *
+ * @typedef {{
+ *   sessionName?: string,
+ *   sessionId?: string,
+ *   defaultInteractiveShell?: string,
+ *   execSyncImpl?: typeof execSync,
+ *   cleanupRuntime?: (windowId: string) => void,
+ * }} CloseTmuxWindowsForCodexSessionOptions
+ */
+
+/**
+ * @param {string} output
+ * @returns {TmuxCodexResumeWindow[]}
+ */
 export function parseTmuxCodexResumeWindows(output) {
   return String(output || '')
     .split('\n')
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(line => {
+    .reduce((windows, rawLine) => {
+      const line = rawLine.trim()
+      if (!line) return windows
       const [windowId = '', indexText = '', resumeSessionId = ''] = line.split('|')
       const index = Number.parseInt(indexText, 10)
-      if (!windowId || !Number.isFinite(index)) return null
-      return { windowId, index, resumeSessionId }
-    })
-    .filter(Boolean)
+      if (!windowId || !Number.isFinite(index)) return windows
+      windows.push({ windowId, index, resumeSessionId })
+      return windows
+    }, /** @type {TmuxCodexResumeWindow[]} */([]))
 }
 
+/** @param {ListTmuxCodexResumeWindowsOptions} [options] */
 export function listTmuxCodexResumeWindows({
   sessionName,
   execSyncImpl = execSync,
@@ -35,6 +67,7 @@ export function listTmuxCodexResumeWindows({
   }
 }
 
+/** @param {MarkTmuxWindowAsCodexResumeSessionOptions} options */
 export function markTmuxWindowAsCodexResumeSession({
   windowTarget,
   sessionId,
@@ -48,6 +81,7 @@ export function markTmuxWindowAsCodexResumeSession({
   )
 }
 
+/** @param {CloseTmuxWindowsForCodexSessionOptions} options */
 export function closeTmuxWindowsForCodexSession({
   sessionName,
   sessionId,
