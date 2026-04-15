@@ -320,6 +320,11 @@
       "size": "大小"
     }
   },
+  "terminal": {
+    "selectText": "选字复制",
+    "scrollbackTitle": "终端文本",
+    "scrollbackHint": "这里可直接选中文字，滚到底部返回终端"
+  },
   "windowStatus": {
     "running": "运行中",
     "waitingInput": "等待输入",

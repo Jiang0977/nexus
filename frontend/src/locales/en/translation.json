@@ -320,6 +320,11 @@
       "size": "Size"
     }
   },
+  "terminal": {
+    "selectText": "Select text",
+    "scrollbackTitle": "Terminal text",
+    "scrollbackHint": "Select text here directly. Scroll to the bottom to return."
+  },
   "windowStatus": {
     "running": "Running",
     "waitingInput": "Waiting for input",
