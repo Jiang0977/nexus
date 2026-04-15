@@ -267,6 +267,12 @@
     "primaryAction": "Primary Actions",
     "startNew": "Start New Codex Session",
     "loadMore": "Load More",
+    "details": "Details",
+    "hideDetails": "Hide Details",
+    "loadingDetails": "Loading Details...",
+    "detailTitle": "Session Details",
+    "detailEmpty": "No additional metadata is available for this history entry.",
+    "detailLoadFailed": "Failed to load session details. Please retry.",
     "resumeHint": "Continue opens a new session and switches to it.",
     "warningTitle": "Results are not fully attributed",
     "warningPartial": "Some history entries could not be read completely. This does not mean the project has no history.",
@@ -285,7 +291,14 @@
     "opening": "Opening...",
     "resume": "Continue",
     "matchRepo": "Repo Match",
-    "matchPath": "Path Match"
+    "matchPath": "Path Match",
+    "detailFields": {
+      "source": "Source",
+      "originator": "Originator",
+      "cliVersion": "CLI Version",
+      "modelProvider": "Model Provider",
+      "startedAt": "Started At"
+    }
   },
   "tasks": {
     "title": "Task Panel",

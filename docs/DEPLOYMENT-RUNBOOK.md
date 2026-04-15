@@ -10,14 +10,16 @@
 - 主服务：`nexus.service`
 - tmux 服务：`nexus-tmux.service`
 - 工作目录：`/home/jiang/workspace/typescript/nexus4cc`
-- 启动链路：`nexus.service -> bash start.sh -> node server.js`
+- 启动链路：`nexus.service -> bash start.sh -> node dist-server/server.js`
 - 对外端口：`59000`
 
 关键事实：
 
 - `start.sh` 只会在 `frontend/dist` 不存在时才构建前端。
+- `start.sh` 只会在 `dist-server/server.js` 不存在时才构建后端。
 - 也就是说，前端源码改了以后，部署前必须手动执行 `npm --prefix frontend run build`。
-- `server.js` 改动只有在 `nexus.service` 重启后才会生效。
+- 后端源码改了以后，部署前必须手动执行 `npm run build:server`。
+- `server.js` 和相关后端模块改动只有在重新构建 `dist-server` 并重启 `nexus.service` 后才会生效。
 - 当前环境里直接执行 `systemctl restart nexus` 会要求交互鉴权，自动化场景不可用。
 - `nexus.service` 配置了 `Restart=on-failure`，因此可以通过杀掉主进程触发 systemd 自动拉起新版本。
 
@@ -28,6 +30,7 @@
 ```bash
 git status --short
 node --check server.js
+npm run build:server
 npm --prefix frontend run build
 ```
 
@@ -42,7 +45,7 @@ node --test tests/ccSwitchConfig.test.js tests/codexConfig.test.js tests/systemC
 当改动碰到 `server.js`、启动链路、认证、配置导入时，先在备用端口预演一次：
 
 ```bash
-PORT=59001 node server.js
+PORT=59001 node dist-server/server.js
 ```
 
 另开一个终端探活：
@@ -123,6 +126,7 @@ curl --silent --show-error --max-time 5 http://127.0.0.1:59000 | head -n 5
 
 ```bash
 git checkout <last-known-good-commit>
+npm run build:server
 npm --prefix frontend run build
 MAIN_PID="$(systemctl show -p MainPID --value nexus)"
 kill -9 "$MAIN_PID"
@@ -136,6 +140,7 @@ sleep 6
 ```bash
 git restore .
 git clean -fd
+npm run build:server
 npm --prefix frontend run build
 MAIN_PID="$(systemctl show -p MainPID --value nexus)"
 kill -9 "$MAIN_PID"
@@ -162,11 +167,12 @@ Failed to restart nexus.service: Interactive authentication required.
 - 不能把 `systemctl restart nexus` 当作默认自动化命令。
 - 统一改用 `kill -9 $(systemctl show -p MainPID --value nexus)` 触发 systemd 自动重启。
 
-### 问题 2：前端不会在重启时自动重新构建
+### 问题 2：前后端构建产物不会在重启时自动刷新
 
 原因：
 
 - `start.sh` 只在 `frontend/dist` 不存在时执行前端构建。
+- `start.sh` 只在 `dist-server/server.js` 不存在时执行后端构建。
 
 结论：
 
@@ -174,6 +180,12 @@ Failed to restart nexus.service: Interactive authentication required.
 
 ```bash
 npm --prefix frontend run build
+```
+
+- 任何后端源码变更上线前，必须手动运行：
+
+```bash
+npm run build:server
 ```
 
 ### 问题 3：`node:sqlite` 会打印 experimental warning

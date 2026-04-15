@@ -234,6 +234,7 @@ nexus/
 ├── start.sh               # systemd 调用的启动脚本
 ├── nexus-run-claude.sh    # claude 会话启动脚本（server.js 调用）
 ├── deploy/systemd/        # systemd unit 与 drop-in
+├── dist-server/           # 后端 TypeScript 编译产物（运行时入口，忽略提交）
 ├── frontend/
 │   ├── src/               # React + TypeScript 源码
 │   └── dist/              # Vite 构建产物（server.js 静态伺服）
@@ -244,7 +245,7 @@ nexus/
 └── data/                  # 持久化数据目录
 ```
 
-当前线上部署不是 PM2，而是 `systemd` 的 `nexus.service -> bash start.sh -> node server.js`。标准更新/回滚操作见 [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)。
+当前线上部署不是 PM2，而是 `systemd` 的 `nexus.service -> bash start.sh -> node dist-server/server.js`。标准更新/回滚操作见 [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)。
 
 ### 环境变量
 

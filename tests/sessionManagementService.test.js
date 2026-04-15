@@ -60,6 +60,18 @@ function createService(overrides = {}) {
     },
     listProjectCodexSessionsImpl: (...args) => ({ items: args }),
     findProjectCodexSessionImpl: () => ({ cwd: '/workspace/demo', id: 'session-1', title: 'Fix bug' }),
+    getProjectCodexSessionDetailImpl: () => ({
+      id: 'session-1',
+      title: 'Fix bug',
+      updatedAt: '2026-04-14T12:00:00.000Z',
+      startedAt: '2026-04-14T11:59:00.000Z',
+      cwd: '/workspace/demo',
+      attributionKind: 'repo-root',
+      source: 'cli',
+      originator: 'codex_cli_rs',
+      cliVersion: '0.117.0',
+      modelProvider: 'openai',
+    }),
     deleteCodexSessionImpl: (input) => {
       deletedCodexSessions.push(input)
       return { id: input.sessionId }
@@ -248,6 +260,71 @@ test('deleteProjectCodexSession validates inputs and closes tracked runtime wind
     (error) => error instanceof SessionManagementError
       && error.statusCode === 400
       && error.message === 'invalid session id',
+  )
+})
+
+test('codex history routes fail closed when the feature is disabled', async () => {
+  const harness = createService({
+    codexHistoryEnabled: false,
+  })
+
+  assert.throws(
+    () => harness.service.listCodexSessions({ projectName: 'demo-project' }),
+    (error) => error instanceof SessionManagementError
+      && error.statusCode === 503
+      && error.message === 'codex history disabled',
+  )
+
+  await assert.rejects(
+    harness.service.resumeCodexSession({ sessionId: 'session-1', projectName: 'demo-project' }),
+    (error) => error instanceof SessionManagementError
+      && error.statusCode === 503
+      && error.message === 'codex history disabled',
+  )
+
+  assert.throws(
+    () => harness.service.getCodexSessionDetail({ sessionId: 'session-1', projectName: 'demo-project' }),
+    (error) => error instanceof SessionManagementError
+      && error.statusCode === 503
+      && error.message === 'codex history disabled',
+  )
+
+  assert.throws(
+    () => harness.service.deleteProjectCodexSession({ sessionId: 'session-1', projectName: 'demo-project' }),
+    (error) => error instanceof SessionManagementError
+      && error.statusCode === 503
+      && error.message === 'codex history disabled',
+  )
+})
+
+test('getCodexSessionDetail returns detail for matching project sessions and maps misses to 404', () => {
+  const harness = createService()
+
+  assert.deepEqual(
+    harness.service.getCodexSessionDetail({ sessionId: 'session-1', projectName: 'demo-project' }),
+    {
+      id: 'session-1',
+      title: 'Fix bug',
+      updatedAt: '2026-04-14T12:00:00.000Z',
+      startedAt: '2026-04-14T11:59:00.000Z',
+      cwd: '/workspace/demo',
+      attributionKind: 'repo-root',
+      source: 'cli',
+      originator: 'codex_cli_rs',
+      cliVersion: '0.117.0',
+      modelProvider: 'openai',
+    },
+  )
+
+  const missingHarness = createService({
+    getProjectCodexSessionDetailImpl: () => null,
+  })
+
+  assert.throws(
+    () => missingHarness.service.getCodexSessionDetail({ sessionId: 'session-1', projectName: 'demo-project' }),
+    (error) => error instanceof SessionManagementError
+      && error.statusCode === 404
+      && error.message === 'codex session not found in project',
   )
 })
 

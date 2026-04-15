@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useImperativeHandle, forwardRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import GhostShield from './GhostShield'
+import CodexSessionsPanel from './CodexSessionsPanel'
 import { Icon } from './icons'
 
 const STORAGE_KEY = 'nexus_token'
@@ -62,6 +63,12 @@ interface Props {
   /** Refresh callback — exposed for sidebar toggle integration */
   onRefresh?: () => void
   layout?: 'modal' | 'sidebar'
+  codexHistoryEnabled?: boolean
+  sidebarDetailView?: SessionManagerSidebarDetailView
+  onSidebarDetailViewChange?: (view: SessionManagerSidebarDetailView) => void
+  onCodexResumeSuccess?: (channelIndex: number) => void
+  onCodexDeleteSuccess?: (closedWindowIndexes: number[]) => void | Promise<void>
+  onStartNewCodex?: () => void
 }
 
 function useIsDesktop() {
@@ -90,6 +97,8 @@ export interface SessionManagerV2Handle {
   refresh: () => void
 }
 
+export type SessionManagerSidebarDetailView = 'channels' | 'codex'
+
 export default forwardRef<SessionManagerV2Handle, Props>(function SessionManagerV2({
   token,
   currentProject,
@@ -101,6 +110,12 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   onNewChannel,
   onRefresh: _onRefresh,
   layout = 'modal',
+  codexHistoryEnabled = true,
+  sidebarDetailView = 'channels',
+  onSidebarDetailViewChange,
+  onCodexResumeSuccess,
+  onCodexDeleteSuccess,
+  onStartNewCodex,
 }: Props, ref) {
   const { t } = useTranslation()
   const isDesktop = useIsDesktop()
@@ -127,6 +142,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   const [sidebarProjectMenu, setSidebarProjectMenu] = useState<{ project: Project; x: number; y: number } | null>(null)
 
   const headers = { Authorization: `Bearer ${token}` }
+  const activeSidebarDetailView = isSidebar && currentProject && codexHistoryEnabled ? sidebarDetailView : 'channels'
 
   // --- Data fetching ---
 
@@ -161,6 +177,17 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   useEffect(() => {
     if (currentProject) fetchChannels(currentProject)
   }, [currentProject, fetchChannels])
+
+  useEffect(() => {
+    if (!isSidebar) return
+    if (!codexHistoryEnabled || !currentProject) {
+      if (sidebarDetailView === 'codex') {
+        onSidebarDetailViewChange?.('channels')
+      }
+      return
+    }
+    if (sidebarDetailView !== 'codex') return
+  }, [codexHistoryEnabled, currentProject, isSidebar, onSidebarDetailViewChange, sidebarDetailView])
 
   const handleRefresh = useCallback(() => {
     fetchProjects()
@@ -635,43 +662,76 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
         {/* Channels section: 50% height, internal scroll */}
         <div className="flex flex-col overflow-hidden">
           <div className="px-3 pr-10 py-1.5 border-b border-nexus-border shrink-0">
-            <div className="text-xs font-semibold text-nexus-text tracking-wide flex items-center gap-1.5">
-              <span className="text-sm">#</span>
-              {t('sessionMgr.channels')}
+            <div className="inline-flex items-center gap-1 rounded-lg border border-nexus-border bg-nexus-bg-2 p-1">
+              <button
+                className={`border-none rounded-md text-sm px-3 py-1.5 cursor-pointer transition-colors ${activeSidebarDetailView === 'channels' ? 'bg-nexus-accent text-white' : 'bg-transparent text-nexus-text-2'}`}
+                onClick={() => onSidebarDetailViewChange?.('channels')}
+                type="button"
+              >
+                {t('sessionMgr.channels')}
+              </button>
+              {codexHistoryEnabled && (
+                <button
+                  className={`border-none rounded-md text-sm px-3 py-1.5 transition-colors ${activeSidebarDetailView === 'codex' ? 'bg-nexus-accent text-white' : 'bg-transparent text-nexus-text-2'} ${currentProject ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                  onClick={() => {
+                    if (!currentProject) return
+                    onSidebarDetailViewChange?.('codex')
+                  }}
+                  type="button"
+                  disabled={!currentProject}
+                >
+                  {t('codexSessions.title')}
+                </button>
+              )}
             </div>
           </div>
-          <div
-            className="flex-1 min-h-0 overflow-y-auto px-1.5 py-1"
-          >
-            {loadingChannels ? (
-              <div className="text-nexus-muted text-sm px-3 py-2">{t('common.loading')}</div>
-            ) : channels.length === 0 ? (
-              <div className="flex flex-col items-center justify-center px-3 py-2 text-nexus-muted">
-                <div className="text-sm">{t('sessionMgr.noChannels')}</div>
+          {activeSidebarDetailView === 'channels' ? (
+            <>
+              <div
+                className="flex-1 min-h-0 overflow-y-auto px-1.5 py-1"
+              >
+                {loadingChannels ? (
+                  <div className="text-nexus-muted text-sm px-3 py-2">{t('common.loading')}</div>
+                ) : channels.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center px-3 py-2 text-nexus-muted">
+                    <div className="text-sm">{t('sessionMgr.noChannels')}</div>
+                  </div>
+                ) : channels.map(channel => {
+                  const isActive = channel.index === currentChannelIndex
+                  const status = getChannelStatus(channel, isActive)
+                  return (
+                    <div
+                      key={channel.index}
+                      data-menu-row
+                      className={`flex items-start gap-2 px-2.5 py-1.5 rounded cursor-pointer mb-0.5 select-none transition-colors duration-75 group/item ${isActive ? 'bg-nexus-bg-2' : ''}`}
+                      style={{ WebkitTouchCallout: 'none' }}
+                      onPointerDown={() => { doSwitchChannel(channel, false) }}
+                      onContextMenu={(e) => { e.preventDefault(); handleSidebarContext(e, channel, undefined) }}
+                    >
+                      <span className="w-2 h-2 rounded-full shrink-0 mt-0.5" style={{ background: STATUS_DOT[status] }} title={status} />
+                      <span className="text-nexus-text-2 text-[13px] font-medium select-none shrink-0 mt-0">#</span>
+                      <span className="flex-1 text-sm text-nexus-text truncate leading-tight min-w-0" title={channel.name}>{channel.name}</span>
+                    </div>
+                  )
+                })}
               </div>
-            ) : channels.map(channel => {
-              const isActive = channel.index === currentChannelIndex
-              const status = getChannelStatus(channel, isActive)
-              return (
-                <div
-                  key={channel.index}
-                  data-menu-row
-                  className={`flex items-start gap-2 px-2.5 py-1.5 rounded cursor-pointer mb-0.5 select-none transition-colors duration-75 group/item ${isActive ? 'bg-nexus-bg-2' : ''}`}
-                  style={{ WebkitTouchCallout: 'none' }}
-                  onPointerDown={() => { doSwitchChannel(channel, false) }}
-                  onContextMenu={(e) => { e.preventDefault(); handleSidebarContext(e, channel, undefined) }}
-                >
-                  <span className="w-2 h-2 rounded-full shrink-0 mt-0.5" style={{ background: STATUS_DOT[status] }} title={status} />
-                  <span className="text-nexus-text-2 text-[13px] font-medium select-none shrink-0 mt-0">#</span>
-                  <span className="flex-1 text-sm text-nexus-text truncate leading-tight min-w-0" title={channel.name}>{channel.name}</span>
-                </div>
-              )
-            })}
-          </div>
-          <button className="flex items-center justify-center gap-1.5 mx-3 py-1 px-2.5 bg-transparent border border-dashed border-nexus-border rounded text-nexus-text-2 text-sm cursor-pointer shrink-0" onPointerDown={onNewChannel}>
-            <Icon name="plus" size={14} />
-            <span>{t('sessionMgr.newChannel')}</span>
-          </button>
+              <button className="flex items-center justify-center gap-1.5 mx-3 py-1 px-2.5 bg-transparent border border-dashed border-nexus-border rounded text-nexus-text-2 text-sm cursor-pointer shrink-0" onPointerDown={onNewChannel}>
+                <Icon name="plus" size={14} />
+                <span>{t('sessionMgr.newChannel')}</span>
+              </button>
+            </>
+          ) : (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <CodexSessionsPanel
+                token={token}
+                projectName={currentProject}
+                layout="sidebar"
+                onResumeSuccess={onCodexResumeSuccess}
+                onDeleteSuccess={onCodexDeleteSuccess}
+                onStartNewCodex={onStartNewCodex}
+              />
+            </div>
+          )}
         </div>
 
         {/* Sidebar right-click menu - channel */}

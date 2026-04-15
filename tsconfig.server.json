@@ -12,9 +12,13 @@
     "skipLibCheck": true
   },
   "include": [
+    "server.js",
     "gracefulShutdown.js",
-    "tmuxSessionPolicy.js",
+    "interactiveEnv.js",
+    "projectDefaults.js",
     "runtimeGuards.js",
+    "runtimePaths.js",
+    "shellLaunch.js",
     "ptyTmuxBroker.js",
     "ptyBrokerLocalBackend.js",
     "ptyBrokerSidecarClient.js",
@@ -32,6 +36,8 @@
     "windowLaunchService.js",
     "versionService.js",
     "uploadFilesService.js",
-    "workspaceService.js"
+    "workspaceService.js",
+    "tmuxSessionPolicy.js",
+    "frontend/src/shellType.js"
   ]
 }

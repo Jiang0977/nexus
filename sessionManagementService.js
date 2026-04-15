@@ -9,6 +9,7 @@ import {
 import {
   deleteCodexSession,
   findProjectCodexSession,
+  getProjectCodexSessionDetail,
   listProjectCodexSessions,
 } from './codexSessions.js'
 import { shellQuote } from './shellLaunch.js'
@@ -49,6 +50,7 @@ function readCommandOutput(execSyncImpl, command) {
  *   sharedCodexHome: string,
  *   codexRuntimeDir: string,
  *   defaultInteractiveShell: string,
+ *   codexHistoryEnabled?: boolean,
  *   execSyncImpl?: typeof execSync,
  *   rmSyncImpl?: typeof rmSync,
  *   nowImpl?: () => number,
@@ -64,6 +66,7 @@ function readCommandOutput(execSyncImpl, command) {
  *   createTmuxWindowSyncImpl?: (sessionName: string, cwd: string, windowName: string, shellCmd: string) => Promise<{ windowId: string, index: number, name: string }> | { windowId: string, index: number, name: string },
  *   listProjectCodexSessionsImpl?: typeof listProjectCodexSessions,
  *   findProjectCodexSessionImpl?: typeof findProjectCodexSession,
+ *   getProjectCodexSessionDetailImpl?: typeof getProjectCodexSessionDetail,
  *   deleteCodexSessionImpl?: typeof deleteCodexSession,
  *   closeTmuxWindowsForCodexSessionImpl?: typeof closeTmuxWindowsForCodexSession,
  *   markTmuxWindowAsCodexResumeSessionImpl?: typeof markTmuxWindowAsCodexResumeSession,
@@ -79,6 +82,7 @@ export function createSessionManagementService(options) {
     sharedCodexHome,
     codexRuntimeDir,
     defaultInteractiveShell,
+    codexHistoryEnabled = true,
     execSyncImpl = execSync,
     rmSyncImpl = rmSync,
     nowImpl = Date.now,
@@ -145,6 +149,7 @@ export function createSessionManagementService(options) {
     },
     listProjectCodexSessionsImpl = listProjectCodexSessions,
     findProjectCodexSessionImpl = findProjectCodexSession,
+    getProjectCodexSessionDetailImpl = getProjectCodexSessionDetail,
     deleteCodexSessionImpl = deleteCodexSession,
     closeTmuxWindowsForCodexSessionImpl = closeTmuxWindowsForCodexSession,
     markTmuxWindowAsCodexResumeSessionImpl = markTmuxWindowAsCodexResumeSession,
@@ -153,6 +158,12 @@ export function createSessionManagementService(options) {
 
   /** @type {Map<string, CodexResumeDedupEntry>} */
   const codexResumeDedupMap = new Map()
+
+  function assertCodexHistoryEnabled() {
+    if (!codexHistoryEnabled) {
+      throw new SessionManagementError(503, 'codex history disabled')
+    }
+  }
 
   const readSessionWorkspacePath = readSessionWorkspacePathImpl || ((sessionName) => {
     try {
@@ -337,6 +348,7 @@ export function createSessionManagementService(options) {
   }
 
   function listCodexSessions({ projectName, limit, cursor }) {
+    assertCodexHistoryEnabled()
     if (!projectName) {
       throw new SessionManagementError(400, 'project required')
     }
@@ -356,6 +368,7 @@ export function createSessionManagementService(options) {
   }
 
   async function resumeCodexSession({ sessionId, projectName }) {
+    assertCodexHistoryEnabled()
     const normalizedSessionId = String(sessionId || '').trim()
     const normalizedProjectName = String(projectName || '').trim()
 
@@ -429,7 +442,38 @@ export function createSessionManagementService(options) {
     }
   }
 
+  function getCodexSessionDetail({ sessionId, projectName }) {
+    assertCodexHistoryEnabled()
+    const normalizedSessionId = String(sessionId || '').trim()
+    const normalizedProjectName = String(projectName || '').trim()
+
+    if (!normalizedSessionId) {
+      throw new SessionManagementError(400, 'session id required')
+    }
+    if (!normalizedProjectName) {
+      throw new SessionManagementError(400, 'project required')
+    }
+    ensureSessionExists(normalizedProjectName)
+
+    try {
+      const detail = getProjectCodexSessionDetailImpl({
+        sessionId: normalizedSessionId,
+        projectName: normalizedProjectName,
+        projectPath: resolveProjectPath(normalizedProjectName),
+        codexHome: sharedCodexHome,
+      })
+      if (!detail) {
+        throw new SessionManagementError(404, 'codex session not found in project')
+      }
+      return detail
+    } catch (error) {
+      if (error instanceof SessionManagementError) throw error
+      throw new SessionManagementError(500, error?.message || 'failed to load codex session detail')
+    }
+  }
+
   function deleteProjectCodexSession({ sessionId, projectName }) {
+    assertCodexHistoryEnabled()
     const normalizedSessionId = String(sessionId || '').trim()
     const normalizedProjectName = String(projectName || '').trim()
 
@@ -740,6 +784,7 @@ export function createSessionManagementService(options) {
     getSessionCwd,
     listCodexSessions,
     resumeCodexSession,
+    getCodexSessionDetail,
     deleteProjectCodexSession,
     listProjectChannels,
     createProject,

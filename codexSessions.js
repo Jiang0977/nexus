@@ -24,6 +24,11 @@ function parseJsonlLines(text) {
     .filter(Boolean)
 }
 
+function optionalText(value) {
+  const text = String(value || '').trim()
+  return text || ''
+}
+
 function readFirstLine(filePath) {
   const fd = openSync(filePath, 'r')
   const buffer = Buffer.allocUnsafe(4096)
@@ -152,6 +157,10 @@ function loadSessionMetaMap(codexHome) {
         filePath,
         cwd: normalizePath(parsed.payload.cwd || ''),
         timestamp: String(parsed.payload.timestamp || parsed.timestamp || ''),
+        source: optionalText(parsed.payload.source),
+        originator: optionalText(parsed.payload.originator),
+        cliVersion: optionalText(parsed.payload.cli_version),
+        modelProvider: optionalText(parsed.payload.model_provider),
       })
     } catch {
       badSessionFiles += 1
@@ -327,6 +336,40 @@ export function findProjectCodexSession({
     resolveGitRoot: resolveGitRootImpl,
   })
   return result.items.find(item => item.id === sessionId) || null
+}
+
+export function getProjectCodexSessionDetail({
+  sessionId,
+  projectName,
+  projectPath,
+  codexHome,
+  resolveGitRoot: resolveGitRootImpl = resolveGitRoot,
+}) {
+  const summary = findProjectCodexSession({
+    sessionId,
+    projectName,
+    projectPath,
+    codexHome,
+    resolveGitRoot: resolveGitRootImpl,
+  })
+  if (!summary) return null
+
+  const { sessionMetaById } = loadSessionMetaMap(codexHome)
+  const meta = sessionMetaById.get(String(sessionId || '').trim())
+  if (!meta) return null
+
+  return {
+    id: summary.id,
+    title: summary.title,
+    updatedAt: summary.updatedAt,
+    startedAt: meta.timestamp || '',
+    cwd: summary.cwd,
+    attributionKind: summary.attributionKind,
+    source: meta.source || '',
+    originator: meta.originator || '',
+    cliVersion: meta.cliVersion || '',
+    modelProvider: meta.modelProvider || '',
+  }
 }
 
 export function deleteCodexSession({

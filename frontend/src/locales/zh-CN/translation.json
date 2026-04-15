@@ -267,6 +267,12 @@
     "primaryAction": "主动作",
     "startNew": "开始新的 Codex 会话",
     "loadMore": "查看更多",
+    "details": "查看详情",
+    "hideDetails": "收起详情",
+    "loadingDetails": "正在加载详情...",
+    "detailTitle": "会话详情",
+    "detailEmpty": "这条历史没有更多可显示的附加元数据。",
+    "detailLoadFailed": "详情读取失败，请稍后重试。",
     "resumeHint": "继续后会打开并切换到新会话。",
     "warningTitle": "结果不是完整归属视图",
     "warningPartial": "部分历史会话结果不完整，这次读取失败不代表没有历史。",
@@ -285,7 +291,14 @@
     "opening": "正在打开...",
     "resume": "继续",
     "matchRepo": "Repo 匹配",
-    "matchPath": "路径匹配"
+    "matchPath": "路径匹配",
+    "detailFields": {
+      "source": "来源",
+      "originator": "发起器",
+      "cliVersion": "CLI 版本",
+      "modelProvider": "模型提供方",
+      "startedAt": "开始时间"
+    }
   },
   "tasks": {
     "title": "任务面板",
