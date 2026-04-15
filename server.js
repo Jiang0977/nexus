@@ -5,8 +5,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { createServer } from 'node:http';
 import { exec, execSync } from 'child_process';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { join } from 'path';
 import { readFileSync, mkdirSync, existsSync } from 'fs';
 import multer from 'multer';
 import { SERVER_ONLY_ENV_KEYS, wrapInteractiveShellCommand } from './interactiveEnv.js';
@@ -24,11 +23,16 @@ import { createVersionService, VersionServiceError } from './versionService.js';
 import { createWindowLaunchService, WindowLaunchError } from './windowLaunchService.js';
 import { WorkspaceError, createWorkspaceService } from './workspaceService.js';
 import { saveProjectDefault } from './projectDefaults.js';
+import { createRuntimePaths } from './runtimePaths.js';
+import { buildClientConfig } from './serverConfig.js';
 import { buildInteractiveShellCommand, collectProxyVars, shellQuote } from './shellLaunch.js';
+
+const runtimePaths = createRuntimePaths(import.meta.url);
+const PROJECT_ROOT = runtimePaths.projectRoot;
 
 // 加载 .env 文件（如果存在）
 try {
-  const envPath = join(dirname(fileURLToPath(import.meta.url)), '.env');
+  const envPath = runtimePaths.envFile;
   const lines = readFileSync(envPath, 'utf8').split('\n');
   for (const line of lines) {
     const trimmed = line.trim();
@@ -41,10 +45,8 @@ try {
   }
 } catch { /* .env 不存在时忽略 */ }
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 // 持久化数据目录（通过 Docker volume 挂载，重建容器不丢失）
-const DATA_DIR = join(__dirname, 'data');
+const DATA_DIR = runtimePaths.dataDir;
 const TOOLBAR_CONFIG_FILE = join(DATA_DIR, 'toolbar-config.json');
 const CONFIGS_DIR = join(DATA_DIR, 'configs');
 const CODEX_CONFIGS_DIR = join(DATA_DIR, 'codex-configs');
@@ -80,7 +82,10 @@ const {
   GITHUB_REPO = 'librae8226/nexus4cc',
   NEXUS_PTY_BROKER_MODE = 'local',
   NEXUS_TASK_RUNNER_MODE = 'local',
+  NEXUS_CODEX_HISTORY_ENABLED = '1',
 } = process.env;
+
+const CODEX_HISTORY_ENABLED = NEXUS_CODEX_HISTORY_ENABLED !== '0';
 
 const workspaceService = createWorkspaceService({ workspaceRoot: WORKSPACE_ROOT });
 const configProfilesService = createConfigProfilesService({
@@ -90,7 +95,7 @@ const configProfilesService = createConfigProfilesService({
   projectDefaultsFile: PROJECT_DEFAULTS_FILE,
   workspaceRoot: WORKSPACE_ROOT,
   codexValidateDir: CODEX_VALIDATE_DIR,
-  projectPath: __dirname,
+  projectPath: PROJECT_ROOT,
   claudeProxy: CLAUDE_PROXY,
 });
 
@@ -149,7 +154,7 @@ function buildShellCommand(shellType, profile, cwd, options = {}) {
       profile,
       cwd,
       resumeSessionId: options.resumeSessionId || '',
-      scriptsDir: __dirname,
+      scriptsDir: PROJECT_ROOT,
       defaultInteractiveShell: DEFAULT_INTERACTIVE_SHELL,
       proxyVars,
     }),
@@ -214,6 +219,7 @@ const sessionManagementService = createSessionManagementService({
   sharedCodexHome: SHARED_CODEX_HOME,
   codexRuntimeDir: CODEX_RUNTIME_DIR,
   defaultInteractiveShell: DEFAULT_INTERACTIVE_SHELL,
+  codexHistoryEnabled: CODEX_HISTORY_ENABLED,
   resolveWorkspacePathImpl: resolveWorkspacePath,
   readSessionWorkspacePathImpl: readSessionWorkspacePath,
   rememberProjectDefaultImpl: rememberProjectDefault,
@@ -236,7 +242,7 @@ const windowLaunchService = createWindowLaunchService({
 })
 
 const versionService = createVersionService({
-  projectPath: __dirname,
+  projectPath: PROJECT_ROOT,
   githubRepo: GITHUB_REPO,
 })
 
@@ -252,8 +258,8 @@ if (!JWT_SECRET || !ACC_PASSWORD_HASH) {
 }
 
 // 静态文件：frontend/dist 和 public
-app.use(express.static(join(__dirname, 'public')));
-app.use(express.static(join(__dirname, 'frontend', 'dist')));
+app.use(express.static(runtimePaths.publicDir));
+app.use(express.static(runtimePaths.frontendDistDir));
 
 // Auth middleware
 function authMiddleware(req, res, next) {
@@ -699,7 +705,11 @@ app.get('/api/sessions/:id/scrollback', authMiddleware, (req, res) => {
 
 // GET /api/config — 服务端配置信息（供前端初始化用）
 app.get('/api/config', authMiddleware, (req, res) => {
-  res.json({ tmuxSession: TMUX_SESSION, workspaceRoot: WORKSPACE_ROOT })
+  res.json(buildClientConfig({
+    tmuxSession: TMUX_SESSION,
+    workspaceRoot: WORKSPACE_ROOT,
+    codexHistoryEnabled: CODEX_HISTORY_ENABLED,
+  }))
 })
 
 // GET /api/tmux-sessions — 列出所有 tmux session（F-18）
@@ -728,6 +738,18 @@ app.get('/api/codex-sessions', authMiddleware, (req, res) => {
       projectName,
       limit: req.query.limit,
       cursor: req.query.cursor,
+    }))
+  } catch (err) {
+    sendSessionManagementError(res, err)
+  }
+})
+
+// GET /api/codex-sessions/:id/detail
+app.get('/api/codex-sessions/:id/detail', authMiddleware, (req, res) => {
+  try {
+    res.json(sessionManagementService.getCodexSessionDetail({
+      sessionId: req.params.id,
+      projectName: req.query.project || '',
     }))
   } catch (err) {
     sendSessionManagementError(res, err)
@@ -955,7 +977,7 @@ app.get('/api/telegram/setup', authMiddleware, async (req, res) => {
 
 // SPA fallback — 所有非 API 路由返回 index.html
 app.get('*', (req, res) => {
-  const indexPath = join(__dirname, 'frontend', 'dist', 'index.html');
+  const indexPath = join(runtimePaths.frontendDistDir, 'index.html');
   res.sendFile(indexPath, (err) => {
     if (err) res.status(404).send('Not found — run: cd frontend && npm run build');
   });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import GhostShield from './GhostShield'
+import { buildCodexSessionDetailFields } from './codexSessionDetailFields.js'
 import { Icon } from './icons'
 
 interface CodexSessionItem {
@@ -24,6 +25,19 @@ interface CodexSessionsResponse {
     codes: string[]
     message: string
   } | null
+}
+
+interface CodexSessionDetail {
+  id: string
+  title: string
+  updatedAt: string
+  startedAt: string
+  cwd: string
+  attributionKind: 'repo-root' | 'cwd'
+  source: string
+  originator: string
+  cliVersion: string
+  modelProvider: string
 }
 
 interface Props {
@@ -70,6 +84,23 @@ function warningMessage(warning: CodexSessionsResponse['warning'], t: ReturnType
   return t('codexSessions.warningPartial')
 }
 
+function detailFieldLabel(key: string, t: ReturnType<typeof useTranslation>['t']) {
+  switch (key) {
+    case 'source':
+      return t('codexSessions.detailFields.source')
+    case 'originator':
+      return t('codexSessions.detailFields.originator')
+    case 'cliVersion':
+      return t('codexSessions.detailFields.cliVersion')
+    case 'modelProvider':
+      return t('codexSessions.detailFields.modelProvider')
+    case 'startedAt':
+      return t('codexSessions.detailFields.startedAt')
+    default:
+      return key
+  }
+}
+
 export default function CodexSessionsPanel({
   token,
   projectName,
@@ -90,6 +121,10 @@ export default function CodexSessionsPanel({
   const [actionError, setActionError] = useState<string | null>(null)
   const [resumingId, setResumingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [expandedDetails, setExpandedDetails] = useState<Record<string, boolean>>({})
+  const [detailCache, setDetailCache] = useState<Record<string, CodexSessionDetail>>({})
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({})
+  const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null)
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token])
 
@@ -151,6 +186,10 @@ export default function CodexSessionsPanel({
     setActionError(null)
     setResumingId(null)
     setDeletingId(null)
+    setExpandedDetails({})
+    setDetailCache({})
+    setDetailErrors({})
+    setLoadingDetailId(null)
     loadSessions()
   }, [loadSessions])
 
@@ -217,6 +256,35 @@ export default function CodexSessionsPanel({
       setDeletingId(null)
     }
   }, [headers, loadSessions, onDeleteSuccess, projectName, t])
+
+  const handleToggleDetail = useCallback(async (sessionId: string) => {
+    const isExpanded = expandedDetails[sessionId] === true
+    if (isExpanded) {
+      setExpandedDetails(prev => ({ ...prev, [sessionId]: false }))
+      return
+    }
+
+    setExpandedDetails(prev => ({ ...prev, [sessionId]: true }))
+    if (detailCache[sessionId] || loadingDetailId === sessionId) return
+
+    setDetailErrors(prev => ({ ...prev, [sessionId]: '' }))
+    setLoadingDetailId(sessionId)
+    try {
+      const params = new URLSearchParams({ project: projectName })
+      const response = await fetch(`/api/codex-sessions/${encodeURIComponent(sessionId)}/detail?${params.toString()}`, { headers })
+      if (!response.ok) {
+        setDetailErrors(prev => ({ ...prev, [sessionId]: t('codexSessions.detailLoadFailed') }))
+        return
+      }
+
+      const data = await response.json() as CodexSessionDetail
+      setDetailCache(prev => ({ ...prev, [sessionId]: data }))
+    } catch {
+      setDetailErrors(prev => ({ ...prev, [sessionId]: t('codexSessions.detailLoadFailed') }))
+    } finally {
+      setLoadingDetailId(null)
+    }
+  }, [detailCache, expandedDetails, headers, loadingDetailId, projectName, t])
 
   const panelBody = (
     <div className={`flex flex-col min-h-0 ${layout === 'sidebar' ? 'h-full bg-nexus-bg' : ''}`}>
@@ -362,10 +430,7 @@ export default function CodexSessionsPanel({
         ) : (
           <div className="flex flex-col gap-2">
             {items.map(item => (
-              <div
-                key={item.id}
-                className="rounded-xl border border-nexus-border bg-nexus-bg-2/60 px-3 py-3"
-              >
+              <div key={item.id} className="rounded-xl border border-nexus-border bg-nexus-bg-2/60 px-3 py-3">
                 <div className="flex flex-col">
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-nexus-text leading-6 break-words">
@@ -381,7 +446,48 @@ export default function CodexSessionsPanel({
                     <div className="text-xs text-nexus-text-2 mt-2 break-all">
                       {basename(item.cwd)} · {item.cwd}
                     </div>
+                    <div className="mt-2">
+                      <button
+                        className="bg-transparent border border-nexus-border rounded-md text-nexus-text-2 text-xs px-2.5 py-1.5 cursor-pointer hover:bg-nexus-bg-2 transition-colors"
+                        onClick={() => handleToggleDetail(item.id)}
+                        disabled={loadingDetailId === item.id}
+                        type="button"
+                      >
+                        {loadingDetailId === item.id
+                          ? t('codexSessions.loadingDetails')
+                          : expandedDetails[item.id]
+                            ? t('codexSessions.hideDetails')
+                            : t('codexSessions.details')}
+                      </button>
+                    </div>
                   </div>
+                  {expandedDetails[item.id] && (
+                    <div className="mt-3 rounded-lg border border-nexus-border bg-nexus-bg px-3 py-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-nexus-text-2">
+                        {t('codexSessions.detailTitle')}
+                      </div>
+                      {detailErrors[item.id] ? (
+                        <div className="mt-2 text-sm text-red-300">{detailErrors[item.id]}</div>
+                      ) : loadingDetailId === item.id ? (
+                        <div className="mt-2 text-sm text-nexus-text-2">{t('common.loading')}</div>
+                      ) : buildCodexSessionDetailFields(detailCache[item.id]).length === 0 ? (
+                        <div className="mt-2 text-sm text-nexus-text-2">{t('codexSessions.detailEmpty')}</div>
+                      ) : (
+                        <div className="mt-2 grid gap-2">
+                          {buildCodexSessionDetailFields(detailCache[item.id]).map(field => (
+                            <div key={field.key} className="flex flex-col gap-0.5 text-sm">
+                              <div className="text-[11px] uppercase tracking-wide text-nexus-text-2">
+                                {detailFieldLabel(field.key, t)}
+                              </div>
+                              <div className="text-nexus-text break-all">
+                                {field.key === 'startedAt' ? formatUpdatedAt(field.value) : field.value}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="mt-3 pt-3 border-t border-nexus-border">
                     <div className="flex items-center gap-2">
                       <button

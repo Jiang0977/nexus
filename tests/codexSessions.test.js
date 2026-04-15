@@ -5,13 +5,13 @@ import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import { deleteCodexSession, listProjectCodexSessions } from '../codexSessions.js'
+import { deleteCodexSession, getProjectCodexSessionDetail, listProjectCodexSessions } from '../codexSessions.js'
 
 function writeJsonl(filePath, lines) {
   writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf8')
 }
 
-function createSessionFile(baseDir, { id, datePath, cwd, timestamp = '2026-04-14T12:00:00.000Z', extraLines = [] }) {
+function createSessionFile(baseDir, { id, datePath, cwd, timestamp = '2026-04-14T12:00:00.000Z', metaFields = {}, extraLines = [] }) {
   const dir = join(baseDir, 'sessions', ...datePath.split('/'))
   mkdirSync(dir, { recursive: true })
   const filePath = join(dir, `rollout-${datePath.replaceAll('/', '-')}-${id}.jsonl`)
@@ -23,6 +23,7 @@ function createSessionFile(baseDir, { id, datePath, cwd, timestamp = '2026-04-14
         id,
         timestamp,
         cwd,
+        ...metaFields,
       },
     }),
     ...extraLines,
@@ -254,6 +255,56 @@ test('deleteCodexSession removes the matching session file by id', async () => {
     })
     assert.deepEqual(listAfterDelete.items.map(item => item.id), ['session-keep-me'])
     assert.equal(listAfterDelete.warning, null)
+  } finally {
+    await rm(codexHome, { recursive: true, force: true })
+  }
+})
+
+test('getProjectCodexSessionDetail exposes only the safe metadata whitelist for matching project sessions', async () => {
+  const codexHome = mkdtempSync(join(tmpdir(), 'nexus-codex-sessions-'))
+  try {
+    writeJsonl(join(codexHome, 'session_index.jsonl'), [
+      JSON.stringify({
+        id: 'session-detail',
+        thread_name: 'detail me',
+        updated_at: '2026-04-14T12:00:00.000Z',
+      }),
+    ])
+
+    createSessionFile(codexHome, {
+      id: 'session-detail',
+      datePath: '2026/04/14',
+      cwd: '/workspace/nexus4cc',
+      metaFields: {
+        originator: 'codex_cli_rs',
+        cli_version: '0.117.0',
+        source: 'cli',
+        model_provider: 'openai',
+        base_instructions: { text: 'must not leak' },
+      },
+    })
+
+    const detail = getProjectCodexSessionDetail({
+      sessionId: 'session-detail',
+      projectName: 'nexus4cc',
+      projectPath: '/workspace/nexus4cc',
+      codexHome,
+      resolveGitRoot: (cwd) => cwd === '/workspace/nexus4cc' ? '/workspace/nexus4cc' : '',
+    })
+
+    assert.deepEqual(detail, {
+      id: 'session-detail',
+      title: 'detail me',
+      updatedAt: '2026-04-14T12:00:00.000Z',
+      startedAt: '2026-04-14T12:00:00.000Z',
+      cwd: '/workspace/nexus4cc',
+      attributionKind: 'repo-root',
+      source: 'cli',
+      originator: 'codex_cli_rs',
+      cliVersion: '0.117.0',
+      modelProvider: 'openai',
+    })
+    assert.equal('baseInstructions' in detail, false)
   } finally {
     await rm(codexHome, { recursive: true, force: true })
   }

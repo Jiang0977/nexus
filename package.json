@@ -3,7 +3,8 @@
   "version": "4.4.2",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
+    "build:server": "rm -rf dist-server && tsc -p tsconfig.server.build.json",
+    "start": "npm run build:server && node dist-server/server.js",
     "dev": "node --watch server.js",
     "setup": "node scripts/setup.js",
     "typecheck:server": "tsc -p tsconfig.server.json"

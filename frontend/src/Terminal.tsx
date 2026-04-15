@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState, lazy, Suspense } from 'react'
-import type { SessionManagerV2Handle } from './SessionManagerV2'
+import type { SessionManagerSidebarDetailView, SessionManagerV2Handle } from './SessionManagerV2'
 import { useTranslation } from 'react-i18next'
 import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -11,6 +11,7 @@ import DraggableFab from './DraggableFab'
 import GhostShield from './GhostShield'
 import { Icon } from './icons'
 import { getWindowStatus, STATUS_DOT_COLOR, STATUS_DOT_TITLE } from './windowStatus'
+import { isCodexHistoryEnabled } from './featureFlags.js'
 import { pickBootstrapSession, sessionExists } from './sessionBootstrap.js'
 import { CODEX_SHELL_TYPE, DEFAULT_SHELL_TYPE, type ShellType } from './shellType'
 
@@ -143,10 +144,11 @@ export default function Terminal({ token }: Props) {
   const [showGeneralSettings, setShowGeneralSettings] = useState(false)
   const [showSessionManagerV2, setShowSessionManagerV2] = useState(false)
   const [showCodexSessions, setShowCodexSessions] = useState(false)
+  const [codexHistoryEnabled, setCodexHistoryEnabled] = useState(true)
   const [showNewSession, setShowNewSession] = useState(false)
   const [showNewWindow, setShowNewWindow] = useState(false)
   const [showSessionDrawer, setShowSessionDrawer] = useState(false)
-  const [sidebarPrimaryView, setSidebarPrimaryView] = useState<'sessions' | 'codex'>('sessions')
+  const [sidebarDetailView, setSidebarDetailView] = useState<SessionManagerSidebarDetailView>('channels')
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialTheme)
 
   const [isWidePC, setIsWidePC] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768)
@@ -259,9 +261,16 @@ export default function Terminal({ token }: Props) {
       .then(r => r.json())
       .then(d => {
         setDefaultTmuxSession(d.tmuxSession || '')
+        setCodexHistoryEnabled(isCodexHistoryEnabled(d))
       })
       .catch(() => {})
   }, [token])
+
+  useEffect(() => {
+    if (codexHistoryEnabled) return
+    setShowCodexSessions(false)
+    setSidebarDetailView((current) => current === 'codex' ? 'channels' : current)
+  }, [codexHistoryEnabled])
 
   // 获取所有 tmux sessions 和 projects
   useEffect(() => {
@@ -716,9 +725,10 @@ export default function Terminal({ token }: Props) {
   }
 
   function openCodexHistory() {
+    if (!codexHistoryEnabled) return
     if (isWidePC) {
       setSidebarCollapsed(false)
-      setSidebarPrimaryView('codex')
+      setSidebarDetailView('codex')
       return
     }
     setShowCodexSessions(true)
@@ -1743,13 +1753,15 @@ EOF`}
                       <Icon name="paperclip" size={18} />
                     </button>
 
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setSidebarCollapsed(false); setSidebarPrimaryView('codex'); localStorage.setItem('nexus_sidebar_collapsed', 'false'); }}
-                      className="w-12 h-10 bg-transparent border-none text-nexus-text-2 flex items-center justify-center cursor-pointer"
-                      title={t('codexSessions.title')}
-                    >
-                      <Icon name="history" size={18} />
-                    </button>
+                    {codexHistoryEnabled && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSidebarCollapsed(false); setSidebarDetailView('codex'); localStorage.setItem('nexus_sidebar_collapsed', 'false'); }}
+                        className="w-12 h-10 bg-transparent border-none text-nexus-text-2 flex items-center justify-center cursor-pointer"
+                        title={t('codexSessions.title')}
+                      >
+                        <Icon name="history" size={18} />
+                      </button>
+                    )}
 
                     <div className="flex-1" />
 
@@ -1781,56 +1793,33 @@ EOF`}
                   >
                     <Icon name="chevronLeft" size={16} />
                   </button>
-                  <div className="px-3 pt-3 pb-2 border-b border-nexus-border">
-                    <div className="inline-flex items-center gap-1 rounded-lg border border-nexus-border bg-nexus-bg-2 p-1">
-                      <button
-                        onClick={() => setSidebarPrimaryView('sessions')}
-                        className={`border-none rounded-md text-sm px-3 py-1.5 cursor-pointer transition-colors ${sidebarPrimaryView === 'sessions' ? 'bg-nexus-accent text-white' : 'bg-transparent text-nexus-text-2'}`}
-                      >
-                        {t('sessionMgr.title')}
-                      </button>
-                      <button
-                        onClick={() => setSidebarPrimaryView('codex')}
-                        className={`border-none rounded-md text-sm px-3 py-1.5 cursor-pointer transition-colors ${sidebarPrimaryView === 'codex' ? 'bg-nexus-accent text-white' : 'bg-transparent text-nexus-text-2'}`}
-                      >
-                        {t('codexSessions.title')}
-                      </button>
-                    </div>
-                  </div>
                   <div
                     className="flex-1 min-h-0 overflow-hidden"
                   >
-                    {sidebarPrimaryView === 'sessions' ? (
-                      <SessionManagerV2
-                        ref={sessionManagerRef}
-                        token={token}
-                        currentProject={activeTmuxSession}
-                        currentChannelIndex={activeWindowIndex}
-                        onClose={() => {}}
-                        onSwitchProject={(name) => handleSwitchSession(name)}
-                        onSwitchChannel={(idx) => attachToWindow(idx)}
-                        onNewProject={openNewSessionDialog}
-                        onNewChannel={handleCreateWindow}
-                        layout="sidebar"
-                      />
-                    ) : (
-                      <Suspense fallback={null}>
-                        <CodexSessionsPanel
-                          token={token}
-                          projectName={activeTmuxSession}
-                          layout="sidebar"
-                          onResumeSuccess={(index) => {
-                            attachToWindow(index)
-                            sessionManagerRef.current?.refresh()
-                          }}
-                          onDeleteSuccess={handleCodexSessionDelete}
-                          onStartNewCodex={() => {
-                            startNewCodexWindow()
-                            sessionManagerRef.current?.refresh()
-                          }}
-                        />
-                      </Suspense>
-                    )}
+                    <SessionManagerV2
+                      ref={sessionManagerRef}
+                      token={token}
+                      currentProject={activeTmuxSession}
+                      currentChannelIndex={activeWindowIndex}
+                      onClose={() => {}}
+                      onSwitchProject={(name) => handleSwitchSession(name)}
+                      onSwitchChannel={(idx) => attachToWindow(idx)}
+                      onNewProject={openNewSessionDialog}
+                      onNewChannel={handleCreateWindow}
+                      layout="sidebar"
+                      codexHistoryEnabled={codexHistoryEnabled}
+                      sidebarDetailView={sidebarDetailView}
+                      onSidebarDetailViewChange={setSidebarDetailView}
+                      onCodexResumeSuccess={(index) => {
+                        attachToWindow(index)
+                        sessionManagerRef.current?.refresh()
+                      }}
+                      onCodexDeleteSuccess={handleCodexSessionDelete}
+                      onStartNewCodex={() => {
+                        startNewCodexWindow()
+                        sessionManagerRef.current?.refresh()
+                      }}
+                    />
                   </div>
                   <div className="border-t border-nexus-border shrink-0" onClick={(e) => e.stopPropagation()}>
                     <Toolbar {...toolbarProps} embedded />
@@ -1886,7 +1875,7 @@ EOF`}
               <button className="absolute bottom-3 right-3 w-9 h-9 rounded-full bg-nexus-accent border-none text-white text-lg cursor-pointer z-50 flex items-center justify-center shadow-lg backdrop-blur-sm" onClick={scrollToBottom} title="滚到底部"><Icon name="arrowDown" size={16} /></button>
             )}
           </div>
-          {!!activeTmuxSession && (
+          {!!activeTmuxSession && codexHistoryEnabled && (
             <DraggableFab
               onClick={openCodexHistory}
               storageKey="nexus_codex_history_fab_pos"
@@ -2033,7 +2022,7 @@ EOF`}
           />
         </Suspense>
       )}
-      {showCodexSessions && (
+      {showCodexSessions && codexHistoryEnabled && (
         <Suspense fallback={null}>
           <CodexSessionsPanel
             token={token}
