@@ -32,6 +32,10 @@ import {
   listCcSwitchProviders,
   resolveCcSwitchTargetProfileId,
 } from './ccSwitchConfig.js';
+import {
+  closeTmuxWindowsForCodexSession,
+  markTmuxWindowAsCodexResumeSession,
+} from './codexSessionWindows.js';
 import { deleteCodexSession, findProjectCodexSession, listProjectCodexSessions } from './codexSessions.js';
 import { getProjectDefault, saveProjectDefault } from './projectDefaults.js';
 import { buildInteractiveShellCommand, collectProxyVars, shellQuote } from './shellLaunch.js';
@@ -200,11 +204,12 @@ function buildCodexResumeWindowName(sessionName, sessionInfo) {
 
 function createTmuxWindowSync(sessionName, cwd, windowName, shellCmd) {
   const output = execSync(
-    `tmux new-window -P -F "#{window_index}|#{window_name}" -t ${shellQuote(sessionName)} -c ${shellQuote(cwd)} -n ${shellQuote(windowName)} ${shellQuote(shellCmd)}`,
+    `tmux new-window -P -F "#{window_id}|#{window_index}|#{window_name}" -t ${shellQuote(sessionName)} -c ${shellQuote(cwd)} -n ${shellQuote(windowName)} ${shellQuote(shellCmd)}`,
     { encoding: 'utf8' },
   ).trim()
-  const [index, name] = output.split('|')
+  const [windowId, index, name] = output.split('|')
   return {
+    windowId: windowId || '',
     index: Number(index),
     name: name || windowName,
   }
@@ -1478,6 +1483,10 @@ app.post('/api/codex-sessions/:id/resume', authMiddleware, async (req, res) => {
         buildCodexResumeWindowName(projectName, sessionInfo),
         shellCmd,
       )
+      markTmuxWindowAsCodexResumeSession({
+        windowTarget: createdWindow.windowId || `${projectName}:${createdWindow.index}`,
+        sessionId,
+      })
 
       try {
         execSync(`tmux select-window -t ${shellQuote(`${projectName}:${createdWindow.index}`)} 2>/dev/null`)
@@ -1538,9 +1547,16 @@ app.delete('/api/codex-sessions/:id', authMiddleware, (req, res) => {
       sessionId,
       codexHome: SHARED_CODEX_HOME,
     })
+    const closedWindows = closeTmuxWindowsForCodexSession({
+      sessionName: projectName,
+      sessionId,
+      defaultInteractiveShell: DEFAULT_INTERACTIVE_SHELL,
+      cleanupRuntime: cleanupCodexRuntime,
+    })
     res.json({
       ok: true,
       sessionId: result.id,
+      closedWindowIndexes: closedWindows.map(window => window.index),
     })
   } catch (err) {
     res.status(500).json({ error: err.message || 'failed to delete codex session' })

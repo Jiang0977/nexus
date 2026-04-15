@@ -709,6 +709,12 @@ export default function Terminal({ token }: Props) {
     }
   }
 
+  async function handleCodexSessionDelete(closedWindowIndexes: number[]) {
+    if (closedWindowIndexes.length === 0) return
+    await fetchWindows()
+    sessionManagerRef.current?.refresh()
+  }
+
   function openCodexHistory() {
     if (isWidePC) {
       setSidebarCollapsed(false)
@@ -1817,6 +1823,7 @@ EOF`}
                             attachToWindow(index)
                             sessionManagerRef.current?.refresh()
                           }}
+                          onDeleteSuccess={handleCodexSessionDelete}
                           onStartNewCodex={() => {
                             startNewCodexWindow()
                             sessionManagerRef.current?.refresh()
@@ -2037,6 +2044,7 @@ EOF`}
               attachToWindow(index)
               sessionManagerRef.current?.refresh()
             }}
+            onDeleteSuccess={handleCodexSessionDelete}
             onStartNewCodex={() => {
               startNewCodexWindow()
               setShowCodexSessions(false)
