@@ -32,6 +32,7 @@ interface Props {
   layout?: 'sidebar' | 'modal'
   onClose?: () => void
   onResumeSuccess?: (channelIndex: number) => void
+  onDeleteSuccess?: (closedWindowIndexes: number[]) => void | Promise<void>
   onStartNewCodex?: () => void
 }
 
@@ -75,6 +76,7 @@ export default function CodexSessionsPanel({
   layout = 'sidebar',
   onClose,
   onResumeSuccess,
+  onDeleteSuccess,
   onStartNewCodex,
 }: Props) {
   const { t } = useTranslation()
@@ -202,13 +204,19 @@ export default function CodexSessionsPanel({
         return
       }
 
+      const data = await response.json() as { closedWindowIndexes?: number[] }
+      try {
+        await onDeleteSuccess?.(Array.isArray(data.closedWindowIndexes) ? data.closedWindowIndexes : [])
+      } catch {
+        // Deletion already succeeded server-side; keep UI on the success path.
+      }
       await loadSessions()
     } catch {
       setActionError(t('codexSessions.deleteFailed'))
     } finally {
       setDeletingId(null)
     }
-  }, [headers, loadSessions, projectName, t])
+  }, [headers, loadSessions, onDeleteSuccess, projectName, t])
 
   const panelBody = (
     <div className={`flex flex-col min-h-0 ${layout === 'sidebar' ? 'h-full bg-nexus-bg' : ''}`}>
