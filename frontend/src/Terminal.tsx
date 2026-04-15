@@ -1833,6 +1833,16 @@ EOF`}
             </div>
             <div className="flex-1 flex flex-col min-w-0 relative">
               <div ref={containerRef} className="flex-1 overflow-hidden relative" onClick={() => termRef.current?.textarea?.focus()} />
+              <button
+                type="button"
+                className="absolute top-3 right-3 z-40 inline-flex items-center gap-1.5 rounded-md border border-nexus-border bg-nexus-bg/80 px-2.5 py-1.5 text-xs font-medium text-nexus-text backdrop-blur-sm cursor-pointer hover:bg-nexus-bg-2/90"
+                onClick={(e) => { e.stopPropagation(); fetchScrollback() }}
+                title={t('terminal.selectText')}
+                aria-label={t('terminal.selectText')}
+              >
+                <Icon name="copy" size={14} />
+                <span>{t('terminal.selectText')}</span>
+              </button>
               {isConnecting && (
                 <div className="absolute inset-0 bg-nexus-bg flex flex-col items-center justify-center gap-3 z-10">
                   <div className="w-8 h-8 border-[3px] border-nexus-border border-t-nexus-accent rounded-full animate-spin" />
@@ -1849,6 +1859,16 @@ EOF`}
         <div className="flex flex-col flex-1 overflow-hidden min-h-0">
           <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
             <div ref={containerRef} className="flex-1 overflow-hidden relative" />
+            <button
+              type="button"
+              className="absolute top-3 right-3 z-40 inline-flex items-center gap-1.5 rounded-md border border-nexus-border bg-nexus-bg/80 px-2.5 py-1.5 text-xs font-medium text-nexus-text backdrop-blur-sm cursor-pointer active:scale-95"
+              onClick={(e) => { e.stopPropagation(); fetchScrollback() }}
+              title={t('terminal.selectText')}
+              aria-label={t('terminal.selectText')}
+            >
+              <Icon name="copy" size={14} />
+              <span>{t('terminal.selectText')}</span>
+            </button>
             {isConnecting && (
               <div className="absolute inset-0 bg-nexus-bg flex flex-col items-center justify-center gap-3 z-10">
                 <div className="w-8 h-8 border-[3px] border-nexus-border border-t-nexus-accent rounded-full animate-spin" />
@@ -2152,8 +2172,8 @@ EOF`}
           <div className="fixed inset-0 z-[500] flex flex-col" style={{ background: termBg }}>
             <GhostShield />
             <div className="flex items-center justify-between px-3.5 py-2.5 border-b flex-shrink-0" style={{ borderColor: `${termMuted}44` }}>
-              <span className="font-semibold text-sm" style={{ color: termFg }}>历史记录</span>
-              <span className="text-xs flex-1 text-center" style={{ color: termMuted }}>滚到底部返回终端</span>
+              <span className="font-semibold text-sm" style={{ color: termFg }}>{t('terminal.scrollbackTitle')}</span>
+              <span className="text-xs flex-1 text-center px-3" style={{ color: termMuted }}>{t('terminal.scrollbackHint')}</span>
               <button
                 className="bg-transparent border-none cursor-pointer p-1 flex items-center justify-center"
                 style={{ color: termMuted }}
@@ -2163,13 +2183,28 @@ EOF`}
             <div
               ref={scrollbackOverlayRef}
               onScroll={handleOverlayScroll}
-              className="flex-1 overflow-y-auto py-2"
-              style={{ WebkitOverflowScrolling: 'touch' }}
+              className="flex-1 overflow-auto py-2 select-text"
+              style={{
+                WebkitOverflowScrolling: 'touch',
+                userSelect: 'text',
+                WebkitUserSelect: 'text',
+                cursor: 'text',
+              }}
             >
               {scrollbackLoading ? (
                 <div className="text-center p-8" style={{ color: termMuted, fontFamily: termFontFamily, fontSize: termFontSize }}>加载中...</div>
               ) : (
-                <pre className="m-0 p-0 whitespace-pre-wrap break-all leading-tight" style={{ fontFamily: termFontFamily, fontSize: termFontSize, color: termFg }}>
+                <pre
+                  className="m-0 p-3 whitespace-pre leading-tight select-text"
+                  style={{
+                    fontFamily: termFontFamily,
+                    fontSize: termFontSize,
+                    color: termFg,
+                    userSelect: 'text',
+                    WebkitUserSelect: 'text',
+                    cursor: 'text',
+                  }}
+                >
                   {scrollbackContent}
                 </pre>
               )}
