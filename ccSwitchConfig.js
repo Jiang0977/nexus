@@ -109,6 +109,14 @@ export function resolveCcSwitchTargetProfileId(existingProfiles = [], provider =
   return nextId
 }
 
+/**
+ * @param {{
+ *   kind?: string,
+ *   existingProfiles?: any[],
+ *   dbPath?: string,
+ *   userHome?: string,
+ * }} options
+ */
 export function listCcSwitchProviders({ kind, existingProfiles = [], dbPath = '', userHome = '' } = {}) {
   if (kind !== 'claude' && kind !== 'codex') return []
   return withCcSwitchDb({ dbPath, userHome }, (db) => {
@@ -131,6 +139,14 @@ export function listCcSwitchProviders({ kind, existingProfiles = [], dbPath = ''
   }) || []
 }
 
+/**
+ * @param {{
+ *   kind?: string,
+ *   providerId?: string,
+ *   dbPath?: string,
+ *   userHome?: string,
+ * }} options
+ */
 export function importCcSwitchProvider({ kind, providerId, dbPath = '', userHome = '' } = {}) {
   if (kind !== 'claude' && kind !== 'codex') return null
   return withCcSwitchDb({ dbPath, userHome }, (db) => {

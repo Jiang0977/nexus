@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "setup": "node scripts/setup.js"
+    "setup": "node scripts/setup.js",
+    "typecheck:server": "tsc -p tsconfig.server.json"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
@@ -17,6 +18,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/node": "^22.19.17",
     "typescript": "^6.0.2"
   }
 }

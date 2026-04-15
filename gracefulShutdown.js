@@ -57,6 +57,7 @@ export function createGracefulShutdown({
   wss,
   ptyMap,
   taskChildren,
+  cleanupImpl = async (_signal) => {},
   exit = (code) => process.exit(code),
   log = console,
   forceExitTimeoutMs = 10000,
@@ -91,6 +92,7 @@ export function createGracefulShutdown({
     }
 
     shutdownPromise = Promise.allSettled([
+      Promise.resolve().then(() => cleanupImpl(signal)),
       closeTarget(wss),
       closeTarget(server),
     ]).then(() => {
