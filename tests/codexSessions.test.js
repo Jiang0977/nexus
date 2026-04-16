@@ -147,6 +147,63 @@ test('listProjectCodexSessions reports partial results when index entries cannot
   }
 })
 
+test('listProjectCodexSessions includes project sessions that exist on disk even when session_index is missing the id', async () => {
+  const codexHome = mkdtempSync(join(tmpdir(), 'nexus-codex-sessions-'))
+  try {
+    writeJsonl(join(codexHome, 'session_index.jsonl'), [
+      JSON.stringify({
+        id: 'session-other',
+        thread_name: 'other project work',
+        updated_at: '2026-04-14T12:01:00.000Z',
+      }),
+    ])
+
+    createSessionFile(codexHome, {
+      id: 'session-missing-index',
+      datePath: '2026/04/14',
+      cwd: '/workspace/taobaoWeb',
+      timestamp: '2026-04-14T12:02:00.000Z',
+    })
+    createSessionFile(codexHome, {
+      id: 'session-other',
+      datePath: '2026/04/14',
+      cwd: '/workspace/other-project',
+      timestamp: '2026-04-14T12:01:00.000Z',
+    })
+
+    const result = listProjectCodexSessions({
+      projectName: 'taobaoWeb',
+      projectPath: '/workspace/taobaoWeb',
+      codexHome,
+      resolveGitRoot: (cwd) => {
+        if (cwd === '/workspace/taobaoWeb') return '/workspace/taobaoWeb'
+        if (cwd === '/workspace/other-project') return '/workspace/other-project'
+        return ''
+      },
+    })
+
+    assert.deepEqual(
+      result.items.map(item => ({
+        id: item.id,
+        title: item.title,
+        updatedAt: item.updatedAt,
+        attributionKind: item.attributionKind,
+      })),
+      [
+        {
+          id: 'session-missing-index',
+          title: 'taobaoWeb',
+          updatedAt: '2026-04-14T12:02:00.000Z',
+          attributionKind: 'repo-root',
+        },
+      ],
+    )
+    assert.equal(result.warning, null)
+  } finally {
+    await rm(codexHome, { recursive: true, force: true })
+  }
+})
+
 test('listProjectCodexSessions paginates with offset cursor', async () => {
   const codexHome = mkdtempSync(join(tmpdir(), 'nexus-codex-sessions-'))
   try {

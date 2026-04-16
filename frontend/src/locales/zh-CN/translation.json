@@ -83,7 +83,7 @@
     }
   },
   "newChannel": {
-    "title": "新建标签页",
+    "title": "新建窗口",
     "shellType": "Shell 类型",
     "profile": "Claude 配置",
     "profileClaude": "Claude 配置",
@@ -238,20 +238,20 @@
     "ccSwitchImportedAllNotice": "已从 cc-switch 导入 {{count}} 个配置"
   },
   "sessionMgr": {
-    "title": "工作区与标签页",
+    "title": "工作区与窗口",
     "noProject": "未选择工作区",
-    "noChannels": "当前工作区还没有标签页",
+    "noChannels": "当前工作区还没有窗口",
     "project": "工作区",
     "projects": "工作区",
-    "channel": "标签页",
-    "channels": "标签页",
+    "channel": "窗口",
+    "channels": "窗口",
     "noProjects": "还没有工作区",
     "newProject": "新建工作区",
-    "newChannel": "新建标签页",
+    "newChannel": "新建窗口",
     "closeProject": "关闭工作区",
     "refresh": "刷新",
     "renameProjectPrompt": "重命名工作区",
-    "renameChannelPrompt": "重命名标签页",
+    "renameChannelPrompt": "重命名窗口",
     "moreOptions": "更多选项",
     "renameFailed": "重命名失败",
     "closeFailed": "关闭失败",
@@ -260,6 +260,7 @@
   },
   "codexSessions": {
     "title": "Codex 历史会话",
+    "shortTitle": "会话",
     "scopePending": "正在读取当前 project 的匹配范围",
     "scopeRepo": "按 repo root 匹配：{{path}}",
     "scopeCwd": "按工作目录匹配：{{path}}",

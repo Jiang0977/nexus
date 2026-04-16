@@ -44,6 +44,7 @@ interface Props {
   token: string
   projectName: string
   layout?: 'sidebar' | 'modal'
+  variant?: 'default' | 'compact'
   onClose?: () => void
   onResumeSuccess?: (channelIndex: number) => void
   onDeleteSuccess?: (closedWindowIndexes: number[]) => void | Promise<void>
@@ -56,6 +57,18 @@ function formatUpdatedAt(value: string) {
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString(undefined, {
     month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function formatCompactUpdatedAt(value: string) {
+  if (!value) return '--'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString(undefined, {
+    month: 'numeric',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
@@ -105,12 +118,14 @@ export default function CodexSessionsPanel({
   token,
   projectName,
   layout = 'sidebar',
+  variant = 'default',
   onClose,
   onResumeSuccess,
   onDeleteSuccess,
   onStartNewCodex,
 }: Props) {
   const { t } = useTranslation()
+  const isCompact = variant === 'compact'
   const [items, setItems] = useState<CodexSessionItem[]>([])
   const [scope, setScope] = useState<CodexSessionsResponse['scope'] | null>(null)
   const [warning, setWarning] = useState<CodexSessionsResponse['warning'] | null>(null)
@@ -517,6 +532,134 @@ export default function CodexSessionsPanel({
       </div>
     </div>
   )
+
+  const compactPanelBody = (
+    <div className="min-h-0">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            className="bg-transparent border-none rounded-md text-nexus-text text-xs px-2 py-1.5 cursor-pointer hover:bg-nexus-bg-2 transition-colors"
+            onClick={onStartNewCodex}
+            type="button"
+          >
+            {t('codexSessions.startNew')}
+          </button>
+          {nextCursor && (
+            <button
+              className="bg-transparent border-none rounded-md text-nexus-text-2 text-xs px-2 py-1.5 cursor-pointer hover:bg-nexus-bg-2 transition-colors disabled:opacity-60 disabled:cursor-default"
+              onClick={() => loadSessions({ cursor: nextCursor, append: true })}
+              disabled={loadingMore}
+              type="button"
+            >
+              {loadingMore ? t('common.loading') : t('codexSessions.loadMore')}
+            </button>
+          )}
+        </div>
+        <button
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-nexus-text-2 cursor-pointer transition-colors hover:bg-nexus-bg hover:text-nexus-text disabled:opacity-60 disabled:cursor-default"
+          onClick={() => loadSessions()}
+          disabled={loading}
+          type="button"
+          title={t('common.refresh')}
+          aria-label={t('common.refresh')}
+        >
+          <Icon name="refresh" size={13} />
+        </button>
+      </div>
+
+      {actionError && (
+        <div className="mb-2 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          {actionError}
+        </div>
+      )}
+
+      {warning && (
+        <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100/90">
+          <span className="text-amber-300">
+            <Icon name="alert" size={12} />
+          </span>
+          <span className="truncate">{warningMessage(warning, t)}</span>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex flex-col gap-1.5">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div
+              key={index}
+              className="rounded-lg bg-nexus-bg/35 px-3 py-2 animate-pulse"
+            >
+              <div className="h-3.5 w-3/5 rounded bg-nexus-border" />
+            </div>
+          ))}
+        </div>
+      ) : error && items.length === 0 ? (
+        <div className="rounded-lg bg-red-500/10 px-3 py-3">
+          <div className="text-sm font-medium text-red-100">{t('codexSessions.errorTitle')}</div>
+          <div className="mt-1 text-xs leading-5 text-red-100/85">{error}</div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              className="bg-transparent border-none rounded-md text-red-100 text-xs px-2 py-1.5 cursor-pointer hover:bg-red-500/10 transition-colors"
+              onClick={() => loadSessions()}
+              type="button"
+            >
+              {t('codexSessions.retry')}
+            </button>
+          </div>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="rounded-lg px-3 py-4">
+          <div className="text-sm font-medium text-nexus-text">{t('codexSessions.emptyTitle')}</div>
+          <div className="mt-1 text-xs leading-5 text-nexus-text-2">{t('codexSessions.emptyDescription')}</div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {items.map(item => (
+            <div
+              key={item.id}
+              className="flex items-center gap-2 rounded-lg px-2.5 py-2 transition-colors hover:bg-nexus-bg-2/60"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-nexus-text" title={item.title || basename(item.cwd)}>
+                  {item.title || basename(item.cwd)}
+                </div>
+              </div>
+              <div className="shrink-0 text-[11px] tabular-nums text-nexus-text-2">
+                {formatCompactUpdatedAt(item.updatedAt)}
+              </div>
+              <button
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-nexus-text-2 cursor-pointer transition-colors hover:bg-nexus-bg hover:text-nexus-text disabled:opacity-60 disabled:cursor-default"
+                onClick={() => handleDelete(item.id, item.title)}
+                disabled={resumingId === item.id || deletingId === item.id}
+                type="button"
+                title={t('common.delete')}
+                aria-label={t('common.delete')}
+              >
+                {deletingId === item.id ? (
+                  <span className="text-[11px] leading-none">...</span>
+                ) : (
+                  <Icon name="trash" size={13} />
+                )}
+              </button>
+              <button
+                className="inline-flex h-7 items-center justify-center rounded-md bg-transparent px-2.5 text-xs font-medium text-nexus-text cursor-pointer transition-colors hover:bg-nexus-bg hover:text-white disabled:opacity-60 disabled:cursor-default"
+                onClick={() => handleResume(item.id)}
+                disabled={resumingId === item.id || deletingId === item.id}
+                type="button"
+              >
+                {resumingId === item.id ? t('codexSessions.opening') : t('codexSessions.resume')}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+    </div>
+  )
+
+  if (isCompact) {
+    return compactPanelBody
+  }
 
   if (layout === 'sidebar') {
     return panelBody

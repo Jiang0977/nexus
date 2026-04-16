@@ -83,7 +83,7 @@
     }
   },
   "newChannel": {
-    "title": "New Tab",
+    "title": "New Window",
     "shellType": "Shell Type",
     "profile": "Claude Profile",
     "profileClaude": "Claude Profile",
@@ -238,20 +238,20 @@
     "ccSwitchImportedAllNotice": "Imported {{count}} configs from cc-switch"
   },
   "sessionMgr": {
-    "title": "Workspaces & Tabs",
+    "title": "Workspaces & Windows",
     "noProject": "No workspace selected",
-    "noChannels": "This workspace has no tabs yet",
+    "noChannels": "This workspace has no windows yet",
     "project": "Workspace",
     "projects": "Workspaces",
-    "channel": "Tab",
-    "channels": "Tabs",
+    "channel": "Window",
+    "channels": "Windows",
     "noProjects": "No workspaces yet",
     "newProject": "New Workspace",
-    "newChannel": "New Tab",
+    "newChannel": "New Window",
     "closeProject": "Close Workspace",
     "refresh": "Refresh",
     "renameProjectPrompt": "Rename Workspace",
-    "renameChannelPrompt": "Rename Tab",
+    "renameChannelPrompt": "Rename Window",
     "moreOptions": "More options",
     "renameFailed": "Rename failed",
     "closeFailed": "Close failed",
@@ -260,6 +260,7 @@
   },
   "codexSessions": {
     "title": "Codex History",
+    "shortTitle": "Sessions",
     "scopePending": "Resolving the current project's history scope",
     "scopeRepo": "Matched by repo root: {{path}}",
     "scopeCwd": "Matched by working directory: {{path}}",
