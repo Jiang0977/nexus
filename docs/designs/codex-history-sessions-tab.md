@@ -50,7 +50,8 @@ Reviewed by:
 - 历史源只读取共享 `~/.codex` 历史，不读取 per-window runtime `.codex`
 - 匹配规则：
   - 优先 repo root
-  - 缺 git 信息时回退 cwd / 子路径匹配
+  - repo 项目缺 session git 信息时回退 cwd / 子路径匹配
+  - 非 repo 项目只匹配精确 cwd，避免父目录吞掉子项目历史
 - detail 字段走白名单提取，只暴露：
   - `source`
   - `originator`

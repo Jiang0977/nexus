@@ -100,6 +100,58 @@ test('listProjectCodexSessions matches repo-root sessions and cwd fallback sessi
   }
 })
 
+test('listProjectCodexSessions does not absorb nested child sessions for non-repo parent paths', async () => {
+  const codexHome = mkdtempSync(join(tmpdir(), 'nexus-codex-sessions-'))
+  try {
+    writeJsonl(join(codexHome, 'session_index.jsonl'), [
+      JSON.stringify({
+        id: 'session-home',
+        thread_name: 'home level work',
+        updated_at: '2026-04-16T12:05:00.000Z',
+      }),
+      JSON.stringify({
+        id: 'session-child',
+        thread_name: 'child project work',
+        updated_at: '2026-04-16T12:04:00.000Z',
+      }),
+    ])
+
+    createSessionFile(codexHome, {
+      id: 'session-home',
+      datePath: '2026/04/16',
+      cwd: '/home/demo',
+    })
+    createSessionFile(codexHome, {
+      id: 'session-child',
+      datePath: '2026/04/16',
+      cwd: '/home/demo/workspace/typescript/nexus4cc',
+    })
+
+    const result = listProjectCodexSessions({
+      projectName: 'jiang',
+      projectPath: '/home/demo',
+      codexHome,
+      limit: 10,
+      resolveGitRoot: () => '',
+    })
+
+    assert.deepEqual(
+      result.items.map(item => ({ id: item.id, cwd: item.cwd, attributionKind: item.attributionKind })),
+      [
+        {
+          id: 'session-home',
+          cwd: '/home/demo',
+          attributionKind: 'cwd',
+        },
+      ],
+    )
+    assert.ok(result.warning)
+    assert.deepEqual(result.warning.codes, ['attribution_unavailable'])
+  } finally {
+    await rm(codexHome, { recursive: true, force: true })
+  }
+})
+
 test('listProjectCodexSessions reports partial results when index entries cannot be fully read', async () => {
   const codexHome = mkdtempSync(join(tmpdir(), 'nexus-codex-sessions-'))
   try {

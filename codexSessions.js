@@ -261,9 +261,18 @@ function collectProjectCodexSessions({
     const sessionRepoRoot = resolveGitRootImpl(sessionCwd) || ''
     let attributionKind = ''
 
-    if (projectRepoRoot && sessionRepoRoot && projectRepoRoot === sessionRepoRoot) {
+    if (projectRepoRoot && sessionRepoRoot) {
+      if (projectRepoRoot !== sessionRepoRoot) {
+        continue
+      }
       attributionKind = 'repo-root'
-    } else if (isSameOrNestedPath(normalizedProjectPath, sessionCwd)) {
+    } else if (projectRepoRoot) {
+      if (!isSameOrNestedPath(normalizedProjectPath, sessionCwd)) {
+        continue
+      }
+      attributionKind = 'cwd'
+      cwdFallbackMatches += 1
+    } else if (sessionCwd === normalizedProjectPath) {
       attributionKind = 'cwd'
       cwdFallbackMatches += 1
     } else {
