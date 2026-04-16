@@ -107,7 +107,7 @@
     "fileList": "File list",
     "workspace": "Browse workspace",
     "more": "More",
-    "tasks": "Tasks",
+    "tasks": "Async Tasks",
     "switchLight": "Light mode",
     "switchDark": "Dark mode",
     "fixedRow": "Fixed row (always visible)",
@@ -302,7 +302,7 @@
     }
   },
   "tasks": {
-    "title": "Task Panel",
+    "title": "Async Tasks",
     "session": "Session:",
     "promptPlaceholder": "Enter task prompt, runs claude -p non-interactively...",
     "sendTask": "▶ Send Task",
@@ -349,7 +349,7 @@
     "currentSession": "Current workspace: {{session}}",
     "newSession": "New Workspace",
     "upload": "Upload",
-    "tasks": "Tasks",
+    "tasks": "Async Tasks",
     "settings": "Settings",
     "lastOutput": "Last output ({{channel}})",
     "online": "● Online",

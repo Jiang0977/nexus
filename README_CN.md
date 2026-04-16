@@ -53,7 +53,7 @@
 
 - 🔌 **WebSocket ↔ tmux 桥接** — 每个 tmux 窗口一个 PTY，实时双向 I/O
 - 📱 **移动端优先终端** — xterm.js + 滑动导航 + 双指缩放 + 可配置软键盘
-- 🤖 **任务面板** — SSE 流式输出，异步监控 Claude 任务进度
+- 🤖 **异步任务执行** — 通过 `/api/tasks`、SSE 和 Telegram bridge 发起“发射后不管”的 Claude 任务
 - 📂 **文件浏览器** — 浏览、编辑、上传工作区文件
 - 🗂️ **项目与频道管理** — 以目录为单位组织项目，多个频道式会话，像 Slack 频道一样切换
 - 🔀 **多会话管理** — 秒切 tmux session
@@ -126,6 +126,7 @@ Nexus 是**单用户自托管工具**，不是多租户平台。
 | [DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md) | 线上更新、重启、验证、回滚标准操作 |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构设计 |
 | [ROADMAP.md](docs/ROADMAP.md) | 未来规划 |
+| [CURRENT-ROADMAP.md](docs/CURRENT-ROADMAP.md) | 当前真实 roadmap 与文档漂移说明 |
 | [📖 Nexus 的故事](docs/story.md) | 为什么造了这个东西 |
 
 ---

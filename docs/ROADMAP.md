@@ -1,22 +1,34 @@
 # ROADMAP — Nexus
 
-**锚点**: `docs/NORTH-STAR.md` | **PRD**: `docs/PRD.md` (v1 Complete) | **更新**: 2026-04-14
+**锚点**: `docs/NORTH-STAR.md` | **PRD**: `docs/PRD.md` (v1 Complete) | **更新**: 2026-04-16
 
 ---
 
-## v1.0 Released (2026-04-01)
+## Current Priorities (2026-04)
 
-All F-01 to F-18 complete.
+只记录当前仍开的 backlog。已落地能力不要继续挂在这里重复计账。
 
-## v2.0 Backlog
+| Priority | Item | Notes |
+|---|---|---|
+| P1 | Codex 历史浏览器级回归 | 用浏览器 smoke 覆盖桌面入口、移动入口、`warning / empty / error / resume` 主路径；细节见 `TODOS.md` |
+| P1 | Codex 历史可访问性收口 | 收口 `CodexSessionsPanel` 的键盘路径、ARIA/读屏语义和最小验证证据；细节见 `TODOS.md` |
+| P2 | `nexus` 启动 `left-over process` 运维债 | 收口 `systemd` 重启时的残留进程告警，不破坏 tmux 持久化语义 |
+| P2 | 文档与开源整理 | 对齐 `ROADMAP.md` / `story.md` / `code.md`，继续 open-source polish |
+
+## Later Backlog
 
 ---
 
 | ANSI output in task history | Add `-e` flag; frontend ansi-to-html |
-| F-19 Project-Window hierarchy | tmux env NEXUS_CWD per-session |
-| F-20 Unified session manager | Slack-style Project/Channel UI |
-| Codex history sessions tab | Project-scoped Codex history panel + resume flow; design: `docs/designs/codex-history-sessions-tab.md` |
 | Open-source polish | Git history rewrite, rate limits, etc. |
+
+## Moved Out Of Backlog
+
+- `F-19 Project-Window hierarchy`
+- `F-20 Unified session manager`
+- `Codex history sessions tab`
+
+这些能力已经落地或至少已进入“已上线、待补验证”的阶段，不再按“待实现功能”管理。
 
 ---
 

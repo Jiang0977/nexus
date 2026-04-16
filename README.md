@@ -53,7 +53,7 @@
 
 - 🔌 **WebSocket ↔ tmux bridge** — one PTY per window, real-time bidirectional I/O
 - 📱 **Mobile-first terminal** — xterm.js, swipe navigation, pinch-to-zoom, configurable soft toolbar
-- 🤖 **Task Panel** — launch Claude tasks, monitor via SSE streaming, async progress
+- 🤖 **Async task runner** — fire-and-forget Claude runs via `/api/tasks`, SSE streaming, and Telegram bridge
 - 📂 **File browser** — browse, edit, upload workspace files (sort by name / modified / size)
 - 🗂️ **Project & channel management** — directory-based projects, each with channel-like sessions (like Slack channels for your terminal)
 - 🔀 **Multi-session** — switch tmux sessions instantly
@@ -126,6 +126,7 @@ Nexus is a **single-user, self-hosted tool** — not a multi-tenant platform.
 | [DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md) | Production update, restart, verification, and rollback runbook |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design |
 | [ROADMAP.md](docs/ROADMAP.md) | What's next |
+| [CURRENT-ROADMAP.md](docs/CURRENT-ROADMAP.md) | Current execution status and doc drift notes |
 | [📖 The story behind Nexus](docs/story.md) | Why this was built |
 
 ---
