@@ -106,7 +106,7 @@ systemd (pm2-<user>.service)
 | `data/configs/openrouter-grok.json` | 完整的 openrouter 配置 |
 | `data/configs/openrouter-qwen.json` | 完整的 openrouter 配置 |
 
-### 路径 B：TaskPanel / Telegram Bot（后台异步任务）
+### 路径 B：后台异步任务 API / Telegram Bot（历史上对应 TaskPanel）
 
 **触发点**: `POST /api/tasks` 或 Telegram webhook
 
