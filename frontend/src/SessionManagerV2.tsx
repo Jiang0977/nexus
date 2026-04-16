@@ -144,6 +144,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
 
   const headers = { Authorization: `Bearer ${token}` }
   const activeSidebarDetailView = isSidebar && currentProject && codexHistoryEnabled ? sidebarDetailView : 'channels'
+  const usesProjectTreeLayout = isSidebar || !isDesktop
 
   // --- Data fetching ---
 
@@ -191,13 +192,13 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   }, [codexHistoryEnabled, currentProject, isSidebar, onSidebarDetailViewChange, sidebarDetailView])
 
   useEffect(() => {
-    if (!isSidebar) return
+    if (!usesProjectTreeLayout) return
     if (!currentProject) {
       setExpandedProjectName(null)
       return
     }
     setExpandedProjectName(currentProject)
-  }, [currentProject, isSidebar])
+  }, [currentProject, usesProjectTreeLayout])
 
   useEffect(() => {
     if (!isSidebar || !currentProject) return
@@ -413,7 +414,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
 
   const activeChannelMenu = isSidebar ? null : (longPressMenu || channelMenu)
 
-  const handleSidebarProjectToggle = useCallback(async (project: Project) => {
+  const handleTreeProjectToggle = useCallback(async (project: Project) => {
     if (project.name === currentProject) {
       setExpandedProjectName(prev => prev === project.name ? null : project.name)
       return
@@ -439,6 +440,8 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
     mode === 'sidebar'
       ? 'bg-transparent border-none text-nexus-text-2 cursor-pointer p-1 flex items-center justify-center opacity-0 group-hover/item:opacity-100 transition-opacity duration-150 shrink-0'
       : 'bg-transparent border-none text-nexus-text-2 cursor-pointer p-1 flex items-center justify-center opacity-60 transition-opacity duration-150 shrink-0'
+
+  const treeRowActionButtonClass = 'inline-flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-nexus-text-2 cursor-pointer opacity-80 transition-colors hover:bg-nexus-bg/70 hover:text-nexus-text'
 
   const sidebarTabClass = (active: boolean) =>
     `relative inline-flex flex-1 items-center justify-center border-none bg-transparent px-0 py-2.5 text-center text-sm cursor-pointer transition-colors ${
@@ -476,6 +479,176 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
             </div>
           )
         })
+      )}
+    </div>
+  )
+
+  const renderMobileTreeChannels = () => (
+    <div className="mt-2 flex flex-col gap-1.5">
+      {loadingChannels ? (
+        <div className="rounded-lg px-3 py-2 text-sm text-nexus-muted">
+          {t('common.loading')}
+        </div>
+      ) : channels.length === 0 ? (
+        <div className="rounded-lg px-3 py-3 text-sm text-nexus-muted">
+          {t('sessionMgr.noChannels')}
+        </div>
+      ) : (
+        channels.map(channel => {
+          const isActive = channel.index === currentChannelIndex
+          const status = getChannelStatus(channel, isActive)
+          return (
+            <div
+              key={channel.index}
+              data-menu-row
+              className={`group/item flex items-start gap-2 rounded-lg px-2.5 py-2 cursor-pointer select-none transition-colors duration-75 ${isActive ? 'bg-nexus-accent/10' : 'hover:bg-nexus-bg-2/60'} ${pressChannel === channel.index ? 'bg-nexus-border/80' : ''}`}
+              style={{ WebkitTouchCallout: 'none' }}
+              onPointerDown={() => { if (isDesktop) void doSwitchChannel(channel, false) }}
+              onTouchStart={(e) => { if (!isDesktop) handleChannelTouchStart(channel, e) }}
+              onTouchEnd={(e) => { if (!isDesktop) { e.preventDefault(); handleChannelTouchEnd(channel) } }}
+              onTouchMove={() => { if (!isDesktop) handleChannelTouchMove() }}
+            >
+              <span className="w-2 h-2 rounded-full shrink-0 mt-1" style={{ background: STATUS_DOT[status] }} title={status} />
+              <span className="text-nexus-text-2 text-[13px] font-medium select-none shrink-0 mt-0.5">#</span>
+              <span className="flex-1 min-w-0 text-sm text-nexus-text truncate leading-tight" title={channel.name}>{channel.name}</span>
+              <button
+                className={menuButtonClass('modal')}
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  showModalChannelMenu(channel, e)
+                }}
+                onTouchStart={(e) => e.stopPropagation()}
+                onTouchEnd={(e) => e.stopPropagation()}
+                title={t('sessionMgr.moreOptions')}
+              >
+                <Icon name="more" size={16} />
+              </button>
+            </div>
+          )
+        })
+      )}
+    </div>
+  )
+
+  const renderMobileTreeContent = () => (
+    <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
+      {error && (
+        <div className="bg-red-500/15 text-nexus-error px-4 py-2.5 text-sm flex items-center justify-between border-b border-nexus-border shrink-0">
+          {error}
+          <button className="bg-transparent border-none text-nexus-error cursor-pointer p-0.5" onPointerDown={() => setError(null)}>
+            <Icon name="x" size={14} />
+          </button>
+        </div>
+      )}
+
+      <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
+        {loadingProjects ? (
+          <div className="px-3 py-2 text-sm text-nexus-muted">{t('common.loading')}</div>
+        ) : projects.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-lg px-3 py-6 text-nexus-muted">
+            <div className="text-[28px] mb-2 opacity-50">📁</div>
+            <div className="text-sm">{t('sessionMgr.noProjects')}</div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {projects.map(project => {
+              const isCurrent = project.name === currentProject
+              const isExpanded = isCurrent && expandedProjectName === project.name
+              return (
+                <div key={project.name}>
+                  <div
+                    data-menu-row
+                    className={`group/item flex items-start gap-2 rounded-xl px-2.5 py-2.5 cursor-pointer select-none transition-colors ${isCurrent ? 'bg-nexus-accent/10' : 'hover:bg-nexus-bg-2/60'}`}
+                    onPointerDown={() => { void handleTreeProjectToggle(project) }}
+                  >
+                    <span className="mt-0.5 shrink-0 text-nexus-text-2">
+                      <Icon name={isExpanded ? 'arrowDown' : 'arrowRight'} size={14} />
+                    </span>
+                    <span className={`w-2 h-2 rounded-full shrink-0 mt-1 ${isCurrent ? 'bg-nexus-accent' : 'bg-nexus-muted'}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-nexus-text truncate leading-tight" title={project.name}>{project.name}</div>
+                      {project.path && (
+                        <div className="text-[11px] text-nexus-text-2 font-mono truncate mt-0.5" title={project.path}>
+                          {formatPath(project.path)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="text-xs text-nexus-text-2 font-mono shrink-0">{project.channelCount}</span>
+                      {isCurrent && (
+                        <button
+                          className={treeRowActionButtonClass}
+                          onPointerDown={(e) => {
+                            e.stopPropagation()
+                            onNewChannel()
+                          }}
+                          type="button"
+                          title={t('sessionMgr.newChannel')}
+                          aria-label={t('sessionMgr.newChannel')}
+                        >
+                          <Icon name="edit" size={15} />
+                        </button>
+                      )}
+                      <button
+                        className={menuButtonClass('modal')}
+                        onPointerDown={(e) => {
+                          e.stopPropagation()
+                          showModalProjectMenu(project, e)
+                        }}
+                        onTouchStart={(e) => e.stopPropagation()}
+                        onTouchEnd={(e) => e.stopPropagation()}
+                        title={t('sessionMgr.moreOptions')}
+                      >
+                        <Icon name="more" size={16} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="ml-5 mt-1.5 border-l border-nexus-border/70 pl-3 pb-1">
+                      <div className="flex items-center gap-1.5 border-b border-nexus-border/60 pb-1 text-[11px] font-semibold tracking-wide text-nexus-text-2">
+                        <span>#</span>
+                        <span>{t('sessionMgr.channels')}</span>
+                      </div>
+                      {renderMobileTreeChannels()}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-nexus-border px-3 py-2 shrink-0">
+        <button
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-nexus-border px-2.5 py-2 text-sm text-nexus-text-2 cursor-pointer hover:bg-nexus-bg-2 transition-colors"
+          onPointerDown={onNewProject}
+          type="button"
+        >
+          <Icon name="plus" size={14} />
+          <span>{t('sessionMgr.newProject')}</span>
+        </button>
+      </div>
+
+      {activeChannelMenu && (
+        <>
+          <div className="fixed inset-0 z-[150]" onPointerDown={() => { setLongPressMenu(null); setChannelMenu(null) }} />
+          <div
+            className="fixed bg-nexus-bg border border-nexus-border rounded-lg py-1 min-w-[120px] shadow-[0_4px_20px_rgba(0,0,0,0.3)] z-[151]"
+            style={{ left: activeChannelMenu.x, top: activeChannelMenu.y }}
+          >
+            <button className="flex items-center gap-2 px-4 py-2.5 bg-transparent border-none text-nexus-text text-sm cursor-pointer w-full text-left" onPointerDown={() => handleRenameChannel(activeChannelMenu.channel)}>
+              <Icon name="pencil" size={14} />
+              <span>{t('common.rename')}</span>
+            </button>
+            <div className="h-px bg-nexus-border my-1" />
+            <button className="flex items-center gap-2 px-4 py-2.5 bg-transparent border-none text-nexus-error text-sm cursor-pointer w-full text-left" onPointerDown={() => handleCloseChannel(activeChannelMenu.channel)}>
+              <Icon name="x" size={14} />
+              <span>{t('common.close')}</span>
+            </button>
+          </div>
+        </>
       )}
     </div>
   )
@@ -706,7 +879,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
                     <div
                       data-menu-row
                       className={`group/item flex items-start gap-2 rounded-xl px-2.5 py-2.5 cursor-pointer select-none transition-colors ${isCurrent ? 'bg-nexus-accent/10' : 'hover:bg-nexus-bg-2/60'}`}
-                      onPointerDown={() => { void handleSidebarProjectToggle(project) }}
+                      onPointerDown={() => { void handleTreeProjectToggle(project) }}
                       onContextMenu={(e) => { e.preventDefault(); handleSidebarContext(e, undefined, project) }}
                     >
                       <span className="mt-0.5 shrink-0 text-nexus-text-2">
@@ -725,7 +898,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
                         <span className="text-xs text-nexus-text-2 font-mono shrink-0">{project.channelCount}</span>
                         {isCurrent && (
                           <button
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-nexus-text-2 cursor-pointer opacity-80 transition-colors hover:bg-nexus-bg/70 hover:text-nexus-text"
+                            className={treeRowActionButtonClass}
                             onPointerDown={(e) => {
                               e.stopPropagation()
                               onNewChannel()
@@ -868,7 +1041,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
           </div>
         </div>
 
-        {content}
+        {isDesktop ? content : renderMobileTreeContent()}
 
         {/* Modal mode: project menu overlay */}
         {projectMenu && (
