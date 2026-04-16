@@ -962,7 +962,7 @@ export default function Terminal({ token }: Props) {
       const whitelist = [
         { ctrl: true, key: 'r', desc: '浏览器刷新' },
         { ctrl: true, key: 'l', desc: '浏览器地址栏' },
-        { ctrl: true, key: 't', desc: '新标签页' },
+        { ctrl: true, key: 't', desc: '新窗口' },
         { ctrl: true, key: 'n', desc: '新窗口' },
         { ctrl: true, key: 'w', desc: '关闭标签' },
         { ctrl: true, shift: true, key: 't', desc: '恢复标签' },
@@ -1788,7 +1788,7 @@ EOF`}
                   {/* Collapse button in header area */}
                   <button
                     onClick={(e) => { e.stopPropagation(); setSidebarCollapsed(true); localStorage.setItem('nexus_sidebar_collapsed', 'true'); }}
-                    className="absolute top-1 right-1 z-50 w-7 h-7 flex items-center justify-center rounded cursor-pointer bg-nexus-bg/80 border border-nexus-border text-nexus-text-2 hover:bg-nexus-bg transition-colors"
+                    className="absolute top-1.5 right-1.5 z-50 w-7 h-7 flex items-center justify-center rounded cursor-pointer bg-nexus-bg/80 border border-nexus-border text-nexus-text-2 hover:bg-nexus-bg transition-colors"
                     title="收起侧边栏"
                   >
                     <Icon name="chevronLeft" size={16} />
@@ -2105,7 +2105,7 @@ EOF`}
               <li>底部工具栏提供 Esc/Tab/^C 等快捷键</li>
                             <li className="flex items-center gap-1.5"><Icon name="paperclip" size={14} />上传图片或文件后，可在“上传文件”里复制路径使用</li>
               <li>📁 新建工作区：在选定目录打开一个新的工作区</li>
-              <li>➕ 新建标签页：在当前工作区目录再开一个标签页</li>
+              <li>➕ 新建窗口：在当前工作区目录再开一个窗口</li>
             </ul>
             <p className="text-nexus-muted text-[11px] mt-2">
               Telegram Bot: /api/telegram/setup 一键配置

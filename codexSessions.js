@@ -240,17 +240,21 @@ function collectProjectCodexSessions({
   const projectRepoRoot = resolveGitRootImpl(normalizedProjectPath) || ''
   const { entries, badIndexLines } = loadSessionIndex(codexHome)
   const { sessionMetaById, badSessionFiles } = loadSessionMetaMap(codexHome)
+  const sessionIndexById = new Map()
   const items = []
   let missingSessionFiles = 0
   let cwdFallbackMatches = 0
 
   for (const entry of entries) {
-    const meta = sessionMetaById.get(entry.id)
-    if (!meta) {
-      missingSessionFiles += 1
-      continue
+    if (!sessionIndexById.has(entry.id)) {
+      sessionIndexById.set(entry.id, entry)
     }
+    if (!sessionMetaById.has(entry.id)) {
+      missingSessionFiles += 1
+    }
+  }
 
+  for (const [sessionId, meta] of sessionMetaById.entries()) {
     const sessionCwd = normalizePath(meta.cwd)
     if (!sessionCwd) continue
 
@@ -266,14 +270,22 @@ function collectProjectCodexSessions({
       continue
     }
 
+    const entry = sessionIndexById.get(sessionId)
     items.push({
-      id: entry.id,
-      title: entry.title || fallbackTitle(entry.id, sessionCwd),
-      updatedAt: entry.updatedAt || meta.timestamp || '',
+      id: sessionId,
+      title: entry?.title || fallbackTitle(sessionId, sessionCwd),
+      updatedAt: entry?.updatedAt || meta.timestamp || '',
       cwd: sessionCwd,
       attributionKind,
     })
   }
+
+  items.sort((left, right) => {
+    const leftTs = Date.parse(left.updatedAt || '') || 0
+    const rightTs = Date.parse(right.updatedAt || '') || 0
+    if (rightTs !== leftTs) return rightTs - leftTs
+    return String(left.id).localeCompare(String(right.id))
+  })
 
   return {
     scope: {

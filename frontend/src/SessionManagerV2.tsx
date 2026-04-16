@@ -140,6 +140,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   // Sidebar right-click menu state
   const [sidebarChannelMenu, setSidebarChannelMenu] = useState<{ channel: Channel; x: number; y: number } | null>(null)
   const [sidebarProjectMenu, setSidebarProjectMenu] = useState<{ project: Project; x: number; y: number } | null>(null)
+  const [expandedProjectName, setExpandedProjectName] = useState<string | null>(currentProject || null)
 
   const headers = { Authorization: `Bearer ${token}` }
   const activeSidebarDetailView = isSidebar && currentProject && codexHistoryEnabled ? sidebarDetailView : 'channels'
@@ -189,6 +190,22 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
     if (sidebarDetailView !== 'codex') return
   }, [codexHistoryEnabled, currentProject, isSidebar, onSidebarDetailViewChange, sidebarDetailView])
 
+  useEffect(() => {
+    if (!isSidebar) return
+    if (!currentProject) {
+      setExpandedProjectName(null)
+      return
+    }
+    setExpandedProjectName(currentProject)
+  }, [currentProject, isSidebar])
+
+  useEffect(() => {
+    if (!isSidebar || !currentProject) return
+    if (sidebarDetailView === 'codex') {
+      setExpandedProjectName(currentProject)
+    }
+  }, [currentProject, isSidebar, sidebarDetailView])
+
   const handleRefresh = useCallback(() => {
     fetchProjects()
     if (currentProject) fetchChannels(currentProject)
@@ -199,14 +216,16 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   // --- Actions ---
 
   const handleProjectClick = async (project: Project) => {
-    if (project.name === currentProject) return
+    if (project.name === currentProject) return true
     try {
       const r = await fetch(`/api/projects/${encodeURIComponent(project.name)}/activate`, { method: 'POST', headers })
-      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.switchFailed'))); return }
+      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.switchFailed'))); return false }
       const data = await r.json()
       onSwitchProject(project.name, data.lastChannel)
+      return true
     } catch (e: unknown) {
       setError(parseNetworkError(e))
+      return false
     }
   }
 
@@ -394,6 +413,18 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
 
   const activeChannelMenu = isSidebar ? null : (longPressMenu || channelMenu)
 
+  const handleSidebarProjectToggle = useCallback(async (project: Project) => {
+    if (project.name === currentProject) {
+      setExpandedProjectName(prev => prev === project.name ? null : project.name)
+      return
+    }
+
+    const switched = await handleProjectClick(project)
+    if (switched) {
+      setExpandedProjectName(project.name)
+    }
+  }, [currentProject, handleProjectClick])
+
   const formatPath = (p: string) => {
     if (!p) return ''
     // Truncate long paths for display
@@ -408,6 +439,46 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
     mode === 'sidebar'
       ? 'bg-transparent border-none text-nexus-text-2 cursor-pointer p-1 flex items-center justify-center opacity-0 group-hover/item:opacity-100 transition-opacity duration-150 shrink-0'
       : 'bg-transparent border-none text-nexus-text-2 cursor-pointer p-1 flex items-center justify-center opacity-60 transition-opacity duration-150 shrink-0'
+
+  const sidebarTabClass = (active: boolean) =>
+    `relative inline-flex flex-1 items-center justify-center border-none bg-transparent px-0 py-2.5 text-center text-sm cursor-pointer transition-colors ${
+      active
+        ? 'text-[#4f8cff] after:absolute after:left-0 after:right-0 after:-bottom-px after:h-0.5 after:rounded-full after:bg-[#4f8cff]'
+        : 'text-nexus-text-2 hover:text-nexus-text'
+    }`
+
+  const renderSidebarChannels = () => (
+    <div className="mt-2 flex flex-col gap-1.5">
+      {loadingChannels ? (
+        <div className="rounded-lg px-3 py-2 text-sm text-nexus-muted">
+          {t('common.loading')}
+        </div>
+      ) : channels.length === 0 ? (
+        <div className="rounded-lg px-3 py-3 text-sm text-nexus-muted">
+          {t('sessionMgr.noChannels')}
+        </div>
+      ) : (
+        channels.map(channel => {
+          const isActive = channel.index === currentChannelIndex
+          const status = getChannelStatus(channel, isActive)
+          return (
+            <div
+              key={channel.index}
+              data-menu-row
+              className={`flex items-start gap-2 rounded-lg px-2.5 py-2 cursor-pointer select-none transition-colors duration-75 group/item ${isActive ? 'bg-nexus-accent/10' : 'hover:bg-nexus-bg-2/60'}`}
+              style={{ WebkitTouchCallout: 'none' }}
+              onPointerDown={() => { void doSwitchChannel(channel, false) }}
+              onContextMenu={(e) => { e.preventDefault(); handleSidebarContext(e, channel, undefined) }}
+            >
+              <span className="w-2 h-2 rounded-full shrink-0 mt-1" style={{ background: STATUS_DOT[status] }} title={status} />
+              <span className="text-nexus-text-2 text-[13px] font-medium select-none shrink-0 mt-0.5">#</span>
+              <span className="flex-1 min-w-0 text-sm text-nexus-text truncate leading-tight" title={channel.name}>{channel.name}</span>
+            </div>
+          )
+        })
+      )}
+    </div>
+  )
 
   // ====== Shared content ======
   const content = (
@@ -588,9 +659,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   // ====== Sidebar mode ======
   if (isSidebar) {
     return (
-      <div
-        className="grid grid-rows-[1fr_auto_1fr] bg-nexus-bg text-nexus-text h-full"
-      >
+      <div className="flex h-full flex-col bg-nexus-bg text-nexus-text">
         {error && (
           <div className="bg-red-500/15 text-nexus-error px-4 py-2.5 text-sm flex items-center justify-between border-b border-nexus-border shrink-0">
             {error}
@@ -600,138 +669,135 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
           </div>
         )}
 
-        {/* Projects section: 50% height, internal scroll */}
-        <div className="flex flex-col overflow-hidden">
-          <div className="px-3 pr-10 py-1.5 border-b border-nexus-border shrink-0">
-            <div className="text-xs font-semibold text-nexus-text tracking-wide flex items-center justify-between gap-1.5">
-              <div className="flex items-center gap-1.5">
-                <span className="text-sm">📁</span>
-                {t('sessionMgr.projects')}
-              </div>
-              <button
-                className="bg-transparent border-none text-nexus-text-2 cursor-pointer p-1 flex items-center justify-center opacity-70 hover:opacity-100 transition-opacity"
-                onClick={handleRefresh}
-                title={t('sessionMgr.refresh') || 'Refresh'}
-              >
-                <Icon name="refresh" size={14} />
-              </button>
+        <div className="pl-3 pr-11 py-2 border-b border-nexus-border shrink-0">
+          <div className="text-xs font-semibold text-nexus-text tracking-wide flex items-center justify-between gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm">📁</span>
+              {t('sessionMgr.projects')}
             </div>
+            <button
+              className="bg-transparent border-none text-nexus-text-2 cursor-pointer p-1 flex items-center justify-center opacity-70 hover:opacity-100 transition-opacity"
+              onClick={handleRefresh}
+              title={t('sessionMgr.refresh') || 'Refresh'}
+              type="button"
+            >
+              <Icon name="refresh" size={14} />
+            </button>
           </div>
-          <div
-            className="flex-1 min-h-0 overflow-y-auto px-1.5 py-1"
-          >
-            {loadingProjects ? (
-              <div className="text-nexus-muted text-sm px-3 py-2">{t('common.loading')}</div>
-            ) : projects.length === 0 ? (
-              <div className="flex flex-col items-center justify-center px-3 py-2 text-nexus-muted">
-                <div className="text-sm">{t('sessionMgr.noProjects')}</div>
-              </div>
-            ) : projects.map(project => {
-              const isActive = project.name === currentProject
-              return (
-                <div
-                  key={project.name}
-                  data-menu-row
-                  className={`flex items-start gap-2 px-2.5 py-1.5 rounded cursor-pointer mb-0.5 select-none group/item ${isActive ? 'bg-blue-500/15' : ''}`}
-                  onPointerDown={() => { if (project.name !== currentProject) handleProjectClick(project) }}
-                  onContextMenu={(e) => { e.preventDefault(); handleSidebarContext(e, undefined, project) }}
-                >
-                  <span className={`w-2 h-2 rounded-full shrink-0 mt-0.5 ${isActive ? 'bg-blue-500' : 'bg-nexus-muted'}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-nexus-text truncate leading-tight" title={project.name}>{project.name}</div>
-                    {project.path && (
-                      <div className="text-[11px] text-nexus-text-2 font-mono truncate mt-0.5" title={project.path}>
-                        {formatPath(project.path)}
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
+          {loadingProjects ? (
+            <div className="px-3 py-2 text-sm text-nexus-muted">{t('common.loading')}</div>
+          ) : projects.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-lg px-3 py-6 text-nexus-muted">
+              <div className="text-[28px] mb-2 opacity-50">📁</div>
+              <div className="text-sm">{t('sessionMgr.noProjects')}</div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {projects.map(project => {
+                const isCurrent = project.name === currentProject
+                const isExpanded = isCurrent && expandedProjectName === project.name
+                const canShowCodex = codexHistoryEnabled && isCurrent
+                const tabsClass = 'flex w-full items-stretch border-b border-nexus-border/70'
+                return (
+                  <div key={project.name}>
+                    <div
+                      data-menu-row
+                      className={`group/item flex items-start gap-2 rounded-xl px-2.5 py-2.5 cursor-pointer select-none transition-colors ${isCurrent ? 'bg-nexus-accent/10' : 'hover:bg-nexus-bg-2/60'}`}
+                      onPointerDown={() => { void handleSidebarProjectToggle(project) }}
+                      onContextMenu={(e) => { e.preventDefault(); handleSidebarContext(e, undefined, project) }}
+                    >
+                      <span className="mt-0.5 shrink-0 text-nexus-text-2">
+                        <Icon name={isExpanded ? 'arrowDown' : 'arrowRight'} size={14} />
+                      </span>
+                      <span className={`w-2 h-2 rounded-full shrink-0 mt-1 ${isCurrent ? 'bg-nexus-accent' : 'bg-nexus-muted'}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-nexus-text truncate leading-tight" title={project.name}>{project.name}</div>
+                        {project.path && (
+                          <div className="text-[11px] text-nexus-text-2 font-mono truncate mt-0.5" title={project.path}>
+                            {formatPath(project.path)}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-xs text-nexus-text-2 font-mono shrink-0">{project.channelCount}</span>
+                        {isCurrent && (
+                          <button
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-nexus-text-2 cursor-pointer opacity-80 transition-colors hover:bg-nexus-bg/70 hover:text-nexus-text"
+                            onPointerDown={(e) => {
+                              e.stopPropagation()
+                              onNewChannel()
+                            }}
+                            type="button"
+                            title={t('sessionMgr.newChannel')}
+                            aria-label={t('sessionMgr.newChannel')}
+                          >
+                            <Icon name="edit" size={15} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="ml-5 mt-1.5 border-l border-nexus-border/70 pl-3 pb-1">
+                        <div className={tabsClass}>
+                          <button
+                            className={sidebarTabClass(activeSidebarDetailView === 'channels')}
+                            onClick={() => onSidebarDetailViewChange?.('channels')}
+                            type="button"
+                          >
+                            {t('sessionMgr.channels')}
+                          </button>
+                          {codexHistoryEnabled && (
+                            <button
+                              className={`${sidebarTabClass(activeSidebarDetailView === 'codex')} ${canShowCodex ? '' : 'cursor-not-allowed opacity-50 hover:text-nexus-text-2'}`}
+                              onClick={() => {
+                                if (!canShowCodex) return
+                                onSidebarDetailViewChange?.('codex')
+                              }}
+                              type="button"
+                              disabled={!canShowCodex}
+                            >
+                              {t('codexSessions.shortTitle')}
+                            </button>
+                          )}
+                        </div>
+
+                        {activeSidebarDetailView === 'channels' ? (
+                          renderSidebarChannels()
+                        ) : (
+                          <div className="mt-2">
+                            <CodexSessionsPanel
+                              token={token}
+                              projectName={currentProject}
+                              layout="sidebar"
+                              variant="compact"
+                              onResumeSuccess={onCodexResumeSuccess}
+                              onDeleteSuccess={onCodexDeleteSuccess}
+                              onStartNewCodex={onStartNewCodex}
+                            />
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-                  <span className="text-xs text-nexus-text-2 font-mono shrink-0">({project.channelCount})</span>
-                </div>
-              )
-            })}
-          </div>
-          <button className="flex items-center justify-center gap-1.5 mx-3 py-1 px-2.5 bg-transparent border border-dashed border-nexus-border rounded text-nexus-text-2 text-sm cursor-pointer shrink-0" onPointerDown={onNewProject}>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-nexus-border px-3 py-2 shrink-0">
+          <button
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-nexus-border px-2.5 py-2 text-sm text-nexus-text-2 cursor-pointer hover:bg-nexus-bg-2 transition-colors"
+            onPointerDown={onNewProject}
+            type="button"
+          >
             <Icon name="plus" size={14} />
             <span>{t('sessionMgr.newProject')}</span>
           </button>
-        </div>
-
-        {/* Divider */}
-        <div className="flex-shrink-0 h-px bg-nexus-border" />
-
-        {/* Channels section: 50% height, internal scroll */}
-        <div className="flex flex-col overflow-hidden">
-          <div className="px-3 pr-10 py-1.5 border-b border-nexus-border shrink-0">
-            <div className="inline-flex items-center gap-1 rounded-lg border border-nexus-border bg-nexus-bg-2 p-1">
-              <button
-                className={`border-none rounded-md text-sm px-3 py-1.5 cursor-pointer transition-colors ${activeSidebarDetailView === 'channels' ? 'bg-nexus-accent text-white' : 'bg-transparent text-nexus-text-2'}`}
-                onClick={() => onSidebarDetailViewChange?.('channels')}
-                type="button"
-              >
-                {t('sessionMgr.channels')}
-              </button>
-              {codexHistoryEnabled && (
-                <button
-                  className={`border-none rounded-md text-sm px-3 py-1.5 transition-colors ${activeSidebarDetailView === 'codex' ? 'bg-nexus-accent text-white' : 'bg-transparent text-nexus-text-2'} ${currentProject ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
-                  onClick={() => {
-                    if (!currentProject) return
-                    onSidebarDetailViewChange?.('codex')
-                  }}
-                  type="button"
-                  disabled={!currentProject}
-                >
-                  {t('codexSessions.title')}
-                </button>
-              )}
-            </div>
-          </div>
-          {activeSidebarDetailView === 'channels' ? (
-            <>
-              <div
-                className="flex-1 min-h-0 overflow-y-auto px-1.5 py-1"
-              >
-                {loadingChannels ? (
-                  <div className="text-nexus-muted text-sm px-3 py-2">{t('common.loading')}</div>
-                ) : channels.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center px-3 py-2 text-nexus-muted">
-                    <div className="text-sm">{t('sessionMgr.noChannels')}</div>
-                  </div>
-                ) : channels.map(channel => {
-                  const isActive = channel.index === currentChannelIndex
-                  const status = getChannelStatus(channel, isActive)
-                  return (
-                    <div
-                      key={channel.index}
-                      data-menu-row
-                      className={`flex items-start gap-2 px-2.5 py-1.5 rounded cursor-pointer mb-0.5 select-none transition-colors duration-75 group/item ${isActive ? 'bg-nexus-bg-2' : ''}`}
-                      style={{ WebkitTouchCallout: 'none' }}
-                      onPointerDown={() => { doSwitchChannel(channel, false) }}
-                      onContextMenu={(e) => { e.preventDefault(); handleSidebarContext(e, channel, undefined) }}
-                    >
-                      <span className="w-2 h-2 rounded-full shrink-0 mt-0.5" style={{ background: STATUS_DOT[status] }} title={status} />
-                      <span className="text-nexus-text-2 text-[13px] font-medium select-none shrink-0 mt-0">#</span>
-                      <span className="flex-1 text-sm text-nexus-text truncate leading-tight min-w-0" title={channel.name}>{channel.name}</span>
-                    </div>
-                  )
-                })}
-              </div>
-              <button className="flex items-center justify-center gap-1.5 mx-3 py-1 px-2.5 bg-transparent border border-dashed border-nexus-border rounded text-nexus-text-2 text-sm cursor-pointer shrink-0" onPointerDown={onNewChannel}>
-                <Icon name="plus" size={14} />
-                <span>{t('sessionMgr.newChannel')}</span>
-              </button>
-            </>
-          ) : (
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <CodexSessionsPanel
-                token={token}
-                projectName={currentProject}
-                layout="sidebar"
-                onResumeSuccess={onCodexResumeSuccess}
-                onDeleteSuccess={onCodexDeleteSuccess}
-                onStartNewCodex={onStartNewCodex}
-              />
-            </div>
-          )}
         </div>
 
         {/* Sidebar right-click menu - channel */}
