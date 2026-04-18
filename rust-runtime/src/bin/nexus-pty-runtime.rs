@@ -14,6 +14,7 @@ const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 30;
 const MAX_OUTPUT_BUFFER: usize = 10_000;
 const RECENT_OUTPUT_REPLAY: usize = 2_000;
+const TMUX_CLIENT_TERM: &str = "xterm-256color";
 
 #[derive(Deserialize)]
 struct Message {
@@ -235,8 +236,25 @@ fn now_ms() -> u64 {
 
 fn trim_output(output: &mut String) {
     if output.len() > MAX_OUTPUT_BUFFER {
-        let keep_from = output.len().saturating_sub(MAX_OUTPUT_BUFFER);
+        let mut keep_from = output.len().saturating_sub(MAX_OUTPUT_BUFFER);
+        while keep_from < output.len() && !output.is_char_boundary(keep_from) {
+            keep_from += 1;
+        }
         output.drain(..keep_from);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_OUTPUT_BUFFER, trim_output};
+
+    #[test]
+    fn trim_output_keeps_utf8_boundaries() {
+        let mut output = format!("中{}", "a".repeat(MAX_OUTPUT_BUFFER - 2));
+        trim_output(&mut output);
+
+        assert_eq!(output, "a".repeat(MAX_OUTPUT_BUFFER - 2));
+        assert!(output.len() <= MAX_OUTPUT_BUFFER);
     }
 }
 
@@ -394,6 +412,7 @@ fn ensure_window_pty(
     command.arg("attach-session");
     command.arg("-t");
     command.arg(format!("{}:{}", session, target_window));
+    command.env("TERM", TMUX_CLIENT_TERM);
 
     let child = pair
         .slave

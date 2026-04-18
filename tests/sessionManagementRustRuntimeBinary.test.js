@@ -397,7 +397,7 @@ test('real rust session runtime creates a missing session before project channel
   assert.match(log, /new-window\|-t missing-project -c \/workspace\/demo -n review exec zsh -i/)
 })
 
-test('real rust session runtime reads tmux-backed session/project/channel state through fake tmux', { skip: process.platform === 'win32' }, async (t) => {
+test('real rust session runtime exposes all tmux-backed sessions and projects through fake tmux', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
   const { baseDir, logFile } = createFakeTmuxBin()
   const client = createClient(baseDir, {
@@ -416,9 +416,13 @@ test('real rust session runtime reads tmux-backed session/project/channel state 
     { name: 'nexus-preview-rust', windows: 1, attached: true },
     { name: 'legacy-preview', windows: 2, attached: false },
     { name: 'owned-outside-root', windows: 1, attached: false },
+    { name: 'foreign-shared-root', windows: 1, attached: false },
+    { name: 'hidden-elsewhere', windows: 1, attached: false },
   ])
 
   assert.deepEqual(await client.listProjects(), [
+    { name: 'hidden-elsewhere', path: '/home/jiang/workspace/other', active: false, channelCount: 1 },
+    { name: 'foreign-shared-root', path: '/tmp/nexus-preview-workspace/apps/foreign', active: false, channelCount: 1 },
     { name: 'owned-outside-root', path: '/srv/preview-owned', active: false, channelCount: 1 },
     { name: 'legacy-preview', path: '/tmp/nexus-preview-workspace/apps/legacy', active: false, channelCount: 2 },
     { name: 'nexus-preview-rust', path: '/tmp/nexus-preview-workspace', active: true, channelCount: 1 },
