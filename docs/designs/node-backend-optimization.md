@@ -1,17 +1,24 @@
 # Node Backend Optimization
 
-Status: Completed / deployed
-Date: 2026-04-15
-Branch: master
+Status: Archived historical document
+Original completion date: 2026-04-15
+Archived after Rust runtime cutover: 2026-04-18
 
-Authored with:
-- `/doc-coauthoring` (2026-04-15)
+## Read This First
 
-## Outcome
+本文记录的是 2026-04-15 那条“先把旧 Node 后端整理干净”的阶段性成果。它不是当前运行时说明。
 
-这条优化主线已经完成并上线。目标不是“把 Node 彻底重写掉”，而是把最容易继续烂掉的边界先拆清楚，让后续维护、测试和未来 sidecar 替换有明确落点。
+当前源码树的默认启动链已经切到 [`start.sh`](/home/jiang/workspace/typescript/nexus4cc/start.sh) -> Rust `nexus-server`；旧 Node 后端入口、旧编译产物入口，以及对应的后端业务服务源码都已从当前分支删除。保留这份文档，只是为了说明当时为什么先做 Node 边界清理，再继续推进整体 Rust 化。
 
-已完成并验证的阶段：
+当前事实源见：
+
+- [ARCHITECTURE.md](/home/jiang/workspace/typescript/nexus4cc/docs/ARCHITECTURE.md)
+- [DEPLOYMENT-RUNBOOK.md](/home/jiang/workspace/typescript/nexus4cc/docs/DEPLOYMENT-RUNBOOK.md)
+- [code.md](/home/jiang/workspace/typescript/nexus4cc/docs/code.md)
+
+## Historical Outcome
+
+当时已经完成并验证的旧 Node 主线包括：
 
 - runtime guards
 - `PTY/tmux broker`
@@ -26,70 +33,44 @@ Authored with:
 - `version service`
 - `broker sidecar PoC`
 - `task runner sidecar`
-- `TS runtime entry`
+- TS runtime entry
 
-当前结果：
+这条主线的历史意义只有两点：
 
-- 启动链已切到 [`start.sh`](/home/jiang/workspace/typescript/nexus4cc/start.sh) -> `node dist-server/server.js`
-- `server.js` 已明显收窄，broker 与 task runner 均有清晰替换边界
-- Node 后端优化主线已收口，不再把它当作 open backlog 主项
+- 把旧后端的高风险边界先拆干净，避免继续在一坨巨石里堆逻辑
+- 给后续 Rust 运行时切换提供可比较的边界和验证面
 
-## Goals
+## Historical Scope
 
-- 给 Node 后端补齐最小稳定性护栏
-- 把高风险边界从 `server.js` 中拆出
+当时锁定的目标：
+
+- 给旧后端补最小稳定性护栏
+- 把高风险边界从旧入口中拆出
 - 建立后端类型检查和编译产物运行时入口
 - 为未来 sidecar 或更强类型约束保留清晰接口
 
-## Non-goals
+当时明确不做：
 
-- 不重写整个后端为 Rust
+- 不在那一轮直接重写整个后端为 Rust
 - 不替换 Express、WebSocket、`node-pty` 或 tmux
 - 不改变既有前端 REST / WS / SSE 协议形状
 - 不引入数据库，继续兼容 `data/*.json`
 
-## Validation
+## Historical Validation
 
-本轮主线的最终验证已经完成：
+2026-04-15 结案时跑过的验证主要是：
 
-- `node --test` 覆盖 runtime entry、Codex 历史、feature flag、detail API 等关键回归
+- `node --test`
 - `npm run typecheck:server`
 - `npm run build:server`
 - `npm --prefix frontend run build`
-- `node --check server.js`
-- `PORT=59001 HOST=127.0.0.1 node dist-server/server.js` 预演返回 `200 OK`
-- 正式部署后 `nexus.service` 运行于 `node dist-server/server.js`
-- `http://127.0.0.1:59000` 探活返回 `200 OK`
 
-部署与重启约束见 [DEPLOYMENT-RUNBOOK.md](/home/jiang/workspace/typescript/nexus4cc/docs/DEPLOYMENT-RUNBOOK.md)。
+这些验证现在只代表“那次 Node 优化分支当时已收口”，不代表当前源码的现行部署方式。
 
-## Remaining Debt
+## Residual Historical Debt
 
-这条主线完成后，还剩一个相关但不阻塞上线的运维债：
+这条主线结案时还剩一项被降级的运维债：
 
 - `systemd` 重启时仍会提示 left-over processes
 
-这项已从“Node backend optimization 主线”降级为独立 TODO，不再阻塞当前后端结构主线的结案。
-
-## Checklist
-
-### Immediate
-- [x] 为 runtime guards 补测试
-- [x] 为 `PTY/tmux broker` 补测试
-- [x] 抽离 runtime / lifecycle wiring
-- [x] 抽离 `PTY/tmux broker`
-- [x] 为后端增加 typecheck 基础设施
-
-### Next
-- [x] 抽离 `task runner`
-- [x] 抽离 `workspace/files`
-- [x] 抽离 `configs/profiles`
-- [x] 抽离 `telegram bridge`
-- [x] 抽离 `session/project/codex-session` 管理路由
-- [x] 抽离 `window launch` 与 `upload/files` 管理路由
-- [x] 抽离 `version/update-check` 路由
-- [x] 落地 `broker sidecar PoC`
-- [x] 落地 `task runner sidecar`
-
-### Later
-- [x] 把 Node 入口切到 TS 编译产物运行时
+它不再是“Node backend optimization”主线的一部分，也不该成为重新引入旧 Node 运行时的理由。

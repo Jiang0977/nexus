@@ -134,9 +134,8 @@
 
 ### `code.md`
 
-- 仍保留“多用户支持”“协作功能”等旧规划
-- 项目结构、部署方式、端口与现状有偏差
-- 更像历史介绍文，而不是当前工程事实文档
+- 已经改写为当前 Rust runtime 入口和前端主路径的源码导览
+- 后续如果继续拆 `rust-runtime/src/lib.rs` 或 runtime 边界，要同步更新模块地图
 
 ## 建议的文档清理顺序
 
@@ -145,7 +144,7 @@
    - 只保留真实还开的 backlog
 2. 更新 [story.md](story.md)
    - 去掉团队协作 / MIT / `3000` 等错误信息
-3. 给 [code.md](code.md) 加“历史参考，非当前事实源”标记，或直接重写
+3. 继续维护 [code.md](code.md) 的模块地图，避免再次和真实结构脱节
 
 ## 部署约束
 
@@ -153,7 +152,7 @@
 
 - 重启 `nexus` 服务后再验证
 - 前端改动先 `npm --prefix frontend run build`
-- 后端改动先 `npm run build:server`
+- 后端改动先 `npm run build:rust-runtimes && npm run build:rust-server`
 - 服务不可达就立即回滚
 
 权威操作说明见 [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)。

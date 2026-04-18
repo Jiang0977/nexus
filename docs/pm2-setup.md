@@ -3,13 +3,16 @@
 > 历史文档。当前线上部署以 `systemd` 为准，不再以 PM2 作为权威运行方式。
 >
 > 线上更新、重启、验证与回滚请改看 [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)。
+>
+> 如果只是想本地快速起一个 PM2 版本，优先运行 `npm run setup`；它现在会调用 Rust `nexus-setup` 自动生成同名 `ecosystem.config.cjs`。
 
-## ecosystem.config.js 内容
+## ecosystem.config.cjs 内容
 ```js
 module.exports = {
   apps: [{
     name: 'nexus',
-    script: './server.js',
+    script: 'bash',
+    args: ['./start.sh'],
     cwd: '/mnt/c/Users/libra/work/nexus',
     instances: 1,
     exec_mode: 'fork',
@@ -31,14 +34,14 @@ module.exports = {
 pm2 stop nexus
 pm2 delete nexus
 
-# 2. 创建 ecosystem.config.js（如果手动创建，复制上方内容）
-# cat > ecosystem.config.js << 'EOF'  # (粘贴内容) EOF
+# 2. 创建 ecosystem.config.cjs（如果手动创建，复制上方内容）
+# cat > ecosystem.config.cjs << 'EOF'  # (粘贴内容) EOF
 
 # 3. 确保日志目录存在
 mkdir -p logs
 
 # 4. 用新配置启动（会自动 save + startup）
-pm2 start ecosystem.config.js
+pm2 start ecosystem.config.cjs
 
 # 5. 保存配置（pm2 重启系统时自动恢复）
 pm2 save
@@ -53,6 +56,6 @@ pm2 startup
 ## 验证
 - `pm2 env nexus | grep CLAUDE_CONFIG_DIR`：应为空（清理成功）。
 - `pm2 logs nexus`：查看日志。
-- **回滚**：`pm2 delete nexus && rm ecosystem.config.js pm2-setup.md logs/nexus*.log`。
+- **回滚**：`pm2 delete nexus && rm ecosystem.config.cjs pm2-setup.md logs/nexus*.log`。
 
 **日期**：2026-04-05

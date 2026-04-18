@@ -14,6 +14,8 @@ if [ -z "$PROJECT" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEFAULT_CODEX_HOME_EXECUTABLE="${SCRIPT_DIR}/rust-runtime/target/release/nexus-codex-home"
+CODEX_HOME_EXECUTABLE="${NEXUS_CODEX_HOME_EXECUTABLE:-$DEFAULT_CODEX_HOME_EXECUTABLE}"
 CONFIG_FILE=""
 if [ -n "$PROFILE" ]; then
     CONFIG_FILE="${SCRIPT_DIR}/data/codex-configs/${PROFILE}.json"
@@ -31,13 +33,21 @@ safe_window_id="$(printf '%s' "$window_id" | sed 's/[^a-zA-Z0-9._-]/-/g')"
 runtime_home="${SCRIPT_DIR}/data/codex-runtime/${safe_window_id}"
 
 mkdir -p "${SCRIPT_DIR}/data/codex-runtime"
-node "${SCRIPT_DIR}/scripts/materialize-codex-home.mjs" "${CONFIG_FILE}" "${runtime_home}" "${PROJECT}"
+if [ -z "${NEXUS_CODEX_HOME_EXECUTABLE:-}" ] && [ ! -x "$DEFAULT_CODEX_HOME_EXECUTABLE" ]; then
+    echo "[Nexus] 构建 Rust codex home tool..."
+    npm run build:rust-codex-home
+fi
+if [ ! -x "$CODEX_HOME_EXECUTABLE" ]; then
+    echo "[Nexus] Rust codex home tool 不可执行: ${CODEX_HOME_EXECUTABLE}"
+    exit 1
+fi
+"${CODEX_HOME_EXECUTABLE}" "${CONFIG_FILE}" "${runtime_home}" "${PROJECT}"
 
 export HOME="${runtime_home}"
 export LANG="C.UTF-8"
 export LC_ALL="C.UTF-8"
 
-# 代理变量：优先使用 NEXUS_PROXY（server.js 注入），其次继承环境
+# 代理变量：优先使用 NEXUS_PROXY（nexus-server 注入），其次继承环境
 _proxy="${NEXUS_PROXY:-${HTTP_PROXY:-}}"
 if [ -n "$_proxy" ]; then
     export HTTP_PROXY="$_proxy"

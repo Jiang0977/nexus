@@ -9,6 +9,7 @@
 
 | 依赖 | 版本/说明 | 安装检查 |
 |------|----------|----------|
+| Rust toolchain | stable（含 `cargo`） | `cargo --version` |
 | Node.js | 20+ | `node --version` |
 | tmux | 任意近期版本 | `tmux -V` |
 | Claude CLI | 官方命令行工具 | `claude --version` |
@@ -30,12 +31,25 @@ claude login
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/user/nexus4cc.git
+git clone https://github.com/librae8226/nexus4cc.git
 cd nexus4cc
 
-# 2. 安装依赖
+# 2. 一键安装（推荐）
+npm run setup
+
+# 或手动安装依赖
 npm install
 cd frontend && npm install && npm run build && cd ..
+```
+
+`npm run setup` 现在会调用 Rust `nexus-setup`，自动完成 `.env`、依赖、前端构建、PM2 和首个 tmux 会话。
+
+手动安装路径下，`npm start` 首次启动时会按需构建缺失的 Rust release binaries；但只要你后续改了 Rust 或前端源码，重启前仍需手动运行：
+
+```bash
+npm run build:rust-runtimes
+npm run build:rust-server
+npm --prefix frontend run build
 ```
 
 ---
@@ -268,4 +282,4 @@ http://192.168.x.x:59000
 
 ---
 
-*有问题？提交 [Issue](https://github.com/user/nexus4cc/issues) 或查看 [Troubleshooting](TROUBLESHOOTING.md)*
+*有问题？提交 [Issue](https://github.com/librae8226/nexus4cc/issues) 或查看 [Troubleshooting](TROUBLESHOOTING.md)*

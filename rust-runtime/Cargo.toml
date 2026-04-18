@@ -1,0 +1,46 @@
+[package]
+name = "nexus-rust-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "nexus-task-runtime"
+path = "src/bin/nexus-task-runtime.rs"
+
+[[bin]]
+name = "nexus-pty-runtime"
+path = "src/bin/nexus-pty-runtime.rs"
+
+[[bin]]
+name = "nexus-window-launch-runtime"
+path = "src/bin/nexus-window-launch-runtime.rs"
+
+[[bin]]
+name = "nexus-session-runtime"
+path = "src/bin/nexus-session-runtime.rs"
+
+[[bin]]
+name = "nexus-server"
+path = "src/bin/nexus-server.rs"
+
+[[bin]]
+name = "nexus-codex-home"
+path = "src/bin/nexus-codex-home.rs"
+
+[[bin]]
+name = "nexus-setup"
+path = "src/bin/nexus-setup.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["json", "http1", "multipart", "ws"] }
+bcrypt = "0.16"
+chrono = { version = "0.4", default-features = true, features = ["clock"] }
+futures-core = "0.3"
+jsonwebtoken = "9"
+mime_guess = "2"
+portable-pty = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal"] }

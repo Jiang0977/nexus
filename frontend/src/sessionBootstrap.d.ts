@@ -4,6 +4,7 @@ export interface BootstrapProjectLike {
 
 export interface PickBootstrapSessionInput {
   storedSession?: string | null
+  storedSessionSource?: string | null
   activeSession?: string | null
   defaultSession?: string | null
   projects?: BootstrapProjectLike[]

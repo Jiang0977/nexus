@@ -68,7 +68,7 @@ if [ -n "$API_TIMEOUT_MS" ]; then
 fi
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 
-# ── 代理变量：优先使用 NEXUS_PROXY（server.js 注入），其次继承环境 ──
+# ── 代理变量：优先使用 NEXUS_PROXY（nexus-server 注入），其次继承环境 ──
 _proxy="${NEXUS_PROXY:-${HTTP_PROXY:-}}"
 if [ -n "$_proxy" ]; then
     export HTTP_PROXY="$_proxy"
