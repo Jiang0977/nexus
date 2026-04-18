@@ -61,6 +61,8 @@ const DEFAULT_MAX_TASKS: usize = 200;
 const MAX_TASK_OUTPUT_LENGTH: usize = 10_000;
 const MAX_TASK_ERROR_LENGTH: usize = 1_000;
 const MAX_TASK_PROMPT_LENGTH: usize = 1_000;
+const OUTPUT_SNAPSHOT_FALLBACK_LINES: u32 = 200;
+const OUTPUT_SNAPSHOT_FALLBACK_IDLE_MS: u64 = 4_000;
 const TASK_INTERRUPT_MESSAGE: &str = "(服务重启，任务中断)";
 const CODEX_LOGIN_STATUS_TIMEOUT_MS: u64 = 15_000;
 const CODEX_EXEC_VALIDATE_TIMEOUT_MS: u64 = 120_000;
@@ -2824,16 +2826,21 @@ async fn api_session_output(
         .unwrap_or_else(|| state.default_tmux_session.as_ref().clone());
 
     runtime_request_response(
-        state
-            .runtime_manager
-            .pty_broker_request(
-                "getOutputSnapshot",
-                json!({
-                    "session": session,
-                    "windowIndex": window_index,
-                }),
-            )
-            .await,
+        resolve_session_output_snapshot(
+            state
+                .runtime_manager
+                .pty_broker_request(
+                    "getOutputSnapshot",
+                    json!({
+                        "session": session,
+                        "windowIndex": window_index,
+                    }),
+                )
+                .await,
+            &session,
+            window_index,
+        )
+        .await,
     )
 }
 
@@ -6042,6 +6049,50 @@ fn runtime_request_response(result: Result<Value, String>) -> Response {
         Ok(payload) => Json(payload).into_response(),
         Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
     }
+}
+
+async fn resolve_session_output_snapshot(
+    runtime_result: Result<Value, String>,
+    session: &str,
+    window_index: u32,
+) -> Result<Value, String> {
+    let mut snapshot = match runtime_result? {
+        Value::Object(object) => object,
+        payload => return Ok(payload),
+    };
+
+    let connected = snapshot
+        .get("connected")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let output = snapshot
+        .get("output")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    if connected || !output.is_empty() {
+        return Ok(Value::Object(snapshot));
+    }
+
+    let Ok(scrollback) =
+        capture_tmux_scrollback(session, window_index, OUTPUT_SNAPSHOT_FALLBACK_LINES).await
+    else {
+        return Ok(Value::Object(snapshot));
+    };
+
+    if scrollback.is_empty() {
+        return Ok(Value::Object(snapshot));
+    }
+
+    snapshot.insert("connected".to_string(), Value::Bool(true));
+    snapshot.insert("output".to_string(), Value::String(scrollback));
+    snapshot.insert("clients".to_string(), json!(0));
+    snapshot.insert(
+        "idleMs".to_string(),
+        json!(OUTPUT_SNAPSHOT_FALLBACK_IDLE_MS),
+    );
+
+    Ok(Value::Object(snapshot))
 }
 
 fn runtime_unconfigured_status() -> Value {

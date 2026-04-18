@@ -843,6 +843,52 @@ test('rust nexus-server serves pty output snapshot and tmux scrollback routes', 
   assert.match(log, /capture-pane\|-p -S -10000 -t demo-project:3/)
 })
 
+test('rust nexus-server falls back to tmux capture-pane when pty snapshot is cold', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const tmuxFixture = createPtyScrollbackTmuxFixture()
+  const port = await getFreePort()
+  const password = 'pty-output-fallback-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+    PATH: `${tmuxFixture.baseDir}:${process.env.PATH || ''}`,
+    NEXUS_PTY_BROKER_RUST_EXECUTABLE: process.execPath,
+    NEXUS_PTY_BROKER_RUST_ARGS: JSON.stringify([PTY_FIXTURE]),
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+    rmSync(tmuxFixture.baseDir, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const { token } = await login(port, password)
+  const headers = { Authorization: `Bearer ${token}` }
+
+  const outputResponse = await fetch(`http://127.0.0.1:${port}/api/sessions/3/output?session=demo-project`, {
+    headers,
+  })
+
+  assert.equal(outputResponse.status, 200)
+  assert.deepEqual(await outputResponse.json(), {
+    connected: true,
+    output: 'alpha\nbeta\n',
+    clients: 0,
+    idleMs: 4000,
+  })
+
+  const log = readFileSync(tmuxFixture.logFile, 'utf8')
+  assert.match(log, /capture-pane\|-p -S -200 -t demo-project:3/)
+})
+
 test('rust nexus-server bridges pty websocket traffic through the rust runtime', async (t) => {
   ensureRustServerBuilt()
 
