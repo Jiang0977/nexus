@@ -247,7 +247,6 @@ struct DiscoverableSession {
     name: String,
     windows: usize,
     attached: bool,
-    owner_session: String,
     path: String,
 }
 
@@ -367,27 +366,6 @@ fn current_tmux_session() -> String {
 
 fn current_workspace_root() -> String {
     env_or_default("WORKSPACE_ROOT", "")
-}
-
-fn normalize_comparable_path(path_value: &str) -> String {
-    let normalized = path_value.trim();
-    if normalized.is_empty() {
-        return String::new();
-    }
-    if normalized == "/" {
-        return "/".to_string();
-    }
-    normalized.trim_end_matches('/').to_string()
-}
-
-fn is_path_inside_workspace(path_value: &str, workspace_root: &str) -> bool {
-    let normalized_path = normalize_comparable_path(path_value);
-    let normalized_workspace_root = normalize_comparable_path(workspace_root);
-    if normalized_path.is_empty() || normalized_workspace_root.is_empty() {
-        return false;
-    }
-    normalized_path == normalized_workspace_root
-        || normalized_path.starts_with(&format!("{}/", normalized_workspace_root))
 }
 
 fn read_tmux_env_value(session: &str, key: &str) -> String {
@@ -1218,31 +1196,19 @@ fn list_discoverable_sessions() -> Vec<DiscoverableSession> {
                     .parse::<usize>()
                     .unwrap_or(0)
                     > 0;
-                let owner_session = read_tmux_env_value(&name, "NEXUS_OWNER_SESSION");
                 let path = read_session_discovery_path(&name, windows);
                 Some(DiscoverableSession {
                     name,
                     windows,
                     attached,
-                    owner_session,
                     path,
                 })
-            })
-            .filter(|session| {
-                if session.name == tmux_session {
-                    return true;
-                }
-                if !session.owner_session.is_empty() {
-                    return session.owner_session == tmux_session;
-                }
-                is_path_inside_workspace(&session.path, &workspace_root)
             })
             .collect(),
         Err(_) => vec![DiscoverableSession {
             name: tmux_session,
             windows: 0,
             attached: false,
-            owner_session: String::new(),
             path: workspace_root,
         }],
     }

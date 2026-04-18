@@ -220,8 +220,7 @@ export default function Terminal({ token }: Props) {
     active: boolean
     channelCount: number
   }
-  const [projects, setProjects] = useState<ProjectInfo[]>([])
-  const [projectsLoaded, setProjectsLoaded] = useState(false)
+  const [projects, setProjects] = useState<ProjectInfo[] | null>(null)
 
   function clearSessionSelection() {
     localStorage.removeItem('nexus_session')
@@ -282,7 +281,7 @@ export default function Terminal({ token }: Props) {
 
   // 获取所有 tmux sessions 和 projects
   useEffect(() => {
-    setProjectsLoaded(false)
+    setProjects(null)
     const fetchSessions = async () => {
       try {
         const r = await fetch('/api/tmux-sessions', { headers: { Authorization: `Bearer ${token}` } })
@@ -297,11 +296,11 @@ export default function Terminal({ token }: Props) {
         const r = await fetch('/api/projects', { headers: { Authorization: `Bearer ${token}` } })
         if (r.ok) {
           setProjects(await r.json())
+          return
         }
+        setProjects([])
       } catch {
         setProjects([])
-      } finally {
-        setProjectsLoaded(true)
       }
     }
     fetchSessions()
@@ -314,7 +313,7 @@ export default function Terminal({ token }: Props) {
   }, [token])
 
   useEffect(() => {
-    if (!projectsLoaded) return
+    if (projects === null) return
 
     const storedSession = localStorage.getItem('nexus_session') || ''
     const storedSessionSource = localStorage.getItem(SESSION_SOURCE_KEY) || ''
@@ -342,7 +341,7 @@ export default function Terminal({ token }: Props) {
     }
 
     clearSessionSelection()
-  }, [projects, projectsLoaded, defaultTmuxSession])
+  }, [projects, defaultTmuxSession])
 
   useEffect(() => {
     const check = () => setIsWidePC(window.innerWidth >= 768)
@@ -701,7 +700,7 @@ export default function Terminal({ token }: Props) {
     try {
       const session = activeTmuxSessionRef.current
       // 获取当前 project 的路径
-      const currentProject = projects.find(p => p.name === session)
+      const currentProject = (projects ?? []).find(p => p.name === session)
       const projectPath = currentProject?.path
       // 修复：使用正确的 API 端点 /api/projects/:name/channels
       const r = await fetch(`/api/projects/${encodeURIComponent(session)}/channels`, {
@@ -2091,7 +2090,7 @@ EOF`}
         <Suspense fallback={null}>
           <NewWindowDialog
             token={token}
-            projectPath={projects.find(p => p.name === activeTmuxSession)?.path}
+            projectPath={(projects ?? []).find(p => p.name === activeTmuxSession)?.path}
             onClose={() => setShowNewWindow(false)}
             onConfirm={handleNewWindowConfirm}
           />
