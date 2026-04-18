@@ -72,6 +72,14 @@ npm start
 # 在任意设备打开 http://localhost:59000 🚀
 ```
 
+`npm start` 首次启动时会按需构建缺失的 Rust release binaries。只要你改了 Rust 或前端源码，重启前都要显式重建：
+
+```bash
+npm run build:rust-runtimes
+npm run build:rust-server
+npm --prefix frontend run build
+```
+
 > 完整配置指南（Claude Profile、PM2、移动端访问、故障排查）：**[QUICKSTART.md →](docs/QUICKSTART.md)**
 
 ---
@@ -81,10 +89,10 @@ npm start
 如果你是正在帮用户安装 Nexus 的 AI 助手，按以下步骤执行：
 
 1. 克隆本仓库并 `cd` 进入目录
-2. 运行 `node scripts/setup.js` — 自动处理依赖安装、前端构建、PM2 启动和 tmux 会话创建
+2. 运行 `npm run setup` — 调用 Rust `nexus-setup` 安装器，自动处理依赖安装、前端构建、PM2 启动和 tmux 会话创建
 3. 验证：`pm2 status` 显示 `nexus` 在线 → 打开 `http://localhost:59000`
 
-前置要求：Node.js 20+、tmux。PM2 不存在时会自动全局安装。  
+前置要求：Rust toolchain（`cargo`）、Node.js 20+、tmux。PM2 不存在时会自动安装。  
 默认登录密码：`nexus123`（安装完成后可在 `.env` 中修改）。
 
 ---
@@ -101,9 +109,10 @@ npm start
 
 | 依赖 | 版本 | 说明 |
 |---|---|---|
+| Rust | stable toolchain | 用于构建 `nexus-server`、各个 runtime 和 `nexus-setup` |
 | Node.js | 20+ | |
 | tmux | 任意近期版本 | |
-| PM2 | 任意近期版本 | `setup.js` 自动安装 |
+| PM2 | 任意近期版本 | 缺失时由 `nexus-setup` 自动安装 |
 | 操作系统 | Linux / WSL2 | |
 
 ---

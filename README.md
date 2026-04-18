@@ -72,6 +72,14 @@ npm start
 # Open http://localhost:59000 on any device 🚀
 ```
 
+`npm start` will build missing Rust release binaries on first run. After changing Rust or frontend source, rebuild explicitly before restart:
+
+```bash
+npm run build:rust-runtimes
+npm run build:rust-server
+npm --prefix frontend run build
+```
+
 > Full setup guide including Claude profile config, PM2, and mobile access: **[QUICKSTART.md →](docs/QUICKSTART.md)**
 
 ---
@@ -81,10 +89,10 @@ npm start
 If you're an AI assistant helping a user install Nexus, follow this path:
 
 1. Clone this repo and `cd` into it
-2. Run `node scripts/setup.js` — handles deps, frontend build, PM2, and first tmux session
+2. Run `npm run setup` — invokes the Rust `nexus-setup` installer for deps, frontend build, PM2, and the first tmux session
 3. Verify: `pm2 status` shows `nexus` online → open `http://localhost:59000`
 
-Prerequisites: Node.js 20+, tmux. PM2 is installed automatically if missing.  
+Prerequisites: Rust toolchain (`cargo`), Node.js 20+, tmux. PM2 is installed automatically if missing.  
 Default login password: `nexus123` (user can change it in `.env` after setup).
 
 ---
@@ -101,9 +109,10 @@ For production updates, restart, verification, and rollback, use **[DEPLOYMENT-R
 
 | Dependency | Version | Note |
 |---|---|---|
+| Rust | stable toolchain | required to build `nexus-server`, runtimes, and `nexus-setup` |
 | Node.js | 20+ | |
 | tmux | any recent | |
-| PM2 | any recent | auto-installed by `setup.js` |
+| PM2 | any recent | auto-installed by `nexus-setup` if missing |
 | OS | Linux / WSL2 | |
 
 ---

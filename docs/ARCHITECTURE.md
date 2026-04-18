@@ -30,10 +30,9 @@ Browser / PWA
   ↕ WebSocket /ws?token=<jwt>&session=<name>&window=<index>
   ↕ HTTPS /api/*
 
-Nexus Server (server.js runtime entry)
-  ↕ service modules
-  ↕ PTY broker
-  ↕ task runner
+Nexus Server (Rust `nexus-server` runtime entry)
+  ↕ Rust child runtimes
+  ↕ local FS / Git / Telegram API
 
 tmux session:window
   ↕ interactive shell / claude / codex
@@ -41,14 +40,14 @@ tmux session:window
 Optional:
 - Telegram Bot -> /api/webhooks/telegram -> task runner
 - shared ~/.codex -> Codex history discovery / resume
-- data/*.json -> profiles / toolbar / tasks / project defaults
+- runtime data dir (`data/` by default; overridable via `NEXUS_DATA_DIR`) -> profiles / toolbar / tasks / project defaults
 ```
 
 这里有三份“事实源”：
 
 - `tmux`
   - 会话、窗口、cwd、当前活跃窗口
-- `data/*.json`
+- runtime data dir (`data/` by default；可用 `NEXUS_DATA_DIR` 改到独立目录)
   - 配置和任务历史
 - 共享 `~/.codex`
   - Codex 历史会话来源
@@ -63,14 +62,16 @@ Optional:
 - 关闭页面后，tmux 和 Agent 继续运行
 - 重新进入时，通过 tmux attach 恢复
 
-### 2. 后端是“入口 + 服务模块”，不是单文件巨石
+### 2. 后端是“Rust 入口 + child runtimes + 共享 lib helper”
 
-- `server.js` 仍是唯一 runtime entry
-- 但窗口、项目、任务、上传、Telegram、版本、配置、Codex 历史都已拆到独立服务
+- `rust-runtime/src/bin/nexus-server.rs` 现在是默认 runtime entry
+- `rust-runtime/src/lib.rs` 承载共享的 config / path / shell / defaults / sanitize helper
+- tmux / task / pty / window launch 等较厚语义继续下沉到 Rust child runtimes
+- 目前路由 handler 仍然主要集中在 `nexus-server.rs`，但纯逻辑已经开始从入口文件外移
 
 ### 3. 无数据库
 
-- 当前持久化继续使用 `data/*.json`
+- 当前持久化继续使用运行时数据目录里的 JSON 文件；默认是 `data/`，可用 `NEXUS_DATA_DIR` 改到独立目录
 - 这样能保持部署简单，也符合单用户场景
 
 ### 4. 交互链与任务链分离
@@ -104,7 +105,7 @@ npm --prefix frontend run dev
 ```text
 nexus.service
   -> bash start.sh
-  -> node dist-server/server.js
+  -> rust-runtime/target/release/nexus-server
 ```
 
 `start.sh` 的职责：
@@ -112,32 +113,30 @@ nexus.service
 1. 确保 `.env` 存在
 2. 缺依赖时执行 `npm install`
 3. 缺 `frontend/dist` 时构建前端
-4. 缺 `dist-server/server.js` 时构建后端
+4. 缺 Rust release binaries 时构建 `nexus-server` / child runtimes
 5. 设置 `PORT` 默认值为 `59000`
-6. 启动 `node dist-server/server.js`
+6. 启动 Rust `nexus-server`
 
 注意：
 
 - `start.sh` 不会在每次重启时自动重建最新产物
 - 前端源码改动后，部署前仍需手动跑 `npm --prefix frontend run build`
-- 后端源码改动后，部署前仍需手动跑 `npm run build:server`
+- 后端源码改动后，部署前仍需手动跑 `npm run build:rust-runtimes` 和 `npm run build:rust-server`
 
 权威上线步骤见 [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)。
 
-### server.js 的职责
+### Rust runtime entry 的职责
 
-当前 `server.js` 是运行时装配器，主要做这些事：
+当前 `rust-runtime/src/bin/nexus-server.rs` 是运行时装配器，主要做这些事：
 
-1. 手动解析 `.env`
-2. 初始化 `data/` 相关目录
-3. 创建各服务对象
-4. 注册 Express 路由
-5. 创建 task runner 与 Telegram bridge
-6. 创建 PTY broker
-7. 创建 HTTP server + WebSocketServer
-8. 安装 runtime guards 与 graceful shutdown
+1. 读取 `.env` 与运行时路径
+2. 初始化运行时数据目录（默认 `data/`，可被 `NEXUS_DATA_DIR` 覆盖）
+3. 启动并管理 Rust child runtimes
+4. 注册 HTTP / WebSocket 路由
+5. 直接处理本地文件、版本、配置和 Telegram 这些薄服务
+6. 执行 graceful shutdown
 
-它不应该继续承担更深的业务细节；这些逻辑应优先放进服务模块。
+更厚的 tmux / task / PTY 语义优先继续留在对应 Rust runtime，而不是重新堆回入口。
 
 ---
 
@@ -147,57 +146,46 @@ nexus.service
 
 | 文件 | 作用 |
 |---|---|
-| `server.js` | 运行时入口、路由注册、服务装配 |
-| `runtimePaths.js` | 统一项目根目录、`.env`、`data/`、`frontend/dist` 等路径 |
-| `runtimeGuards.js` | 运行时异常护栏 |
-| `gracefulShutdown.js` | 关闭 HTTP/WS、broker、task runner 的清理逻辑 |
-| `serverConfig.js` | 生成前端可见的配置 |
-| `systemConfig.js` | 系统配置解析 |
+| `rust-runtime/src/bin/nexus-server.rs` | 默认运行时入口、路由注册、runtime 装配 |
+| `rust-runtime/src/lib.rs` | 共享 helper 出口，供 `nexus-server` 和后续 runtime 共用 |
+
+### 共享纯逻辑层
+
+| 文件 | 作用 |
+|---|---|
+| `rust-runtime/src/runtime_config.rs` | `.env` / runtime executable / data dir / proxy vars 解析 |
+| `rust-runtime/src/path_utils.rs` | path normalize、静态文件路径保护、递归 copy/remove 等通用路径逻辑 |
+| `rust-runtime/src/shell.rs` | shell type、窗口命名、interactive shell command 规划 |
+| `rust-runtime/src/project_defaults.rs` | project defaults 读写 |
+| `rust-runtime/src/sanitize.rs` | 上传名、窗口名、Telegram 输入、字符串截断等 sanitize helper |
+| `rust-runtime/src/auth.rs` | JWT 校验 helper |
 
 ### 会话 / 项目 / 窗口层
 
 | 文件 | 作用 |
 |---|---|
-| `sessionManagementService.js` | sessions、projects、channels、Codex 历史等主服务 |
-| `windowLaunchService.js` | 新建项目 / 新建窗口时的 shell 启动和窗口命名 |
-| `shellLaunch.js` | 交互式 shell / profile / proxy 命令拼装 |
-| `projectDefaults.js` | 项目路径对应的默认 shell / profile |
-| `tmuxSessionPolicy.js` | tmux session 相关策略 |
+| `rust-runtime/src/bin/nexus-session-runtime.rs` | sessions、projects、channels、Codex 历史等主语义 |
+| `rust-runtime/src/bin/nexus-window-launch-runtime.rs` | 新建项目 / 新建窗口时的 shell 启动和窗口命名 |
 
 ### PTY broker 层
 
 | 文件 | 作用 |
 |---|---|
-| `ptyBrokerController.js` | 选择 local / sidecar broker 模式 |
-| `ptyTmuxBroker.js` | 本地 PTY ↔ tmux 桥接实现 |
-| `ptyBrokerLocalBackend.js` | local backend |
-| `ptyBrokerSidecarClient.js` | sidecar client |
-| `ptyBrokerSidecarProcess.js` | sidecar 进程管理 |
+| `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / websocket broker 语义 |
 
 ### 任务 / Telegram / 上传层
 
 | 文件 | 作用 |
 |---|---|
-| `taskRunner.js` | task store + task runner 装配 |
-| `taskRunnerController.js` | 选择 local / sidecar task runner 模式 |
-| `taskRunnerLocalBackend.js` | 本地任务执行后端 |
-| `taskRunnerSidecarClient.js` | sidecar task runner client |
-| `taskRunnerSidecarProcess.js` | sidecar task runner 进程管理 |
-| `taskRunnerSse.js` | SSE 输出流 |
-| `telegramBridgeService.js` | Telegram webhook、消息/文件处理、任务回传 |
-| `uploadFilesService.js` | 上传文件与 `data/uploads` 管理 |
-| `workspaceService.js` | 工作区浏览、读写、复制、移动、删除 |
+| `rust-runtime/src/bin/nexus-task-runtime.rs` | task 执行协议与 child runtime |
 
-### 配置 / 版本 / Codex 历史层
+### 脚本 / tooling 辅助层
 
 | 文件 | 作用 |
 |---|---|
-| `configProfilesService.js` | Claude / Codex profile、toolbar config、project defaults |
-| `versionService.js` | 当前版本与最新版本检查 |
-| `codexSessions.js` | 扫描共享 `~/.codex` 历史 |
-| `codexSessionWindows.js` | Codex resume 窗口标记和清理 |
-| `codexConfig.js` | Codex 配置支持 |
-| `ccSwitchConfig.js` | provider 配置导入支持 |
+| `rust-runtime/src/bin/nexus-codex-home.rs` | 物化隔离的 Codex home，合并共享 `.codex` 状态并写 runtime config/auth |
+| `rust-runtime/src/bin/nexus-setup.rs` | 安装器；负责 `.env`、依赖安装、frontend build、PM2 和首个 tmux session |
+| `nexus-run-codex.sh` | 计算 runtime HOME、按需构建 `nexus-codex-home` 并启动 Codex CLI |
 
 ---
 
@@ -302,18 +290,12 @@ nexus.service
 
 ## PTY broker
 
-当前不是 `server.js` 直接维护 `ptyMap`，而是：
+当前不是入口自己维护 PTY 状态，而是：
 
 ```text
-server.js
-  -> createPtyBrokerController()
-    -> local: ptyTmuxBroker.js
-    -> sidecar: ptyBrokerSidecarClient.js
+nexus-server
+  -> nexus-pty-runtime
 ```
-
-默认模式：
-
-- `NEXUS_PTY_BROKER_MODE=local`
 
 核心行为：
 
@@ -327,15 +309,9 @@ server.js
 当前任务链是：
 
 ```text
-server.js
-  -> createTaskRunner()
-    -> createTaskRunnerController()
-      -> local backend or sidecar backend
+nexus-server
+  -> nexus-task-runtime
 ```
-
-默认模式：
-
-- `NEXUS_TASK_RUNNER_MODE=local`
 
 核心行为：
 
@@ -467,7 +443,7 @@ data/
 ```text
 nexus.service
   -> bash start.sh
-  -> node dist-server/server.js
+  -> rust-runtime/target/release/nexus-server
 ```
 
 相关文件：
@@ -492,13 +468,12 @@ nexus.service
 | `WORKSPACE_ROOT` | 代码兜底 `/workspace`；`.env.example` 用 `/home` | 工作区根目录 |
 | `HOST` | `0.0.0.0` | 监听地址 |
 | `PORT` | 代码兜底 `3000`；`start.sh` / `.env.example` 默认 `59000` | 监听端口 |
+| `NEXUS_DATA_DIR` | 默认 `<projectRoot>/data` | 运行时持久化目录；相对路径按项目根解析 |
 | `CLAUDE_PROXY` | 空 | Claude 代理 |
 | `TELEGRAM_BOT_TOKEN` | 空 | Telegram bot token |
 | `TELEGRAM_WEBHOOK_SECRET` | 空 | Telegram webhook 校验 |
 | `TELEGRAM_DEFAULT_SESSION` | 空 | Telegram 默认目标窗口名 |
 | `GITHUB_REPO` | `librae8226/nexus4cc` | 版本检查仓库 |
-| `NEXUS_PTY_BROKER_MODE` | `local` | PTY broker 模式 |
-| `NEXUS_TASK_RUNNER_MODE` | `local` | task runner 模式 |
 | `NEXUS_CODEX_HISTORY_ENABLED` | `1` | Codex 历史开关 |
 
 ---
@@ -509,7 +484,7 @@ nexus.service
 
 | 位置 | 问题 |
 |---|---|
-| `server.js` | 仍然是较大的 runtime entry，继续演化应优先抽离装配之外的逻辑 |
+| 后端运行时 | 默认入口、默认启动链和源码事实源都已切到 Rust `nexus-server` |
 | 运维层 | `systemd` 重启时仍有 `left-over process` 告警，见 [CURRENT-ROADMAP.md](CURRENT-ROADMAP.md) |
 | 前端任务 UX | 任务 API 仍在，但当前没有独立 `TaskPanel.tsx`，文档与产品口径需要继续收口 |
 

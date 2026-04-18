@@ -4,12 +4,15 @@
 
 /**
  * Pick the safest session to restore after login.
- * Prefer a persisted session when it still exists. Otherwise, if multiple
- * projects are available, avoid falling back to the server default session
- * because that path can trigger implicit tmux auto-heal behavior.
+ * Prefer an explicitly user-selected persisted session when it still exists.
+ * Otherwise, only auto-select the server default session when it is
+ * explicitly present in the discovered project list. If multiple projects
+ * exist and the default session is missing, fail closed instead of
+ * attaching the UI to an unrelated tmux session.
  *
  * @param {{
  *   storedSession?: string | null
+ *   storedSessionSource?: string | null
  *   activeSession?: string | null
  *   defaultSession?: string | null
  *   projects?: ProjectLike[]
@@ -25,18 +28,18 @@ export function pickBootstrapSession(input) {
 
   const names = new Set(projects.map((project) => project.name))
   const storedSession = normalizeSession(input?.storedSession)
-  if (storedSession && names.has(storedSession)) return storedSession
+  const storedSessionSource = normalizeSession(input?.storedSessionSource)
+  if (storedSessionSource === 'user' && storedSession && names.has(storedSession)) return storedSession
 
   const activeSession = normalizeSession(input?.activeSession)
   if (activeSession && names.has(activeSession)) return activeSession
 
   const defaultSession = normalizeSession(input?.defaultSession)
-  if (projects.length > 1 && defaultSession) {
-    const nonDefault = projects.find((project) => project.name !== defaultSession)
-    if (nonDefault) return nonDefault.name
-  }
+  if (defaultSession && names.has(defaultSession)) return defaultSession
 
-  return projects[0].name
+  if (projects.length === 1) return projects[0].name
+
+  return ''
 }
 
 /**

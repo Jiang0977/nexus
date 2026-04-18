@@ -260,7 +260,7 @@
   },
   "codexSessions": {
     "title": "Codex 历史会话",
-    "shortTitle": "会话",
+    "shortTitle": "历史会话",
     "scopePending": "正在读取当前 project 的匹配范围",
     "scopeRepo": "按 repo root 匹配：{{path}}",
     "scopeCwd": "按工作目录匹配：{{path}}",

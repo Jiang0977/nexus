@@ -37,6 +37,7 @@ interface Props {
 const FONT_SIZE_KEY = 'nexus_font_size'
 const THEME_KEY = 'nexus_theme'
 const WINDOW_KEY = 'nexus_window'
+const SESSION_SOURCE_KEY = 'nexus_session_source'
 const TAP_THRESHOLD = 8
 const MAX_UPLOAD_NOTIFICATIONS = 5
 const DESKTOP_SIDEBAR_WIDTH = 350
@@ -102,6 +103,12 @@ export function getInitialTheme(): ThemeMode {
   const saved = localStorage.getItem(THEME_KEY)
   if (saved === 'light' || saved === 'dark') return saved
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function getInitialTrustedSession() {
+  const source = localStorage.getItem(SESSION_SOURCE_KEY) || ''
+  if (source !== 'user') return ''
+  return localStorage.getItem('nexus_session') || ''
 }
 
 // 主题色板 — 统一 Tailwind slate 色阶
@@ -199,8 +206,8 @@ export default function Terminal({ token }: Props) {
 
   // F-18: 多 tmux session 支持
   const [tmuxSessions, setTmuxSessions] = useState<string[]>([])
-  const [activeTmuxSession, setActiveTmuxSession] = useState<string>(() => localStorage.getItem('nexus_session') || '')
-  const [wsSessionKey, setWsSessionKey] = useState<string>(() => localStorage.getItem('nexus_session') || '')
+  const [activeTmuxSession, setActiveTmuxSession] = useState<string>(() => getInitialTrustedSession())
+  const [wsSessionKey, setWsSessionKey] = useState<string>(() => getInitialTrustedSession())
   const [defaultTmuxSession, setDefaultTmuxSession] = useState('')
   const activeTmuxSessionRef = useRef(activeTmuxSession)
   activeTmuxSessionRef.current = activeTmuxSession
@@ -218,6 +225,7 @@ export default function Terminal({ token }: Props) {
 
   function clearSessionSelection() {
     localStorage.removeItem('nexus_session')
+    localStorage.removeItem(SESSION_SOURCE_KEY)
     localStorage.removeItem(WINDOW_KEY)
     activeTmuxSessionRef.current = ''
     setActiveTmuxSession('')
@@ -309,22 +317,27 @@ export default function Terminal({ token }: Props) {
     if (!projectsLoaded) return
 
     const storedSession = localStorage.getItem('nexus_session') || ''
-    const validStoredSession = sessionExists(storedSession, projects) ? storedSession : ''
+    const storedSessionSource = localStorage.getItem(SESSION_SOURCE_KEY) || ''
+    const validStoredSession = storedSessionSource === 'user' && sessionExists(storedSession, projects)
+      ? storedSession
+      : ''
     if (storedSession && !validStoredSession) {
       localStorage.removeItem('nexus_session')
+      localStorage.removeItem(SESSION_SOURCE_KEY)
     }
 
     if (sessionExists(activeTmuxSessionRef.current, projects)) return
 
     const nextSession = pickBootstrapSession({
       storedSession: validStoredSession,
+      storedSessionSource,
       activeSession: activeTmuxSessionRef.current,
       defaultSession: defaultTmuxSession,
       projects,
     })
 
     if (nextSession) {
-      handleSwitchSession(nextSession)
+      handleSwitchSession(nextSession, undefined, 'bootstrap')
       return
     }
 
@@ -758,12 +771,13 @@ export default function Terminal({ token }: Props) {
     setTimeout(() => sessionManagerRef.current?.refresh(), 500)
   }
 
-  function handleSwitchSession(newSession: string, lastChannel?: number) {
+  function handleSwitchSession(newSession: string, lastChannel?: number, source: 'user' | 'bootstrap' = 'user') {
     if (!newSession) {
       clearSessionSelection()
       return
     }
     localStorage.setItem('nexus_session', newSession)
+    localStorage.setItem(SESSION_SOURCE_KEY, source)
     // 同步更新 ref，确保 fetchWindows 能立即读到新 session
     activeTmuxSessionRef.current = newSession
     setActiveTmuxSession(newSession)

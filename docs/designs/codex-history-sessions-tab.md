@@ -63,13 +63,12 @@ Reviewed by:
 
 已完成的验证：
 
-- `tests/codexSessions.test.js`
-- `tests/sessionManagementService.test.js`
-- `tests/serverConfig.test.js`
+- `tests/nexusRustServerEntry.test.js`
+- `tests/sessionManagementRustRuntimeBinary.test.js`
 - `tests/frontendFeatureFlags.test.js`
 - `tests/codexSessionDetailFields.test.js`
 - `tests/serverRuntimeEntry.test.js`
-- `npm run build:server`
+- `npm run build:rust-server`
 - `npm --prefix frontend run build`
 - 正式部署后服务可达验证通过
 

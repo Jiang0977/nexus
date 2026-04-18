@@ -932,6 +932,8 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
                               }}
                               type="button"
                               disabled={!canShowCodex}
+                              title={t('codexSessions.title')}
+                              aria-label={t('codexSessions.title')}
                             >
                               {t('codexSessions.shortTitle')}
                             </button>

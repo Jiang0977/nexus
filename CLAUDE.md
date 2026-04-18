@@ -9,24 +9,25 @@ Anchor: `docs/NORTH-STAR.md` — 修改任何文档前先对照锚点三原则
 
 | Layer | Tech |
 |---|---|
-| Backend | Node.js (ESM) + Express + ws + node-pty |
+| Backend | Rust `nexus-server` + Rust child runtimes |
 | Frontend | React 18 + TypeScript + xterm.js + Vite |
 | Auth | JWT (30d) + bcrypt password hash |
-| Runtime | 宿主机（WSL2）直接运行，Node.js + PM2 管理 |
-| Config | `.env` → `server.js` 顶部解构，无 dotenv 依赖 |
+| Runtime | 宿主机（WSL2）直接运行，`start.sh` 默认拉起 Rust server |
+| Config | `.env` 由 Rust `nexus-server` 读取 |
 | Persist | `./data/`（toolbar config、session configs） |
 
 ## Architecture Constraints
 
 - **多 PTY 架构**（F-11）：每个 `tmux session:window` 独立 PTY 实例，`ptyMap` 管理
-- **前端 dist 由 Vite 构建**，server.js 静态伺服 `frontend/dist/` + `public/`
+- **前端 dist 由 Vite 构建**，Rust `nexus-server` 静态伺服 `frontend/dist/` + `public/`
 - **no database**：会话状态从 tmux 实时读取，持久化只用 JSON 文件
-- `WORKSPACE_ROOT` 指向宿主机工作区根目录，server.js 直接访问
+- `WORKSPACE_ROOT` 指向宿主机工作区根目录，由 Rust server 直接访问
 
 ## Key Files
 
 ```
-server.js                  # 唯一后端入口：Express + WS + PTY + Tasks + Telegram
+rust-runtime/src/bin/
+  nexus-server.rs          # 默认后端入口：HTTP + WS + runtimes + Telegram
 data/                      # 持久化数据（toolbar、tasks、configs）
 public/
   sw.js                    # Service Worker（cache-first 静态资源）

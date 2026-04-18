@@ -1,6 +1,6 @@
 # Nexus 部署与更新 Runbook
 
-最后验证日期：2026-04-13
+最后验证日期：2026-04-18
 
 目标：以后更新线上时，直接按这份文档执行，不再临时查资料和试错。
 
@@ -10,16 +10,18 @@
 - 主服务：`nexus.service`
 - tmux 服务：`nexus-tmux.service`
 - 工作目录：`/home/demo/workspace/typescript/nexus4cc`
-- 启动链路：`nexus.service -> bash start.sh -> node dist-server/server.js`
+- 启动链路：`nexus.service -> bash start.sh -> rust-runtime/target/release/nexus-server`
 - 对外端口：`59000`
 
 关键事实：
 
 - `start.sh` 只会在 `frontend/dist` 不存在时才构建前端。
-- `start.sh` 只会在 `dist-server/server.js` 不存在时才构建后端。
+- `start.sh` 只会在缺少 release binaries 时才补构建 Rust server / runtimes。
 - 也就是说，前端源码改了以后，部署前必须手动执行 `npm --prefix frontend run build`。
-- 后端源码改了以后，部署前必须手动执行 `npm run build:server`。
-- `server.js` 和相关后端模块改动只有在重新构建 `dist-server` 并重启 `nexus.service` 后才会生效。
+- Rust 后端源码改了以后，部署前必须手动执行：
+  - `npm run build:rust-runtimes`
+  - `npm run build:rust-server`
+- Rust 后端改动只有在重新构建 release binaries 并重启 `nexus.service` 后才会生效。
 - 当前环境里直接执行 `systemctl restart nexus` 会要求交互鉴权，自动化场景不可用。
 - `nexus.service` 配置了 `Restart=on-failure`，因此可以通过杀掉主进程触发 systemd 自动拉起新版本。
 
@@ -29,23 +31,25 @@
 
 ```bash
 git status --short
-node --check server.js
-npm run build:server
+npm run build:rust-runtimes
+npm run build:rust-server
 npm --prefix frontend run build
 ```
 
-如果这次改动涉及 Node 逻辑、配置解析或 shell 启动链路，再补跑相关测试，例如：
+如果这次改动涉及启动链路、配置解析或 shell 规划，再补跑相关测试，例如：
 
 ```bash
-node --test tests/ccSwitchConfig.test.js tests/codexConfig.test.js tests/systemConfig.test.js tests/shellLaunch.test.js tests/projectDefaults.test.js tests/shellType.test.js
+cargo fmt --manifest-path rust-runtime/Cargo.toml --check
+cargo test --manifest-path rust-runtime/Cargo.toml
+node --test tests/*.test.js
 ```
 
 ### 2. 可选预演
 
-当改动碰到 `server.js`、启动链路、认证、配置导入时，先在备用端口预演一次：
+当改动碰到启动链路、认证、配置导入时，先在备用端口预演一次：
 
 ```bash
-PORT=59001 node dist-server/server.js
+PORT=59001 bash start.sh
 ```
 
 另开一个终端探活：
@@ -55,7 +59,15 @@ curl -I --max-time 5 http://127.0.0.1:59001
 curl --silent --show-error --max-time 5 http://127.0.0.1:59001 | head -n 5
 ```
 
-看到 `HTTP/1.1 200 OK` 且日志里出现 `Nexus listening on 127.0.0.1:59001` 再继续。预演结束后记得 `Ctrl+C` 退出。
+看到 `HTTP/1.1 200 OK` 且日志里出现 `nexus-server listening on 127.0.0.1:59001` 再继续。预演结束后记得 `Ctrl+C` 退出。
+
+如果你要在同一份代码上起一个真正独立的预演实例，别共用默认 `data/`，而是显式指定独立数据目录，例如：
+
+```bash
+PORT=59001 NEXUS_DATA_DIR=/tmp/nexus-preview-data bash start.sh
+```
+
+否则两个实例会共享 `tasks.json`、profiles、toolbar config、uploads 等状态。
 
 ### 3. 准备回滚基线
 
@@ -108,9 +120,8 @@ curl --silent --show-error --max-time 5 http://127.0.0.1:59000 | head -n 5
 
 - `systemctl status nexus` 显示 `active (running)`
 - 日志里出现：
-  - `启动 Nexus on :59000 ...`
-  - `Nexus listening on 127.0.0.1:59000`
-  - `tmux session 'nexus' ready`
+  - `启动 Nexus Rust server on :59000 ...`
+  - `nexus-server listening on 127.0.0.1:59000`
 - HTTP 返回 `200 OK`
 
 ## 标准回滚步骤
@@ -126,7 +137,8 @@ curl --silent --show-error --max-time 5 http://127.0.0.1:59000 | head -n 5
 
 ```bash
 git checkout <last-known-good-commit>
-npm run build:server
+npm run build:rust-runtimes
+npm run build:rust-server
 npm --prefix frontend run build
 MAIN_PID="$(systemctl show -p MainPID --value nexus)"
 kill -9 "$MAIN_PID"
@@ -140,7 +152,8 @@ sleep 6
 ```bash
 git restore .
 git clean -fd
-npm run build:server
+npm run build:rust-runtimes
+npm run build:rust-server
 npm --prefix frontend run build
 MAIN_PID="$(systemctl show -p MainPID --value nexus)"
 kill -9 "$MAIN_PID"
@@ -172,7 +185,7 @@ Failed to restart nexus.service: Interactive authentication required.
 原因：
 
 - `start.sh` 只在 `frontend/dist` 不存在时执行前端构建。
-- `start.sh` 只在 `dist-server/server.js` 不存在时执行后端构建。
+- `start.sh` 只在缺少 Rust release binaries 时执行后端构建。
 
 结论：
 
@@ -185,7 +198,8 @@ npm --prefix frontend run build
 - 任何后端源码变更上线前，必须手动运行：
 
 ```bash
-npm run build:server
+npm run build:rust-runtimes
+npm run build:rust-server
 ```
 
 ### 问题 3：`node:sqlite` 会打印 experimental warning
