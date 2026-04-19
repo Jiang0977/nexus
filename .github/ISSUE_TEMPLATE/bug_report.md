@@ -17,9 +17,10 @@ What you expected to happen.
 
 **Environment**
 - OS: (e.g. Ubuntu 22.04 / WSL2)
-- Node.js version: (`node -v`)
+- Rust version: (`cargo --version`)
 - Browser: (e.g. Chrome 123, Safari 17)
 - tmux version: (`tmux -V`)
+- Service manager: (`systemctl --user status nexus` or direct `bash start.sh`)
 
 **Additional context**
 Logs, screenshots, or anything else relevant.

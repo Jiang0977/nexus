@@ -1,29 +1,24 @@
 # Nexus 部署与更新 Runbook
 
-最后验证日期：2026-04-18
+最后验证日期：2026-04-19
 
-目标：以后更新线上时，直接按这份文档执行，不再临时查资料和试错。
+目标：线上更新时只按这份文档执行。不要再走 `npm`、`pm2`、前端现场构建这类旧路径。
 
-## 当前线上形态
+## 当前部署形态
 
 - 服务管理：`systemd`
-- 主服务：`nexus.service`
-- tmux 服务：`nexus-tmux.service`
-- 工作目录：`/home/demo/workspace/rust/nexus`
-- 启动链路：`nexus.service -> bash start.sh -> rust-runtime/target/release/nexus-server`
-- 对外端口：`59000`
+- 默认启动链：`bash start.sh -> rust-runtime/target/release/nexus-server`
+- 静态资源：仓库内 vendored `frontend/dist/`
+- tmux 守护：`nexus-tmux.service`
+- 默认端口：`59000`
 
 关键事实：
 
-- `start.sh` 只会在 `frontend/dist` 不存在时才构建前端。
-- `start.sh` 只会在缺少 release binaries 时才补构建 Rust server / runtimes。
-- 也就是说，前端源码改了以后，部署前必须手动执行 `npm --prefix frontend run build`。
-- Rust 后端源码改了以后，部署前必须手动执行：
-  - `npm run build:rust-runtimes`
-  - `npm run build:rust-server`
-- Rust 后端改动只有在重新构建 release binaries 并重启 `nexus.service` 后才会生效。
-- 当前环境里直接执行 `systemctl restart nexus` 会要求交互鉴权，自动化场景不可用。
-- `nexus.service` 配置了 `Restart=on-failure`，因此可以通过杀掉主进程触发 systemd 自动拉起新版本。
+- 仓库已移除 Node/npm/PM2。
+- `start.sh` 只会补构建缺失的 Rust release binary。
+- `start.sh` 不会重建已有 release binary。
+- `start.sh` 会在 `frontend/dist/index.html` 缺失时直接失败。
+- 所以发布前必须显式重建 Rust release binary，并确认 `frontend/dist/` 仍存在。
 
 ## 标准上线步骤
 
@@ -31,52 +26,32 @@
 
 ```bash
 git status --short
-npm run build:rust-runtimes
-npm run build:rust-server
-npm --prefix frontend run build
-```
-
-如果这次改动涉及启动链路、配置解析或 shell 规划，再补跑相关测试，例如：
-
-```bash
+test -f frontend/dist/index.html
 cargo fmt --manifest-path rust-runtime/Cargo.toml --check
 cargo test --manifest-path rust-runtime/Cargo.toml
-node --test tests/*.test.js
+cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime
 ```
 
-### 2. 可选预演
+如果 `test -f frontend/dist/index.html` 失败，不要继续上线。
 
-当改动碰到启动链路、认证、配置导入时，先在备用端口预演一次：
+### 2. 可选预演
 
 ```bash
 PORT=59001 bash start.sh
 ```
 
-另开一个终端探活：
+另开一个终端验证：
 
 ```bash
 curl -I --max-time 5 http://127.0.0.1:59001
 curl --silent --show-error --max-time 5 http://127.0.0.1:59001 | head -n 5
 ```
 
-看到 `HTTP/1.1 200 OK` 且日志里出现 `nexus-server listening on 127.0.0.1:59001` 再继续。预演结束后记得 `Ctrl+C` 退出。
-
-如果你要在同一份代码上起一个真正独立的预演实例，别共用默认 `data/`，而是显式指定独立数据目录，例如：
-
-```bash
-PORT=59001 NEXUS_DATA_DIR=/tmp/nexus-preview-data bash start.sh
-```
-
-否则两个实例会共享 `tasks.json`、profiles、toolbar config、uploads 等状态。
+看到 `HTTP/1.1 200 OK` 再继续。结束预演后 `Ctrl+C` 退出。
 
 ### 3. 准备回滚基线
 
-推荐做法：
-
-- 最好先把待部署版本提交到明确的 Git commit，再上线。
-- 如果和这次一样是 dirty worktree 部署，必须先备份当前 diff。
-
-备份命令：
+推荐先有明确 commit；如果是 dirty worktree，先备份：
 
 ```bash
 TS="$(date +%Y%m%d-%H%M%S)"
@@ -91,133 +66,91 @@ fi
 echo "$BACKUP_DIR"
 ```
 
-### 4. 重启正式服务
+### 4. 重启服务
 
-当前环境的标准无交互重启方式：
+优先用你实际安装方式对应的命令：
+
+用户级安装：
 
 ```bash
-MAIN_PID="$(systemctl show -p MainPID --value nexus)"
-kill -9 "$MAIN_PID"
-sleep 6
+systemctl --user restart nexus
+systemctl --user status nexus --no-pager
 ```
 
-说明：
+系统级安装：
 
-- 不要先杀 `nexus-tmux.service`，正常更新不需要动 tmux。
-- `kill -9` 后，systemd 会因为 `Restart=on-failure` 自动重启 `nexus.service`。
-- `RestartSec` 当前是 `5s`，所以至少等 6 秒再做验证。
+```bash
+sudo systemctl restart nexus
+sudo systemctl status nexus --no-pager
+```
 
 ### 5. 上线后验证
 
+用户级：
+
 ```bash
-systemctl status nexus --no-pager
-journalctl -u nexus -n 30 --no-pager
+systemctl --user status nexus --no-pager
+journalctl --user -u nexus -n 30 --no-pager
 curl -I --max-time 5 http://127.0.0.1:59000
 curl --silent --show-error --max-time 5 http://127.0.0.1:59000 | head -n 5
 ```
 
+系统级把上面命令替换为 `sudo systemctl` / `sudo journalctl`。
+
 通过标准：
 
-- `systemctl status nexus` 显示 `active (running)`
-- 日志里出现：
-  - `启动 Nexus Rust server on :59000 ...`
-  - `nexus-server listening on 127.0.0.1:59000`
-- HTTP 返回 `200 OK`
+- 服务状态 `active (running)`
+- 日志里出现 `启动 Nexus Rust server on :59000`
+- 首页返回 `200 OK`
 
-## 标准回滚步骤
+## 回滚
 
 触发条件：
 
-- 服务重启后 `nexus.service` 不是 `active (running)`
-- 或首页 `http://127.0.0.1:59000` 无法返回 `200`
+- 服务重启后不可达
+- `systemctl` 状态不是 `active (running)`
+- 首页探活失败
 
-### 推荐回滚
-
-如果这次部署前已经有 commit，直接回到上一个稳定 commit，重新构建并再次按本文重启：
+推荐回滚：
 
 ```bash
 git checkout <last-known-good-commit>
-npm run build:rust-runtimes
-npm run build:rust-server
-npm --prefix frontend run build
-MAIN_PID="$(systemctl show -p MainPID --value nexus)"
-kill -9 "$MAIN_PID"
-sleep 6
+cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime
+systemctl --user restart nexus
 ```
 
-### dirty worktree 回滚
+如果你用的是系统级服务，把最后一行换成 `sudo systemctl restart nexus`。
 
-如果是未提交改动直接上线，先保留备份，再回到 `HEAD`：
+dirty worktree 回滚：
 
 ```bash
 git restore .
 git clean -fd
-npm run build:rust-runtimes
-npm run build:rust-server
-npm --prefix frontend run build
-MAIN_PID="$(systemctl show -p MainPID --value nexus)"
-kill -9 "$MAIN_PID"
-sleep 6
+cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime
+systemctl --user restart nexus
 ```
 
 警告：
 
-- 这会清掉工作树未提交改动，所以 dirty worktree 上线前一定要先做第 3 步备份。
-- 回滚成功后，如需恢复未上线改动，再从 `/tmp/nexus-deploy-backups/<timestamp>/` 里的 patch 和 tar 包恢复。
+- 这会清掉未提交改动。
+- 先确保第 3 步的备份已经完成。
 
-## 这次验证过的真实问题
+## 常见坑
 
-### 问题 1：`systemctl restart nexus` 需要交互鉴权
+### 1. 重启后还是旧代码
 
-现象：
+原因：你没重建 Rust release binary，只是重启了服务。
 
-```text
-Failed to restart nexus.service: Interactive authentication required.
-```
+### 2. 首页 404
 
-结论：
+原因：`frontend/dist/` 缺失或仓库不完整。当前仓库没有 Node 前端源码和构建链，不能现场 `npm run build` 修。
 
-- 不能把 `systemctl restart nexus` 当作默认自动化命令。
-- 统一改用 `kill -9 $(systemctl show -p MainPID --value nexus)` 触发 systemd 自动重启。
+### 3. `systemctl --user` 不可用
 
-### 问题 2：前后端构建产物不会在重启时自动刷新
+说明：当前机器没有用户级 systemd。可以临时 `bash start.sh` 前台运行，但这不等于正式部署。
 
-原因：
+## 交付约束
 
-- `start.sh` 只在 `frontend/dist` 不存在时执行前端构建。
-- `start.sh` 只在缺少 Rust release binaries 时执行后端构建。
-
-结论：
-
-- 任何前端源码变更上线前，必须手动运行：
-
-```bash
-npm --prefix frontend run build
-```
-
-- 任何后端源码变更上线前，必须手动运行：
-
-```bash
-npm run build:rust-runtimes
-npm run build:rust-server
-```
-
-### 问题 3：`node:sqlite` 会打印 experimental warning
-
-现象：
-
-- 启动日志会出现 `SQLite is an experimental feature`。
-
-结论：
-
-- 当前不是阻塞项。
-- 只要服务能正常监听且测试覆盖相关解析路径，就允许上线。
-
-## 本次上线记录
-
-- 预演端口：`59001`
-- 预演结果：`200 OK`
-- 正式服务重启方式：杀主进程，等待 systemd 自动拉起
-- 正式服务新 PID：`2888210`
-- 正式服务验证：`systemctl active` + `curl 59000` 均通过
-- 备份目录：`.context/deploy-backups/20260413-232524`
+- 任何代码部署后都必须重启 `nexus` 服务。
+- 重启后必须验证服务可达。
+- 如果重启后服务不可达，立即回滚到上一个稳定版本。

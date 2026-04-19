@@ -2,7 +2,7 @@
 
 ### 自托管、移动优先的 AI 编码工作台。
 
-[![Node](https://img.shields.io/badge/node-20+-brightgreen?style=flat-square)](https://nodejs.org/)
+[![Rust](https://img.shields.io/badge/rust-stable-orange?style=flat-square)](https://www.rust-lang.org/)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL%20v3%20%2F%20商业授权-blue?style=flat-square)](LICENSE.md)
 [![GitHub stars](https://img.shields.io/github/stars/Jiang0977/nexus?style=flat-square)](https://github.com/Jiang0977/nexus/stargazers)
 [![PRs Welcome](https://img.shields.io/badge/PRs-欢迎-brightgreen?style=flat-square)](CONTRIBUTING.md)
@@ -66,21 +66,26 @@
 
 ```bash
 git clone https://github.com/Jiang0977/nexus.git && cd nexus
-cp .env.example .env          # 设置 JWT_SECRET、ACC_PASSWORD_HASH、WORKSPACE_ROOT
-npm install && cd frontend && npm install && npm run build && cd ..
-npm start
+cp .env.example .env
+./setup.sh
 # 在任意设备打开 http://localhost:59000 🚀
 ```
 
-`npm start` 首次启动时会按需构建缺失的 Rust release binaries。只要你改了 Rust 或前端源码，重启前都要显式重建：
+`./setup.sh` 会处理 `.env`、`systemd --user` unit 安装，并启动 `nexus` 与 `nexus-tmux`。
+
+如果你想直接前台启动：
 
 ```bash
-npm run build:rust-runtimes
-npm run build:rust-server
-npm --prefix frontend run build
+bash start.sh
 ```
 
-> 完整配置指南（会话 Profile、PM2、移动端访问、故障排查）：**[QUICKSTART.md →](docs/QUICKSTART.md)**
+重要说明：
+
+- 仓库已不再携带 Node/npm 前端工具链。
+- `frontend/dist/` 是 vendored 静态资源，由 Rust 直接伺服。
+- `bash start.sh` 只会补构建缺失的 Rust release binary，不会覆盖现有产物。
+
+> 完整配置指南（会话 Profile、systemd、移动端访问、故障排查）：**[QUICKSTART.md →](docs/QUICKSTART.md)**
 
 ---
 
@@ -89,10 +94,11 @@ npm --prefix frontend run build
 如果你是正在帮用户安装 Nexus 的 AI 助手，按以下步骤执行：
 
 1. 克隆本仓库并 `cd` 进入目录
-2. 运行 `npm run setup` — 调用 Rust `nexus-setup` 安装器，自动处理依赖安装、前端构建、PM2 启动和 tmux 会话创建
-3. 验证：`pm2 status` 显示 `nexus` 在线 → 打开 `http://localhost:59000`
+2. 运行 `./setup.sh`
+3. 验证：`systemctl --user status nexus` 显示服务运行中
+4. 打开 `http://localhost:59000`
 
-前置要求：Rust toolchain（`cargo`）、Node.js 20+、tmux。PM2 不存在时会自动安装。  
+前置要求：Rust toolchain（`cargo`）、tmux、Linux / WSL2。`setup.sh` 依赖 `systemd --user`；直接 `bash start.sh` 不依赖。
 默认登录密码：`nexus123`（安装完成后可在 `.env` 中修改）。
 
 ---
@@ -110,9 +116,8 @@ npm --prefix frontend run build
 | 依赖 | 版本 | 说明 |
 |---|---|---|
 | Rust | stable toolchain | 用于构建 `nexus-server`、各个 runtime 和 `nexus-setup` |
-| Node.js | 20+ | |
 | tmux | 任意近期版本 | |
-| PM2 | 任意近期版本 | 缺失时由 `nexus-setup` 自动安装 |
+| systemd user services | 可用即可 | `./setup.sh` 需要；直接 `bash start.sh` 可不依赖 |
 | 操作系统 | Linux / WSL2 | |
 
 ---

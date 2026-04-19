@@ -244,9 +244,21 @@ fn trim_output(output: &mut String) {
     }
 }
 
+fn replay_output(output: &str) -> String {
+    if output.len() <= RECENT_OUTPUT_REPLAY {
+        return output.to_string();
+    }
+
+    let mut keep_from = output.len().saturating_sub(RECENT_OUTPUT_REPLAY);
+    while keep_from < output.len() && !output.is_char_boundary(keep_from) {
+        keep_from += 1;
+    }
+    output[keep_from..].to_string()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{MAX_OUTPUT_BUFFER, trim_output};
+    use super::{MAX_OUTPUT_BUFFER, RECENT_OUTPUT_REPLAY, replay_output, trim_output};
 
     #[test]
     fn trim_output_keeps_utf8_boundaries() {
@@ -255,6 +267,19 @@ mod tests {
 
         assert_eq!(output, "a".repeat(MAX_OUTPUT_BUFFER - 2));
         assert!(output.len() <= MAX_OUTPUT_BUFFER);
+    }
+
+    #[test]
+    fn replay_output_keeps_utf8_boundaries() {
+        let output = format!(
+            "{}为{}",
+            "a".repeat(5),
+            "b".repeat(RECENT_OUTPUT_REPLAY - 3)
+        );
+        let replay = replay_output(&output);
+
+        assert!(replay.starts_with('为'));
+        assert!(replay.len() <= RECENT_OUTPUT_REPLAY);
     }
 }
 
@@ -452,13 +477,7 @@ fn attach_connection(
     let replay = entry
         .last_output
         .lock()
-        .map(|output| {
-            if output.len() <= RECENT_OUTPUT_REPLAY {
-                output.clone()
-            } else {
-                output[output.len() - RECENT_OUTPUT_REPLAY..].to_string()
-            }
-        })
+        .map(|output| replay_output(&output))
         .unwrap_or_default();
 
     if !replay.is_empty() {

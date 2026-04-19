@@ -35,7 +35,7 @@ runtime_home="${SCRIPT_DIR}/data/codex-runtime/${safe_window_id}"
 mkdir -p "${SCRIPT_DIR}/data/codex-runtime"
 if [ -z "${NEXUS_CODEX_HOME_EXECUTABLE:-}" ] && [ ! -x "$DEFAULT_CODEX_HOME_EXECUTABLE" ]; then
     echo "[Nexus] 构建 Rust codex home tool..."
-    npm run build:rust-codex-home
+    cargo build --manifest-path "${SCRIPT_DIR}/rust-runtime/Cargo.toml" --release --bin nexus-codex-home
 fi
 if [ ! -x "$CODEX_HOME_EXECUTABLE" ]; then
     echo "[Nexus] Rust codex home tool 不可执行: ${CODEX_HOME_EXECUTABLE}"

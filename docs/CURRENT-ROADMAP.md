@@ -14,7 +14,6 @@
 2. [TODOS.md](../TODOS.md)
 3. 最新设计文档
    - [codex-history-sessions-tab.md](designs/codex-history-sessions-tab.md)
-   - [node-backend-optimization.md](designs/node-backend-optimization.md)
 4. [ARCHITECTURE.md](ARCHITECTURE.md)
 5. [README.md](../README.md) / [README_CN.md](../README_CN.md)
 
@@ -69,7 +68,7 @@
   - 相关 runbook 和任务文档同步更新
 - Source:
   - [TODOS.md](../TODOS.md)
-  - [node-backend-optimization.md](designs/node-backend-optimization.md)
+  - [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)
 
 ## 已完成，不再算 Open Backlog
 
@@ -151,8 +150,8 @@
 任何涉及代码上线的后续工作，仍然必须遵守：
 
 - 重启 `nexus` 服务后再验证
-- 前端改动先 `npm --prefix frontend run build`
-- 后端改动先 `npm run build:rust-runtimes && npm run build:rust-server`
+- 确认 `frontend/dist/index.html` 仍存在
+- Rust 改动先 `cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime`
 - 服务不可达就立即回滚
 
 权威操作说明见 [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)。
