@@ -81,9 +81,10 @@ bash start.sh
 
 重要说明：
 
-- 仓库已不再携带 Node/npm 前端工具链。
-- `frontend/dist/` 是 vendored 静态资源，由 Rust 直接伺服。
-- `bash start.sh` 只会补构建缺失的 Rust release binary，不会覆盖现有产物。
+- 运行链仍是 Rust 优先：Rust 直接伺服 `frontend/dist/`。
+- 仓库现在重新携带可维护的前端源码，位于 `frontend/src/`。
+- 前端源码改动后，需要通过 `frontend/` 下的构建链重新产出 `frontend/dist/`。
+- `bash start.sh` 只负责 Rust 二进制，不会重建前端静态资源。
 
 > 完整配置指南（会话 Profile、systemd、移动端访问、故障排查）：**[QUICKSTART.md →](docs/QUICKSTART.md)**
 
@@ -116,6 +117,7 @@ bash start.sh
 | 依赖 | 版本 | 说明 |
 |---|---|---|
 | Rust | stable toolchain | 用于构建 `nexus-server`、各个 runtime 和 `nexus-setup` |
+| Node.js + npm | 近期 LTS | 仅在改前端源码并重建 `frontend/dist` 时需要 |
 | tmux | 任意近期版本 | |
 | systemd user services | 可用即可 | `./setup.sh` 需要；直接 `bash start.sh` 可不依赖 |
 | 操作系统 | Linux / WSL2 | |

@@ -15,11 +15,12 @@ tmux session:window
   ↕ shell / claude / codex
 ```
 
-静态资源的当前现实：
+静态资源与前端源码的当前现实：
 
 - Rust server 直接伺服 `frontend/dist/` 和 `public/`
 - `frontend/dist/` 是 vendored 静态 bundle
-- 仓库里不再保留前端 Node toolchain 或 `frontend/src/`
+- 仓库重新携带 `frontend/src/`、`frontend/package.json`、Vite/Tailwind 配置
+- 运行时仍只依赖构建产物 `frontend/dist/`
 
 ## 启动链
 
@@ -45,8 +46,9 @@ bash start.sh
 
 ### 关键约束
 
-- `start.sh` 不会强制重建已有 release binary
+- `start.sh` 不会重建前端静态资源
 - Rust 代码改动后要先显式 `cargo build --release`
+- 前端代码改动后要在 `frontend/` 下显式构建
 - `frontend/dist/` 缺失时服务直接失败
 
 ## Rust 模块边界
@@ -82,23 +84,27 @@ bash start.sh
 
 ## 静态资源与前端
 
-当前仓库只保留这些前端相关路径：
+当前仓库的前端相关路径：
 
 | 路径 | 作用 |
 |---|---|
+| `frontend/index.html` | Vite 开发入口 |
+| `frontend/src/*` | React 前端源码 |
+| `frontend/package.json` | 前端依赖与构建脚本 |
+| `frontend/vite.config.ts` | Vite 构建配置 |
+| `frontend/tailwind.config.js` | Tailwind 主题配置 |
 | `frontend/dist/index.html` | 单页入口 |
 | `frontend/dist/assets/*` | vendored JS/CSS bundle |
 | `public/manifest.json` | PWA manifest |
 | `public/icon.svg` | 图标 |
 | `public/sw.js` | Service worker |
 
-当前没有的东西：
+前端工作流：
 
-- `frontend/src/`
-- `frontend/package.json`
-- `vite.config.ts`
-- `tailwind.config.js`
-- 仓库内前端 Node 构建链
+- 开发入口在 `frontend/src/`
+- 构建命令由 `frontend/package.json` 提供
+- 构建输出仍落到 `frontend/dist/`
+- Rust server 不关心源码层，只关心 `frontend/dist/`
 
 ## 数据落点
 
@@ -150,6 +156,6 @@ cargo test --manifest-path rust-runtime/Cargo.toml
 
 ## 不要再做的事
 
-- 不要把 Node/npm/PM2 重新带回默认运行链
-- 不要假设可以在部署机上重新构建前端
+- 不要把 PM2 重新带回默认运行链
+- 不要把前端源码误当成运行时入口，线上仍靠 `frontend/dist/`
 - 不要把过时文档里的 `npm run setup` / `pm2 start` 当成有效指令

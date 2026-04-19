@@ -81,9 +81,10 @@ bash start.sh
 
 Important:
 
-- This repo no longer carries a Node/npm frontend toolchain.
-- `frontend/dist/` is a vendored static bundle served directly by Rust.
-- `bash start.sh` only builds missing Rust release binaries; it does not rebuild existing ones.
+- Runtime stays Rust-first: Rust serves `frontend/dist/` directly.
+- The repo now carries a maintainable frontend source tree under `frontend/src/`.
+- Frontend source changes require rebuilding `frontend/dist/` from the `frontend/` toolchain.
+- `bash start.sh` only builds Rust binaries; it does not rebuild frontend assets.
 
 > Full setup guide including session profile config, systemd, and mobile access: **[QUICKSTART.md →](docs/QUICKSTART.md)**
 
@@ -116,6 +117,7 @@ For production updates, restart, verification, and rollback, use **[DEPLOYMENT-R
 | Dependency | Version | Note |
 |---|---|---|
 | Rust | stable toolchain | required to build `nexus-server`, runtimes, and `nexus-setup` |
+| Node.js + npm | recent LTS | required only for frontend source development and rebuilding `frontend/dist` |
 | tmux | any recent | |
 | systemd user services | available | required by `./setup.sh`; optional for direct `bash start.sh` |
 | OS | Linux / WSL2 | |
