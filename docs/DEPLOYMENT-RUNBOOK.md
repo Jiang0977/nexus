@@ -1,6 +1,6 @@
 # Nexus 部署与更新 Runbook
 
-最后验证日期：2026-04-19
+最后验证日期：2026-04-20
 
 目标：线上更新时只按这份文档执行。不要再走 `npm`、`pm2`、前端现场构建这类旧路径。
 
@@ -15,10 +15,10 @@
 关键事实：
 
 - 仓库已移除 Node/npm/PM2。
-- `start.sh` 只会补构建缺失的 Rust release binary。
-- `start.sh` 不会重建已有 release binary。
+- `start.sh` 会在默认 release binary 缺失或其真实依赖更新时重建对应 Rust binary。
+- `start.sh` 会优先使用 `PATH` 里的 `cargo`；如果 systemd 环境没带上 `cargo`，会回退到 `$HOME/.cargo/bin/cargo`。
 - `start.sh` 会在 `frontend/dist/index.html` 缺失时直接失败。
-- 所以发布前必须显式重建 Rust release binary，并确认 `frontend/dist/` 仍存在。
+- 所以发布前仍建议显式重建 Rust release binary，并确认 `frontend/dist/` 仍存在。
 
 ## 标准上线步骤
 
@@ -70,6 +70,16 @@ echo "$BACKUP_DIR"
 
 优先用你实际安装方式对应的命令：
 
+如果这次部署改了 `deploy/systemd/*.service`，先把 unit 文件同步到 systemd 并 reload：
+
+系统级安装：
+
+```bash
+sudo cp deploy/systemd/nexus.service /etc/systemd/system/nexus.service
+sudo cp deploy/systemd/nexus-tmux.service /etc/systemd/system/nexus-tmux.service
+sudo systemctl daemon-reload
+```
+
 用户级安装：
 
 ```bash
@@ -80,6 +90,7 @@ systemctl --user status nexus --no-pager
 系统级安装：
 
 ```bash
+sudo systemctl restart nexus-tmux
 sudo systemctl restart nexus
 sudo systemctl status nexus --no-pager
 ```
@@ -102,6 +113,7 @@ curl --silent --show-error --max-time 5 http://127.0.0.1:59000 | head -n 5
 - 服务状态 `active (running)`
 - 日志里出现 `启动 Nexus Rust server on :59000`
 - 首页返回 `200 OK`
+- `nexus-tmux.service` 处于 `active (running)`，并且 `tmux -D` 归属在 `nexus-tmux.service`，不是 `nexus.service`
 
 ## 回滚
 
@@ -139,13 +151,42 @@ systemctl --user restart nexus
 
 ### 1. 重启后还是旧代码
 
-原因：你没重建 Rust release binary，只是重启了服务。
+原因：你没重建 Rust release binary，且 `start.sh` 也没检测到真实依赖变化。
 
-### 2. 首页 404
+### 2. `cargo: command not found`
+
+原因：当前机器既没有把 cargo 放进 `PATH`，也没有可执行的 `$HOME/.cargo/bin/cargo`。
+
+处理：
+
+```bash
+command -v cargo
+test -x "$HOME/.cargo/bin/cargo"
+```
+
+至少满足一个，再重启服务。
+
+### 3. 首页 404
 
 原因：`frontend/dist/` 缺失或仓库不完整。当前仓库没有 Node 前端源码和构建链，不能现场 `npm run build` 修。
 
-### 3. `systemctl --user` 不可用
+### 4. 重启时报 `Address already in use`
+
+原因：历史上旧 unit 可能留下孤儿 `nexus-server` 进程，占住 `127.0.0.1:59000`。
+
+处理：
+
+```bash
+sudo systemctl stop nexus
+ss -ltnp '( sport = :59000 )'
+ps -eo pid,ppid,unit,args | rg 'nexus-server|nexus-(task|pty|window|session)'
+kill <stale-nexus-server-pid>
+sudo systemctl start nexus
+```
+
+如果新的 unit 已部署正确，清掉这次残留后，后续重启不应再复发。
+
+### 5. `systemctl --user` 不可用
 
 说明：当前机器没有用户级 systemd。可以临时 `bash start.sh` 前台运行，但这不等于正式部署。
 
