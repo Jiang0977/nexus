@@ -10,7 +10,7 @@
 
 本文不是当前运行时手册。
 
-它记录的是 2026-04-02 对旧部署形态做的一次 incident 分析。当前源码树的默认启动链已经切到 [`start.sh`](/home/jiang/workspace/typescript/nexus4cc/start.sh) -> Rust `nexus-server`，旧 Node 后端入口和相关业务服务源码已从当前分支删除。
+它记录的是 2026-04-02 对旧部署形态做的一次 incident 分析。当前源码树的默认启动链已经切到 [`start.sh`](/home/jiang/workspace/rust/nexus/start.sh) -> Rust `nexus-server`，旧 Node 后端入口和相关业务服务源码已从当前分支删除。
 
 因此，这份文档现在只保留两个用途：
 
@@ -19,9 +19,9 @@
 
 当前事实源见：
 
-- [ARCHITECTURE.md](/home/jiang/workspace/typescript/nexus4cc/docs/ARCHITECTURE.md)
-- [DEPLOYMENT-RUNBOOK.md](/home/jiang/workspace/typescript/nexus4cc/docs/DEPLOYMENT-RUNBOOK.md)
-- [code.md](/home/jiang/workspace/typescript/nexus4cc/docs/code.md)
+- [ARCHITECTURE.md](/home/jiang/workspace/rust/nexus/docs/ARCHITECTURE.md)
+- [DEPLOYMENT-RUNBOOK.md](/home/jiang/workspace/rust/nexus/docs/DEPLOYMENT-RUNBOOK.md)
+- [code.md](/home/jiang/workspace/rust/nexus/docs/code.md)
 
 ---
 
@@ -105,7 +105,7 @@ systemd (pm2-<user>.service)
 |------------------|----------|
 | 加强 PM2 配置 | 仍然是有效的运维原则，但对象应是当前 Rust 启动链，而不是已删除的旧入口 |
 | 给旧入口补全局异常捕获和 listen error handler | 已被 Rust runtime cutover 超越，不应再回头给旧 Node 入口补丁 |
-| 确保 systemd 真正托管 supervisor | 仍然有效，但应按当前 [DEPLOYMENT-RUNBOOK.md](/home/jiang/workspace/typescript/nexus4cc/docs/DEPLOYMENT-RUNBOOK.md) 执行 |
+| 确保 systemd 真正托管 supervisor | 仍然有效，但应按当前 [DEPLOYMENT-RUNBOOK.md](/home/jiang/workspace/rust/nexus/docs/DEPLOYMENT-RUNBOOK.md) 执行 |
 | 处理 `CLAUDE_CONFIG_DIR` 污染 | 仍然有效，而且和 Rust cutover 无关，继续是 profile 跑偏排查重点 |
 
 ---
@@ -122,4 +122,4 @@ systemd (pm2-<user>.service)
 - 把它当成当前源码仍在使用的运行时说明
 - 按这份文档去恢复旧 Node 入口或旧 supervisor script
 
-如果需要当前架构、启动链或部署步骤，请直接看 [ARCHITECTURE.md](/home/jiang/workspace/typescript/nexus4cc/docs/ARCHITECTURE.md) 和 [DEPLOYMENT-RUNBOOK.md](/home/jiang/workspace/typescript/nexus4cc/docs/DEPLOYMENT-RUNBOOK.md)。
+如果需要当前架构、启动链或部署步骤，请直接看 [ARCHITECTURE.md](/home/jiang/workspace/rust/nexus/docs/ARCHITECTURE.md) 和 [DEPLOYMENT-RUNBOOK.md](/home/jiang/workspace/rust/nexus/docs/DEPLOYMENT-RUNBOOK.md)。

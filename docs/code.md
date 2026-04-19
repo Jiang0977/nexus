@@ -1,4 +1,4 @@
-# Nexus4CC 源码导览
+# Nexus 源码导览
 
 最后更新：2026-04-16
 
@@ -15,7 +15,7 @@
 
 ## 先知道三件事
 
-- 这是单用户、自托管、tmux 驱动的 Claude Code 工作台，不是多用户协作平台。
+- 这是单用户、自托管、tmux 驱动的 AI coding workbench，不是多用户协作平台。
 - 运行时的真实入口是 `start.sh -> rust-runtime/target/release/nexus-server`，但源码事实以根目录源码和 `rust-runtime/src/bin/*.rs` 为准，不看编译产物目录。
 - tmux 是会话事实源，运行时数据目录里的 JSON 只保存配置和任务历史，不存在数据库；默认目录是 `data/`，可用 `NEXUS_DATA_DIR` 覆盖。
 

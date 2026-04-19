@@ -9,7 +9,7 @@
 - 服务管理：`systemd`
 - 主服务：`nexus.service`
 - tmux 服务：`nexus-tmux.service`
-- 工作目录：`/home/jiang/workspace/typescript/nexus4cc`
+- 工作目录：`/home/jiang/workspace/rust/nexus`
 - 启动链路：`nexus.service -> bash start.sh -> rust-runtime/target/release/nexus-server`
 - 对外端口：`59000`
 

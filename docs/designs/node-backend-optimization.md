@@ -8,13 +8,13 @@ Archived after Rust runtime cutover: 2026-04-18
 
 本文记录的是 2026-04-15 那条“先把旧 Node 后端整理干净”的阶段性成果。它不是当前运行时说明。
 
-当前源码树的默认启动链已经切到 [`start.sh`](/home/jiang/workspace/typescript/nexus4cc/start.sh) -> Rust `nexus-server`；旧 Node 后端入口、旧编译产物入口，以及对应的后端业务服务源码都已从当前分支删除。保留这份文档，只是为了说明当时为什么先做 Node 边界清理，再继续推进整体 Rust 化。
+当前源码树的默认启动链已经切到 [`start.sh`](/home/jiang/workspace/rust/nexus/start.sh) -> Rust `nexus-server`；旧 Node 后端入口、旧编译产物入口，以及对应的后端业务服务源码都已从当前分支删除。保留这份文档，只是为了说明当时为什么先做 Node 边界清理，再继续推进整体 Rust 化。
 
 当前事实源见：
 
-- [ARCHITECTURE.md](/home/jiang/workspace/typescript/nexus4cc/docs/ARCHITECTURE.md)
-- [DEPLOYMENT-RUNBOOK.md](/home/jiang/workspace/typescript/nexus4cc/docs/DEPLOYMENT-RUNBOOK.md)
-- [code.md](/home/jiang/workspace/typescript/nexus4cc/docs/code.md)
+- [ARCHITECTURE.md](/home/jiang/workspace/rust/nexus/docs/ARCHITECTURE.md)
+- [DEPLOYMENT-RUNBOOK.md](/home/jiang/workspace/rust/nexus/docs/DEPLOYMENT-RUNBOOK.md)
+- [code.md](/home/jiang/workspace/rust/nexus/docs/code.md)
 
 ## Historical Outcome
 

@@ -6,7 +6,7 @@
 
 ## 系统边界
 
-Nexus 是一个单用户、自托管、tmux 驱动的 Claude Code 工作台。
+Nexus 是一个单用户、自托管、tmux 驱动的 AI coding workbench。
 
 它解决的是：
 
@@ -473,7 +473,7 @@ nexus.service
 | `TELEGRAM_BOT_TOKEN` | 空 | Telegram bot token |
 | `TELEGRAM_WEBHOOK_SECRET` | 空 | Telegram webhook 校验 |
 | `TELEGRAM_DEFAULT_SESSION` | 空 | Telegram 默认目标窗口名 |
-| `GITHUB_REPO` | `librae8226/nexus4cc` | 版本检查仓库 |
+| `GITHUB_REPO` | `Jiang0977/nexus` | 版本检查仓库 |
 | `NEXUS_CODEX_HISTORY_ENABLED` | `1` | Codex 历史开关 |
 
 ---

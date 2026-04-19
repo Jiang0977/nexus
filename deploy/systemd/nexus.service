@@ -1,11 +1,10 @@
 [Unit]
-Description=Persistent tmux server for Nexus
-After=network-online.target
+Description=Nexus service
+After=network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=simple
 User=jiang
 Group=jiang
 WorkingDirectory=/home/jiang/workspace/rust/nexus
@@ -15,9 +14,11 @@ Environment=SHELL=/bin/bash
 Environment=LANG=C.UTF-8
 Environment=LC_ALL=C.UTF-8
 Environment=PATH=/home/jiang/.local/bin:/home/jiang/.nvm/versions/node/v22.22.2/bin:/home/jiang/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/bin/bash /home/jiang/workspace/rust/nexus/scripts/nexus-tmux-service.sh start
-ExecStop=/usr/bin/bash /home/jiang/workspace/rust/nexus/scripts/nexus-tmux-service.sh stop
+ExecStart=/usr/bin/bash /home/jiang/workspace/rust/nexus/start.sh
+Restart=on-failure
+RestartSec=5
 TimeoutStopSec=20
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target

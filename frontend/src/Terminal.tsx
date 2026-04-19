@@ -1570,7 +1570,7 @@ export default function Terminal({ token }: Props) {
               </div>
               <h2 className="text-nexus-text text-xl font-bold mb-2">需要创建会话 Profile</h2>
               <p className="text-nexus-text-2 text-sm">
-                检测到还没有配置 Claude 或 Codex Profile。你可以先在设置里创建，或者按下面的示例手动写入 Claude 配置。
+                检测到还没有可用的会话 Profile。你可以先在设置里创建，或者按下面的示例手动写入一个 Claude 配置。
               </p>
             </div>
 
@@ -1609,7 +1609,7 @@ EOF`}
                         setHasProfiles(true)
                         setShowProfileGuide(false)
                       } else {
-                        alert('仍未检测到 Profile，请先在设置中创建，或执行上方命令写入配置')
+                        alert('仍未检测到可用的会话 Profile，请先在设置中创建，或执行上方命令写入配置')
                       }
                     })
                 }}
@@ -1626,7 +1626,7 @@ EOF`}
             </div>
 
             <p className="text-nexus-muted text-xs text-center mt-4">
-              详细说明请参考 <a href="https://github.com/librae8226/nexus4cc/blob/master/docs/QUICKSTART.md" target="_blank" rel="noopener noreferrer" className="text-nexus-accent hover:underline">QUICKSTART.md</a>
+              详细说明请参考 <a href="https://github.com/Jiang0977/nexus/blob/master/docs/QUICKSTART.md" target="_blank" rel="noopener noreferrer" className="text-nexus-accent hover:underline">QUICKSTART.md</a>
             </p>
           </div>
         </div>

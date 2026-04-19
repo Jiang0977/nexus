@@ -1,10 +1,10 @@
-# Nexus4CC
+# Nexus
 
-### 你的 Claude Code，随身携带。
+### 自托管、移动优先的 AI 编码工作台。
 
 [![Node](https://img.shields.io/badge/node-20+-brightgreen?style=flat-square)](https://nodejs.org/)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL%20v3%20%2F%20商业授权-blue?style=flat-square)](LICENSE.md)
-[![GitHub stars](https://img.shields.io/github/stars/librae8226/nexus4cc?style=flat-square)](https://github.com/librae8226/nexus4cc/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/Jiang0977/nexus?style=flat-square)](https://github.com/Jiang0977/nexus/stargazers)
 [![PRs Welcome](https://img.shields.io/badge/PRs-欢迎-brightgreen?style=flat-square)](CONTRIBUTING.md)
 
 [English](README.md)
@@ -25,16 +25,16 @@
 
 | | |
 |---|---|
-| **随时指挥 AI** | 你的时间是碎片化的，你的 AI 不应该被困住。在地铁上、会议间隙、出差途中，随时给 Claude Code 下指令。 |
+| **随时指挥 AI** | 你的时间是碎片化的，你的 AI 不应该被困住。在地铁上、会议间隙、出差途中，随时给本地 coding agent 下指令。 |
 | **专为触控打造** | 不是把桌面终端硬塞进手机。左右滑动切换会话、双指缩放、可配置软键盘工具栏——从第一天起就为手指设计。 |
-| **完整记忆，始终在线** | Claude Code 运行在你的电脑上，跑在 tmux 会话里——完整的代码库、完整的对话历史、完整的项目上下文。不是云端聊天，不会忘事。 |
+| **完整记忆，始终在线** | 你的 agent runtime 运行在电脑上，跑在 tmux 会话里——完整的代码库、完整的对话历史、完整的项目上下文。不是云端聊天，不会忘事。 |
 | **发射后不管** | 下达指令，锁上手机。AI 继续执行。回来时，一切就在你离开的地方。 |
 
 ---
 
-## 为什么选 Nexus4CC？
+## 为什么选 Nexus？
 
-|                              | Anthropic Remote Control | Happy Coder | Omnara  | **nexus4cc** |
+|                              | Anthropic Remote Control | Happy Coder | Omnara  | **Nexus** |
 |------------------------------|:---:|:---:|:---:|:---:|
 | 自托管                       | ❌ | ❌ | ⚠️ | ✅ |
 | 无需订阅                     | ❌ ($100+/月) | ✅ | ❌ ($9/月) | ✅ |
@@ -53,7 +53,7 @@
 
 - 🔌 **WebSocket ↔ tmux 桥接** — 每个 tmux 窗口一个 PTY，实时双向 I/O
 - 📱 **移动端优先终端** — xterm.js + 滑动导航 + 双指缩放 + 可配置软键盘
-- 🤖 **异步任务执行** — 通过 `/api/tasks`、SSE 和 Telegram bridge 发起“发射后不管”的 Claude 任务
+- 🤖 **异步任务执行** — 通过 `/api/tasks`、SSE 和 Telegram bridge 发起“发射后不管”的 agent 任务
 - 📂 **文件浏览器** — 浏览、编辑、上传工作区文件
 - 🗂️ **项目与频道管理** — 以目录为单位组织项目，多个频道式会话，像 Slack 频道一样切换
 - 🔀 **多会话管理** — 秒切 tmux session
@@ -65,7 +65,7 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/librae8226/nexus4cc.git && cd nexus4cc
+git clone https://github.com/Jiang0977/nexus.git && cd nexus
 cp .env.example .env          # 设置 JWT_SECRET、ACC_PASSWORD_HASH、WORKSPACE_ROOT
 npm install && cd frontend && npm install && npm run build && cd ..
 npm start
@@ -80,11 +80,11 @@ npm run build:rust-server
 npm --prefix frontend run build
 ```
 
-> 完整配置指南（Claude Profile、PM2、移动端访问、故障排查）：**[QUICKSTART.md →](docs/QUICKSTART.md)**
+> 完整配置指南（会话 Profile、PM2、移动端访问、故障排查）：**[QUICKSTART.md →](docs/QUICKSTART.md)**
 
 ---
 
-## 使用 Claude Code 一键安装
+## 使用 AI 助手一键安装
 
 如果你是正在帮用户安装 Nexus 的 AI 助手，按以下步骤执行：
 
@@ -156,7 +156,7 @@ Nexus 是**单用户自托管工具**，不是多租户平台。
 
 这三个角色有一个共同点：**最好的想法，从来不在办公桌前产生。**
 
-Nexus4CC 诞生于我自己的真实需求：在机场、出租车、会议间隙，随时能指挥和管理我的 AI 军团在电脑上工作。现在，它是开源的，也是你的。
+Nexus 诞生于我自己的真实需求：在机场、出租车、会议间隙，随时能指挥和管理我的 AI 军团在电脑上工作。现在，它是开源的，也是你的。
 
 ---
 
@@ -172,4 +172,4 @@ Nexus4CC 诞生于我自己的真实需求：在机场、出租车、会议间�
 
 ---
 
-*用 Claude Code 构建，为 Claude Code 而生。*
+*用 AI agent 构建，为远程 AI 工作而生。*
