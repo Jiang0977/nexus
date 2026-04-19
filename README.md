@@ -1,10 +1,10 @@
-# Nexus4CC
+# Nexus
 
-### Your Claude Code, Everywhere.
+### Self-hosted mobile workbench for local coding agents.
 
 [![Node](https://img.shields.io/badge/node-20+-brightgreen?style=flat-square)](https://nodejs.org/)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL%20v3%20%2F%20Commercial-blue?style=flat-square)](LICENSE.md)
-[![GitHub stars](https://img.shields.io/github/stars/librae8226/nexus4cc?style=flat-square)](https://github.com/librae8226/nexus4cc/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/Jiang0977/nexus?style=flat-square)](https://github.com/Jiang0977/nexus/stargazers)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](CONTRIBUTING.md)
 
 [🇨🇳 中文](README_CN.md)
@@ -25,16 +25,16 @@
 
 | | |
 |---|---|
-| **AI on the go** | Your time is fragmented. Your AI shouldn't be. Command Claude Code from your phone — commuting, in a meeting, or away from your desk. |
+| **AI on the go** | Your time is fragmented. Your AI shouldn't be. Command your local coding agents from your phone — commuting, in a meeting, or away from your desk. |
 | **Built for touch** | Not a desktop terminal shoehorned onto mobile. Swipe between windows, pinch-to-zoom, configurable toolbar — purpose-built for fingers. |
-| **Full context, always** | Claude Code runs on your machine, in your tmux sessions — your full codebase, your history, your preferences. Not a cloud chat that forgets everything. |
+| **Full context, always** | Your agent runtime runs on your machine, in your tmux sessions — your full codebase, your history, your preferences. Not a cloud chat that forgets everything. |
 | **Fire and forget** | Give the instruction, close your phone. Your agents keep running. Open later — everything's exactly where you left it. |
 
 ---
 
-## Why Nexus 4 CC?
+## Why Nexus?
 
-|                          | Anthropic Remote Control | Happy Coder | Omnara  | **nexus4cc** |
+|                          | Anthropic Remote Control | Happy Coder | Omnara  | **Nexus** |
 |--------------------------|:---:|:---:|:---:|:---:|
 | Self-hosted              | ❌ | ❌ | ⚠️ | ✅ |
 | No subscription needed   | ❌ ($100+/mo) | ✅ | ❌ ($9/mo) | ✅ |
@@ -53,7 +53,7 @@
 
 - 🔌 **WebSocket ↔ tmux bridge** — one PTY per window, real-time bidirectional I/O
 - 📱 **Mobile-first terminal** — xterm.js, swipe navigation, pinch-to-zoom, configurable soft toolbar
-- 🤖 **Async task runner** — fire-and-forget Claude runs via `/api/tasks`, SSE streaming, and Telegram bridge
+- 🤖 **Async task runner** — fire-and-forget agent tasks via `/api/tasks`, SSE streaming, and Telegram bridge
 - 📂 **File browser** — browse, edit, upload workspace files (sort by name / modified / size)
 - 🗂️ **Project & channel management** — directory-based projects, each with channel-like sessions (like Slack channels for your terminal)
 - 🔀 **Multi-session** — switch tmux sessions instantly
@@ -65,7 +65,7 @@
 ## Quick Start
 
 ```bash
-git clone https://github.com/librae8226/nexus4cc.git && cd nexus4cc
+git clone https://github.com/Jiang0977/nexus.git && cd nexus
 cp .env.example .env          # set JWT_SECRET, ACC_PASSWORD_HASH, WORKSPACE_ROOT
 npm install && cd frontend && npm install && npm run build && cd ..
 npm start
@@ -80,11 +80,11 @@ npm run build:rust-server
 npm --prefix frontend run build
 ```
 
-> Full setup guide including Claude profile config, PM2, and mobile access: **[QUICKSTART.md →](docs/QUICKSTART.md)**
+> Full setup guide including session profile config, PM2, and mobile access: **[QUICKSTART.md →](docs/QUICKSTART.md)**
 
 ---
 
-## Install with Claude Code
+## Install With An AI Assistant
 
 If you're an AI assistant helping a user install Nexus, follow this path:
 
@@ -160,4 +160,4 @@ Dual-licensed: **[GPL v3](LICENSE.md)** for open-source use · **Commercial lice
 
 ---
 
-*Built with Claude Code, for Claude Code.*
+*Built for serious remote AI work.*

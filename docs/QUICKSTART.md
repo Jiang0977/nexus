@@ -31,8 +31,8 @@ claude login
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/librae8226/nexus4cc.git
-cd nexus4cc
+git clone https://github.com/Jiang0977/nexus.git
+cd nexus
 
 # 2. 一键安装（推荐）
 npm run setup
@@ -88,9 +88,9 @@ CLAUDE_PROXY=http://127.0.0.1:6789
 
 ---
 
-## 第三步：创建 Claude Profile（关键步骤）
+## 第三步：创建会话 Profile（Claude Shell，关键步骤）
 
-**这是新用户最容易遗漏的一步。** Nexus 通过 `data/configs/` 下的 JSON 文件来管理不同的 Claude API 配置（官方 API、Kimi、OpenRouter 等）。
+**这是新用户最容易遗漏的一步。** Nexus 通过 `data/configs/` 下的 JSON 文件来管理不同的会话 Profile（Anthropic 官方、Kimi、OpenRouter 等），供 Claude shell 复用。
 
 ### 3.1 创建 configs 目录
 
@@ -282,4 +282,4 @@ http://192.168.x.x:59000
 
 ---
 
-*有问题？提交 [Issue](https://github.com/librae8226/nexus4cc/issues) 或查看 [Troubleshooting](TROUBLESHOOTING.md)*
+*有问题？提交 [Issue](https://github.com/Jiang0977/nexus/issues) 或查看 [Troubleshooting](TROUBLESHOOTING.md)*

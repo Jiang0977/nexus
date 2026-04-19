@@ -66,7 +66,7 @@ impl AppConfig {
                 .map(|value| value != "0")
                 .unwrap_or(true),
             github_repo: env_or_dotenv("GITHUB_REPO", &dotenv)
-                .unwrap_or_else(|| "librae8226/nexus4cc".to_string()),
+                .unwrap_or_else(|| "Jiang0977/nexus".to_string()),
             workspace_root: env_or_dotenv("WORKSPACE_ROOT", &dotenv)
                 .unwrap_or_else(|| "/workspace".to_string()),
             telegram_bot_token: env_or_dotenv("TELEGRAM_BOT_TOKEN", &dotenv).unwrap_or_default(),
