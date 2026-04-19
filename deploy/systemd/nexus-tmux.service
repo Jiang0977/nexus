@@ -4,8 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=simple
 User=jiang
 Group=jiang
 WorkingDirectory=/home/jiang/workspace/rust/nexus
@@ -15,9 +14,13 @@ Environment=SHELL=/bin/bash
 Environment=LANG=C.UTF-8
 Environment=LC_ALL=C.UTF-8
 Environment=PATH=/home/jiang/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/bin/bash /home/jiang/workspace/rust/nexus/scripts/nexus-tmux-service.sh start
+ExecStart=/usr/bin/bash /home/jiang/workspace/rust/nexus/scripts/nexus-tmux-service.sh start-foreground
+ExecStartPost=/usr/bin/bash /home/jiang/workspace/rust/nexus/scripts/nexus-tmux-service.sh ensure-session
 ExecStop=/usr/bin/bash /home/jiang/workspace/rust/nexus/scripts/nexus-tmux-service.sh stop
+Restart=on-failure
+RestartSec=5
 TimeoutStopSec=20
+KillMode=control-group
 
 [Install]
 WantedBy=multi-user.target

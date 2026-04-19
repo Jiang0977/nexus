@@ -42,11 +42,30 @@ resolve_env_or_file() {
 }
 
 build_rust_release_bins() {
-    cargo build --manifest-path rust-runtime/Cargo.toml --release "$@"
+    local cargo_bin
+    cargo_bin="$(resolve_cargo_bin)"
+    "$cargo_bin" build --manifest-path rust-runtime/Cargo.toml --release "$@"
+}
+
+resolve_cargo_bin() {
+    if command -v cargo >/dev/null 2>&1; then
+        command -v cargo
+        return 0
+    fi
+
+    local cargo_home_bin="${CARGO_HOME:-${HOME:-$SCRIPT_DIR}/.cargo}/bin/cargo"
+    if [ -x "$cargo_home_bin" ]; then
+        printf '%s\n' "$cargo_home_bin"
+        return 0
+    fi
+
+    echo "错误: 未找到 cargo；请安装 Rust toolchain 或确保 PATH / HOME/.cargo/bin 可用" >&2
+    return 127
 }
 
 rust_build_inputs_newer_than() {
     local binary="$1"
+    local depfile
     local path
 
     if [ ! -e "$binary" ]; then
@@ -58,6 +77,17 @@ rust_build_inputs_newer_than() {
             return 0
         fi
     done
+
+    depfile="${binary}.d"
+    if [ -f "$depfile" ]; then
+        while IFS= read -r path; do
+            if [ -e "$path" ] && [ "$path" -nt "$binary" ]; then
+                return 0
+            fi
+        done < <(sed -e 's/^[^:]*: //' -e 's/\\$//' "$depfile" | tr ' ' '\n')
+
+        return 1
+    fi
 
     while IFS= read -r path; do
         if [ "$path" -nt "$binary" ]; then

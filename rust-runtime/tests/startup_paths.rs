@@ -9,6 +9,8 @@ use tempfile::tempdir;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -54,6 +56,26 @@ fn resolve_served_path(repo_root: &Path, request_path: &str) -> PathBuf {
     repo_root.join("frontend/dist").join(relative)
 }
 
+fn write_depfile(binary: &Path, deps: &[&Path]) {
+    let depfile = binary.with_extension("d");
+    let body = deps
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    fs::write(depfile, format!("{}: {body}\n", binary.display())).unwrap();
+}
+
+fn scrub_runtime_env(command: &mut Command) -> &mut Command {
+    command
+        .env_remove("CARGO_HOME")
+        .env_remove("NEXUS_SERVER_EXECUTABLE")
+        .env_remove("NEXUS_TASK_RUNNER_RUST_EXECUTABLE")
+        .env_remove("NEXUS_PTY_BROKER_RUST_EXECUTABLE")
+        .env_remove("NEXUS_WINDOW_LAUNCH_RUST_EXECUTABLE")
+        .env_remove("NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE")
+}
+
 #[test]
 fn start_script_fails_when_vendored_bundle_is_missing() {
     let temp = tempdir().unwrap();
@@ -61,9 +83,7 @@ fn start_script_fails_when_vendored_bundle_is_missing() {
     fs::copy(repo_root().join("start.sh"), root.join("start.sh")).unwrap();
     fs::write(root.join(".env"), "JWT_SECRET=test\n").unwrap();
 
-    let output = Command::new("bash")
-        .arg("start.sh")
-        .current_dir(root)
+    let output = scrub_runtime_env(Command::new("bash").arg("start.sh").current_dir(root))
         .output()
         .unwrap();
 
@@ -78,11 +98,12 @@ fn start_script_fails_when_vendored_bundle_is_missing() {
 }
 
 #[test]
-fn start_script_rebuilds_default_release_binaries_when_sources_are_newer() {
+fn start_script_rebuilds_only_binaries_whose_depfile_inputs_are_newer() {
     let temp = tempdir().unwrap();
     let root = temp.path();
     let release_dir = root.join("rust-runtime/target/release");
     let source_dir = root.join("rust-runtime/src/bin");
+    let shared_src = root.join("rust-runtime/src");
     let bin_dir = root.join("bin");
     let cargo_log = root.join("cargo.log");
 
@@ -92,12 +113,24 @@ fn start_script_rebuilds_default_release_binaries_when_sources_are_newer() {
     fs::write(root.join("frontend/dist/index.html"), "<!doctype html>\n").unwrap();
     fs::create_dir_all(&release_dir).unwrap();
     fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(&shared_src).unwrap();
     fs::write(
         root.join("rust-runtime/Cargo.toml"),
         "[package]\nname=\"stub\"\n",
     )
     .unwrap();
     fs::write(root.join("rust-runtime/Cargo.lock"), "version = 3\n").unwrap();
+    fs::write(shared_src.join("lib.rs"), "// shared lib\n").unwrap();
+    fs::write(source_dir.join("nexus-task-runtime.rs"), "// task\n").unwrap();
+    fs::write(source_dir.join("nexus-pty-runtime.rs"), "// pty\n").unwrap();
+    fs::write(
+        source_dir.join("nexus-window-launch-runtime.rs"),
+        "// launch\n",
+    )
+    .unwrap();
+    fs::write(source_dir.join("nexus-session-runtime.rs"), "// session\n").unwrap();
+    fs::write(source_dir.join("nexus-server.rs"), "// server\n").unwrap();
+    fs::write(source_dir.join("nexus-setup.rs"), "// setup only\n").unwrap();
 
     for binary in [
         "nexus-task-runtime",
@@ -106,7 +139,14 @@ fn start_script_rebuilds_default_release_binaries_when_sources_are_newer() {
         "nexus-session-runtime",
         "nexus-server",
     ] {
-        write_executable(&release_dir.join(binary), "#!/usr/bin/env bash\nexit 0\n");
+        let binary_path = release_dir.join(binary);
+        write_executable(&binary_path, "#!/usr/bin/env bash\nexit 0\n");
+        let source_name = format!("{binary}.rs");
+        let binary_source = source_dir.join(source_name);
+        write_depfile(
+            &binary_path,
+            &[shared_src.join("lib.rs").as_path(), binary_source.as_path()],
+        );
     }
 
     thread::sleep(Duration::from_millis(1100));
@@ -124,12 +164,164 @@ fn start_script_rebuilds_default_release_binaries_when_sources_are_newer() {
         ),
     );
 
-    let output = Command::new("bash")
-        .arg("start.sh")
-        .current_dir(root)
-        .env("PATH", format!("{}:/usr/bin:/bin", bin_dir.display()))
-        .output()
-        .unwrap();
+    let output = scrub_runtime_env(
+        Command::new("bash")
+            .arg("start.sh")
+            .current_dir(root)
+            .env("PATH", format!("{}:/usr/bin:/bin", bin_dir.display())),
+    )
+    .output()
+    .unwrap();
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(output.status.success(), "start.sh failed:\n{combined}");
+
+    let cargo_log = fs::read_to_string(&cargo_log).unwrap();
+    assert!(cargo_log.contains("--manifest-path rust-runtime/Cargo.toml --release"));
+    assert!(cargo_log.contains("--bin nexus-server"));
+    assert!(!cargo_log.contains("--bin nexus-task-runtime"));
+    assert!(!cargo_log.contains("--bin nexus-pty-runtime"));
+    assert!(!cargo_log.contains("--bin nexus-window-launch-runtime"));
+    assert!(!cargo_log.contains("--bin nexus-session-runtime"));
+}
+
+#[test]
+fn start_script_ignores_unrelated_rust_sources_when_depfiles_are_present() {
+    let temp = tempdir().unwrap();
+    let root = temp.path();
+    let release_dir = root.join("rust-runtime/target/release");
+    let source_dir = root.join("rust-runtime/src/bin");
+    let shared_src = root.join("rust-runtime/src");
+    let bin_dir = root.join("bin");
+    let cargo_log = root.join("cargo.log");
+
+    fs::copy(repo_root().join("start.sh"), root.join("start.sh")).unwrap();
+    fs::write(root.join(".env"), "JWT_SECRET=test\n").unwrap();
+    fs::create_dir_all(root.join("frontend/dist")).unwrap();
+    fs::write(root.join("frontend/dist/index.html"), "<!doctype html>\n").unwrap();
+    fs::create_dir_all(&release_dir).unwrap();
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(&shared_src).unwrap();
+    fs::write(
+        root.join("rust-runtime/Cargo.toml"),
+        "[package]\nname=\"stub\"\n",
+    )
+    .unwrap();
+    fs::write(root.join("rust-runtime/Cargo.lock"), "version = 3\n").unwrap();
+    fs::write(shared_src.join("lib.rs"), "// shared lib\n").unwrap();
+    fs::write(source_dir.join("nexus-task-runtime.rs"), "// task\n").unwrap();
+    fs::write(source_dir.join("nexus-pty-runtime.rs"), "// pty\n").unwrap();
+    fs::write(
+        source_dir.join("nexus-window-launch-runtime.rs"),
+        "// launch\n",
+    )
+    .unwrap();
+    fs::write(source_dir.join("nexus-session-runtime.rs"), "// session\n").unwrap();
+    fs::write(source_dir.join("nexus-server.rs"), "// server\n").unwrap();
+    fs::write(source_dir.join("nexus-setup.rs"), "// setup only\n").unwrap();
+
+    for binary in [
+        "nexus-task-runtime",
+        "nexus-pty-runtime",
+        "nexus-window-launch-runtime",
+        "nexus-session-runtime",
+        "nexus-server",
+    ] {
+        let binary_path = release_dir.join(binary);
+        write_executable(&binary_path, "#!/usr/bin/env bash\nexit 0\n");
+        let source_name = format!("{binary}.rs");
+        let binary_source = source_dir.join(source_name);
+        write_depfile(
+            &binary_path,
+            &[shared_src.join("lib.rs").as_path(), binary_source.as_path()],
+        );
+    }
+
+    thread::sleep(Duration::from_millis(1100));
+    fs::write(
+        source_dir.join("nexus-setup.rs"),
+        "// newer than compiled binaries but unrelated\n",
+    )
+    .unwrap();
+
+    write_executable(
+        &bin_dir.join("cargo"),
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> {:?}\nexit 0\n",
+            cargo_log
+        ),
+    );
+
+    let output = scrub_runtime_env(
+        Command::new("bash")
+            .arg("start.sh")
+            .current_dir(root)
+            .env("PATH", format!("{}:/usr/bin:/bin", bin_dir.display())),
+    )
+    .output()
+    .unwrap();
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(output.status.success(), "start.sh failed:\n{combined}");
+    assert!(!cargo_log.exists(), "unexpected rebuild triggered");
+}
+
+#[test]
+fn start_script_falls_back_to_home_cargo_bin_when_path_lacks_cargo() {
+    let temp = tempdir().unwrap();
+    let root = temp.path();
+    let release_dir = root.join("rust-runtime/target/release");
+    let source_dir = root.join("rust-runtime/src/bin");
+    let cargo_home = root.join(".cargo");
+    let path_bin = root.join("path-bin");
+    let cargo_log = root.join("cargo.log");
+
+    fs::copy(repo_root().join("start.sh"), root.join("start.sh")).unwrap();
+    fs::write(root.join(".env"), "JWT_SECRET=test\n").unwrap();
+    fs::create_dir_all(root.join("frontend/dist")).unwrap();
+    fs::write(root.join("frontend/dist/index.html"), "<!doctype html>\n").unwrap();
+    fs::create_dir_all(&release_dir).unwrap();
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        root.join("rust-runtime/Cargo.toml"),
+        "[package]\nname=\"stub\"\n",
+    )
+    .unwrap();
+    fs::write(root.join("rust-runtime/Cargo.lock"), "version = 3\n").unwrap();
+    fs::write(source_dir.join("nexus-server.rs"), "// server\n").unwrap();
+    fs::create_dir_all(&path_bin).unwrap();
+
+    for tool in ["dirname", "grep", "tail", "tr", "sed", "find"] {
+        symlink(format!("/usr/bin/{tool}"), path_bin.join(tool)).unwrap();
+    }
+
+    write_executable(
+        &cargo_home.join("bin/cargo"),
+        &format!(
+            "#!/usr/bin/bash\nprintf '%s\\n' \"$*\" >> {:?}\nrelease_dir=\"$(pwd)/rust-runtime/target/release\"\n/usr/bin/mkdir -p \"$release_dir\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--bin\" ] && [ \"$#\" -ge 2 ]; then\n    shift\n    bin_name=\"$1\"\n    printf '#!/usr/bin/bash\\nexit 0\\n' > \"$release_dir/$bin_name\"\n    /usr/bin/chmod +x \"$release_dir/$bin_name\"\n  fi\n  shift\ndone\nexit 0\n",
+            cargo_log
+        ),
+    );
+
+    let output = scrub_runtime_env(
+        Command::new("/usr/bin/bash")
+            .arg("start.sh")
+            .current_dir(root)
+            .env("HOME", root)
+            .env("PATH", path_bin),
+    )
+    .output()
+    .unwrap();
 
     let combined = format!(
         "{}{}",
