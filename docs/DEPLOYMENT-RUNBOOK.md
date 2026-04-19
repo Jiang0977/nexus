@@ -14,10 +14,11 @@
 
 关键事实：
 
-- 仓库已移除 Node/npm/PM2。
+- 默认运行链不依赖 Node/npm/PM2，但仓库重新携带了 `frontend/src/` 与 `frontend/package.json`。
 - `start.sh` 会在默认 release binary 缺失或其真实依赖更新时重建对应 Rust binary。
 - `start.sh` 会优先使用 `PATH` 里的 `cargo`；如果 systemd 环境没带上 `cargo`，会回退到 `$HOME/.cargo/bin/cargo`。
 - `start.sh` 会在 `frontend/dist/index.html` 缺失时直接失败。
+- 如果这次改动触及 `frontend/src/`，发布前还要先在 `frontend/` 下执行前端构建，确保新的 `frontend/dist/` 已产出。
 - 所以发布前仍建议显式重建 Rust release binary，并确认 `frontend/dist/` 仍存在。
 
 ## 标准上线步骤
@@ -30,6 +31,13 @@ test -f frontend/dist/index.html
 cargo fmt --manifest-path rust-runtime/Cargo.toml --check
 cargo test --manifest-path rust-runtime/Cargo.toml
 cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime
+```
+
+如果本次改了前端源码，再额外执行：
+
+```bash
+npm --prefix frontend install
+npm --prefix frontend run build
 ```
 
 如果 `test -f frontend/dist/index.html` 失败，不要继续上线。
@@ -168,7 +176,7 @@ test -x "$HOME/.cargo/bin/cargo"
 
 ### 3. 首页 404
 
-原因：`frontend/dist/` 缺失或仓库不完整。当前仓库没有 Node 前端源码和构建链，不能现场 `npm run build` 修。
+原因：`frontend/dist/` 缺失或仓库不完整。当前运行时仍只认 `frontend/dist/`；如果仓库完整，可以在 `frontend/` 下重新构建后再重启。
 
 ### 4. 重启时报 `Address already in use`
 

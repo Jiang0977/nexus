@@ -4,7 +4,7 @@ Thanks for contributing.
 
 ## Local Development
 
-**Prerequisites:** Rust stable toolchain, tmux, Linux / WSL2
+**Prerequisites:** Rust stable toolchain, tmux, Linux / WSL2. For frontend work: Node.js + npm.
 
 ```bash
 git clone https://github.com/Jiang0977/nexus.git && cd nexus
@@ -17,11 +17,17 @@ Open `http://localhost:59000`.
 
 Important constraints:
 
-- This repo no longer carries a Node/Vite frontend toolchain.
-- `frontend/dist/` is a vendored static bundle that Rust serves directly.
-- Do not reintroduce `package.json`, `npm`, `pm2`, or frontend source trees into this repo.
+- Runtime still serves `frontend/dist/` directly from Rust.
+- Frontend source lives under `frontend/src/`; rebuild `frontend/dist/` after frontend changes.
+- Do not bring PM2 back as the default runtime path.
 
-If a change genuinely requires refreshing the frontend bundle, keep that change scoped to `frontend/dist/` and document provenance in the PR.
+For frontend changes:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
 
 ## Before You Submit
 

@@ -7,14 +7,16 @@
 | 依赖 | 检查命令 | 说明 |
 |---|---|---|
 | Rust stable toolchain | `cargo --version` | 用于构建 `nexus-server` 和 child runtimes |
+| Node.js + npm | `node --version` / `npm --version` | 仅在修改前端源码并重建 `frontend/dist` 时需要 |
 | tmux | `tmux -V` | Nexus 会话事实源 |
 | systemd user services | `systemctl --user --version` | `./setup.sh` 需要；直接 `bash start.sh` 可不依赖 |
 | Claude / Codex CLI | `claude --version` / `codex --version` | 如需在 Nexus 内启动对应 agent |
 
 注意：
 
-- 仓库内已经移除 Node/npm/PM2。
-- `frontend/dist/` 是 vendored 静态资源，不在本仓库内重新构建。
+- 默认运行链仍然不依赖 Node/PM2。
+- 仓库现在重新携带 `frontend/src/` 和 `frontend/package.json`，前端可以在本仓库内重新构建。
+- 线上运行仍直接使用 `frontend/dist/`。
 
 ## 第一步：克隆仓库
 
@@ -114,7 +116,7 @@ mkdir -p data/configs
 
 ### 1. `frontend/dist/index.html` 缺失
 
-结论：仓库内容不完整。当前仓库不再带前端源码或 Node 构建链，必须恢复 `frontend/dist/`。
+结论：仓库内容不完整。即使仓库里有前端源码，运行时仍要求 `frontend/dist/` 存在。
 
 ### 2. `systemctl --user` 不可用
 
@@ -139,6 +141,18 @@ cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server
 ### 4. 如何改密码
 
 把 `.env` 里的 `ACC_PASSWORD_HASH` 改成新的 bcrypt hash。仓库当前不内置密码生成工具，使用你现有的 bcrypt 工具生成即可。
+
+### 5. 如何重建前端
+
+如果你改了 `frontend/src/*`：
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+构建会把新产物写回 `frontend/dist/`，Rust server 会继续直接伺服这个目录。
 
 ## 下一步
 

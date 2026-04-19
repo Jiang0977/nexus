@@ -2,12 +2,12 @@
 
 最后更新：2026-04-19
 
-目标：告诉维护者“现在该从哪里读”，不保留已经删除的 Node/frontend source 入口。
+目标：告诉维护者“现在该从哪里读”，同时区分源码层和运行时入口。
 
 ## 先知道三件事
 
 1. 真实启动链是 `start.sh -> rust-runtime/target/release/nexus-server`
-2. 浏览器 UI 来自 vendored `frontend/dist/`
+2. 浏览器运行时 UI 来自 `frontend/dist/`
 3. tmux 是会话事实源，`data/` 只保存配置和任务历史
 
 ## 推荐阅读顺序
@@ -29,6 +29,8 @@
 | `setup.sh` | Rust 安装器入口 |
 | `nexus-run-claude.sh` | Claude shell 启动脚本 |
 | `nexus-run-codex.sh` | Codex shell 启动脚本 |
+| `frontend/src/` | React 前端源码 |
+| `frontend/package.json` | 前端依赖与构建脚本 |
 | `frontend/dist/` | vendored 前端静态资源 |
 | `public/` | PWA 静态资源 |
 | `rust-runtime/src/bin/*.rs` | 运行时与 child runtimes |
@@ -67,22 +69,24 @@
 
 ## 当前前端现实
 
-当前仓库只有编译后的前端 bundle：
+当前仓库同时有前端源码层和编译产物：
 
 | 路径 | 作用 |
 |---|---|
+| `frontend/index.html` | Vite 入口 |
+| `frontend/src/*` | React / TS 源码 |
+| `frontend/package.json` | 构建与依赖定义 |
+| `frontend/vite.config.ts` | Vite 配置 |
 | `frontend/dist/index.html` | 单页入口 |
 | `frontend/dist/assets/*` | JS/CSS bundle |
 | `public/icon.svg` | 图标 |
 | `public/manifest.json` | PWA manifest |
 | `public/sw.js` | Service worker |
 
-当前仓库没有：
+运行时仍然只使用：
 
-- `frontend/src/`
-- `package.json`
-- `tests/*.test.js`
-- 仓库内 Node toolchain
+- `frontend/dist/*`
+- `public/*`
 
 ## 最重要的调用链
 
@@ -121,7 +125,7 @@ cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server
 
 ## 别再踩的坑
 
-- 不要再找 `frontend/src/`，它已经不在仓库里
-- 不要把 `pm2` 或 `npm` 当成有效运维入口
+- 不要把 `frontend/src/` 当线上入口，线上仍只服务 `frontend/dist/`
+- 不要把 `pm2` 当成有效运维入口
 - 不要把 `data/` 当数据库
-- 不要把历史文档里的 Node 叙事当当前事实
+- 不要把“零 Node 仓库”的旧文档当当前事实

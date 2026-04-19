@@ -16,6 +16,8 @@ docs/superpowers/
 # Build output
 dist-server/
 rust-runtime/target/
+node_modules/
+frontend/node_modules/
 
 # E2E tests and screenshots (dev artifacts)
 e2e-*.cjs
