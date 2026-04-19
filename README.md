@@ -2,7 +2,7 @@
 
 ### Self-hosted mobile workbench for local coding agents.
 
-[![Node](https://img.shields.io/badge/node-20+-brightgreen?style=flat-square)](https://nodejs.org/)
+[![Rust](https://img.shields.io/badge/rust-stable-orange?style=flat-square)](https://www.rust-lang.org/)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL%20v3%20%2F%20Commercial-blue?style=flat-square)](LICENSE.md)
 [![GitHub stars](https://img.shields.io/github/stars/Jiang0977/nexus?style=flat-square)](https://github.com/Jiang0977/nexus/stargazers)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](CONTRIBUTING.md)
@@ -66,21 +66,26 @@
 
 ```bash
 git clone https://github.com/Jiang0977/nexus.git && cd nexus
-cp .env.example .env          # set JWT_SECRET, ACC_PASSWORD_HASH, WORKSPACE_ROOT
-npm install && cd frontend && npm install && npm run build && cd ..
-npm start
+cp .env.example .env
+./setup.sh
 # Open http://localhost:59000 on any device 🚀
 ```
 
-`npm start` will build missing Rust release binaries on first run. After changing Rust or frontend source, rebuild explicitly before restart:
+`./setup.sh` provisions `.env`, installs `systemd --user` units, and starts both `nexus` and `nexus-tmux`.
+
+If you prefer a direct foreground start:
 
 ```bash
-npm run build:rust-runtimes
-npm run build:rust-server
-npm --prefix frontend run build
+bash start.sh
 ```
 
-> Full setup guide including session profile config, PM2, and mobile access: **[QUICKSTART.md →](docs/QUICKSTART.md)**
+Important:
+
+- This repo no longer carries a Node/npm frontend toolchain.
+- `frontend/dist/` is a vendored static bundle served directly by Rust.
+- `bash start.sh` only builds missing Rust release binaries; it does not rebuild existing ones.
+
+> Full setup guide including session profile config, systemd, and mobile access: **[QUICKSTART.md →](docs/QUICKSTART.md)**
 
 ---
 
@@ -89,10 +94,11 @@ npm --prefix frontend run build
 If you're an AI assistant helping a user install Nexus, follow this path:
 
 1. Clone this repo and `cd` into it
-2. Run `npm run setup` — invokes the Rust `nexus-setup` installer for deps, frontend build, PM2, and the first tmux session
-3. Verify: `pm2 status` shows `nexus` online → open `http://localhost:59000`
+2. Run `./setup.sh`
+3. Verify: `systemctl --user status nexus` shows the service running
+4. Open `http://localhost:59000`
 
-Prerequisites: Rust toolchain (`cargo`), Node.js 20+, tmux. PM2 is installed automatically if missing.  
+Prerequisites: Rust toolchain (`cargo`), tmux, Linux / WSL2. `setup.sh` expects `systemd --user`; direct `bash start.sh` does not.
 Default login password: `nexus123` (user can change it in `.env` after setup).
 
 ---
@@ -110,9 +116,8 @@ For production updates, restart, verification, and rollback, use **[DEPLOYMENT-R
 | Dependency | Version | Note |
 |---|---|---|
 | Rust | stable toolchain | required to build `nexus-server`, runtimes, and `nexus-setup` |
-| Node.js | 20+ | |
 | tmux | any recent | |
-| PM2 | any recent | auto-installed by `nexus-setup` if missing |
+| systemd user services | available | required by `./setup.sh`; optional for direct `bash start.sh` |
 | OS | Linux / WSL2 | |
 
 ---

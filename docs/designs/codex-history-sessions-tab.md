@@ -63,13 +63,9 @@ Reviewed by:
 
 已完成的验证：
 
-- `tests/nexusRustServerEntry.test.js`
-- `tests/sessionManagementRustRuntimeBinary.test.js`
-- `tests/frontendFeatureFlags.test.js`
-- `tests/codexSessionDetailFields.test.js`
-- `tests/serverRuntimeEntry.test.js`
-- `npm run build:rust-server`
-- `npm --prefix frontend run build`
+- `cargo test --manifest-path rust-runtime/Cargo.toml --test setup_systemd`
+- `cargo test --manifest-path rust-runtime/Cargo.toml --test startup_paths`
+- `cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server`
 - 正式部署后服务可达验证通过
 
 ## Remaining Follow-ups

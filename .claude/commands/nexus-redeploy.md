@@ -1,5 +1,5 @@
-Rebuild frontend and restart Nexus service.
+Build Rust release binaries, restart the systemd user service, and verify status.
 
 ```bash
-cd /mnt/c/Users/libra/work/nexus/frontend && npm run build && cd - && pm2 restart nexus
+cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime && systemctl --user restart nexus && systemctl --user status nexus --no-pager
 ```

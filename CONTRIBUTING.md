@@ -1,43 +1,39 @@
 # Contributing to Nexus
 
-Thanks for taking the time to contribute. Whether it's a bug fix, new feature, or docs improvement — every contribution matters.
-
----
+Thanks for contributing.
 
 ## Local Development
 
-**Prerequisites:** Node.js 20+, tmux, Linux / WSL2
+**Prerequisites:** Rust stable toolchain, tmux, Linux / WSL2
 
 ```bash
-# Clone
 git clone https://github.com/Jiang0977/nexus.git && cd nexus
-
-# Install dependencies
-npm install
-cd frontend && npm install && cd ..
-
-# Start backend with hot reload
-npm run dev
-
-# Start frontend dev server (separate terminal)
-cd frontend && npm run dev
-# Frontend at http://localhost:5173, proxies API to backend
+cp .env.example .env
+cargo build --manifest-path rust-runtime/Cargo.toml
+bash start.sh
 ```
 
----
+Open `http://localhost:59000`.
+
+Important constraints:
+
+- This repo no longer carries a Node/Vite frontend toolchain.
+- `frontend/dist/` is a vendored static bundle that Rust serves directly.
+- Do not reintroduce `package.json`, `npm`, `pm2`, or frontend source trees into this repo.
+
+If a change genuinely requires refreshing the frontend bundle, keep that change scoped to `frontend/dist/` and document provenance in the PR.
 
 ## Before You Submit
 
-1. **Read [NORTH-STAR.md](NORTH-STAR.md)** — three principles that must not be violated
-2. **Manual test in browser** — open the affected user flow and verify it works
-3. **One logical change per PR** — keep scope tight
-
----
+1. Read [NORTH-STAR.md](NORTH-STAR.md).
+2. Run the relevant checks, at minimum `cargo test --manifest-path rust-runtime/Cargo.toml`.
+3. Manually verify the affected browser flow when UI or startup behavior changes.
+4. Keep scope to one logical change.
 
 ## Commit Message Standard
 
-```
-type(scope): imperative subject ≤ 72 chars
+```text
+type(scope): imperative subject <= 72 chars
 
 Body (optional): explain why, not what.
 Bug fixes: explain root cause.
@@ -47,26 +43,13 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 
 Types: `feat` `fix` `docs` `refactor` `test` `chore` `style`
 
-Examples:
-```
-feat(toolbar): add Ctrl+L keybinding to toolbar defaults
-fix(terminal): sync wsSessionKey on restore
-docs(readme): update Quick Start for WSL2 users
-```
-
----
-
 ## Good First Issues
 
-If you're new to the codebase, these are good places to start:
-
-- **New toolbar buttons** — add keybindings in `frontend/src/toolbarDefaults.ts`
-- **Docs improvements** — QUICKSTART.md, ARCHITECTURE.md always welcome
-- **i18n** — UI strings in `frontend/src/`
-- **Bug reports with reproduction steps** — always valuable
-
----
+- Rust runtime tests and startup-path coverage
+- Docs cleanup in `README.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT-RUNBOOK.md`
+- systemd / tmux operational fixes
+- Bug reports with a clear reproduction path
 
 ## Questions?
 
-Open an issue or reach out via WeChat (librae8226).
+Open an issue or reach out via WeChat (`librae8226`).

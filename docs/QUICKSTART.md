@@ -1,106 +1,98 @@
 # Quick Start — 从零开始运行 Nexus
 
-> 预计时间：10-15 分钟  
-> 适用平台：Linux / WSL2 / macOS
-
----
+预计时间：10 分钟左右。默认平台：Linux / WSL2。
 
 ## 前置要求
 
-| 依赖 | 版本/说明 | 安装检查 |
-|------|----------|----------|
-| Rust toolchain | stable（含 `cargo`） | `cargo --version` |
-| Node.js | 20+ | `node --version` |
-| tmux | 任意近期版本 | `tmux -V` |
-| Claude CLI | 官方命令行工具 | `claude --version` |
-| Git | 任意版本 | `git --version` |
+| 依赖 | 检查命令 | 说明 |
+|---|---|---|
+| Rust stable toolchain | `cargo --version` | 用于构建 `nexus-server` 和 child runtimes |
+| tmux | `tmux -V` | Nexus 会话事实源 |
+| systemd user services | `systemctl --user --version` | `./setup.sh` 需要；直接 `bash start.sh` 可不依赖 |
+| Claude / Codex CLI | `claude --version` / `codex --version` | 如需在 Nexus 内启动对应 agent |
 
-**安装 Claude CLI（如果还没有）:**
+注意：
 
-```bash
-# 需要 Node.js 20+
-npm install -g @anthropic-ai/claude-code
+- 仓库内已经移除 Node/npm/PM2。
+- `frontend/dist/` 是 vendored 静态资源，不在本仓库内重新构建。
 
-# 登录（会打开浏览器授权）
-claude login
-```
-
----
-
-## 第一步：克隆与安装
+## 第一步：克隆仓库
 
 ```bash
-# 1. 克隆仓库
 git clone https://github.com/Jiang0977/nexus.git
 cd nexus
-
-# 2. 一键安装（推荐）
-npm run setup
-
-# 或手动安装依赖
-npm install
-cd frontend && npm install && npm run build && cd ..
 ```
 
-`npm run setup` 现在会调用 Rust `nexus-setup`，自动完成 `.env`、依赖、前端构建、PM2 和首个 tmux 会话。
+## 第二步：安装或直接启动
 
-手动安装路径下，`npm start` 首次启动时会按需构建缺失的 Rust release binaries；但只要你后续改了 Rust 或前端源码，重启前仍需手动运行：
-
-```bash
-npm run build:rust-runtimes
-npm run build:rust-server
-npm --prefix frontend run build
-```
-
----
-
-## 第二步：配置环境变量
+推荐方式：
 
 ```bash
-# 复制示例配置（已内置默认值，可直接使用）
 cp .env.example .env
+./setup.sh
 ```
 
-`.env.example` 已预填了默认值，**复制后无需编辑即可启动**：
+`./setup.sh` 会做这些事：
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `JWT_SECRET` | 已预填 | JWT 签名密钥 |
-| `ACC_PASSWORD_HASH` | 已预填 | 默认密码：**`nexus123`** |
-| `TMUX_SESSION` | `main` | tmux 会话名 |
-| `WORKSPACE_ROOT` | `/home` | Claude 能访问的目录根 |
-| `PORT` | `59000` | 服务端口 |
+1. 检查 tmux
+2. 检查 `systemd --user`
+3. 创建 `.env`
+4. 校验 `frontend/dist/index.html`
+5. 写入并启动 `nexus.service` / `nexus-tmux.service`
+6. 确保 tmux `main` session 存在
 
-**常用调整（可选）：**
+如果你只想前台直接跑：
 
 ```bash
-# 改为你的实际工作目录（让 Claude 只访问特定目录）
-WORKSPACE_ROOT=/home/yourname/work
-
-# 如需通过代理访问 Anthropic API
-CLAUDE_PROXY=http://127.0.0.1:6789
+cp .env.example .env
+bash start.sh
 ```
 
-> ⚠️ **生产环境**请修改密码和 JWT_SECRET。生成新密码 hash：
-> ```bash
-> node -e "const b=require('bcrypt');b.hash('yourpassword',12).then(h=>console.log(h))"
-> ```
+访问：
 
----
+```text
+http://localhost:59000
+```
 
-## 第三步：创建会话 Profile（Claude Shell，关键步骤）
+## 第三步：确认服务状态
 
-**这是新用户最容易遗漏的一步。** Nexus 通过 `data/configs/` 下的 JSON 文件来管理不同的会话 Profile（Anthropic 官方、Kimi、OpenRouter 等），供 Claude shell 复用。
+如果使用 `./setup.sh`：
 
-### 3.1 创建 configs 目录
+```bash
+systemctl --user status nexus --no-pager
+journalctl --user -u nexus -n 30 --no-pager
+```
+
+成功标准：
+
+- `nexus` 为 `active (running)`
+- 日志里出现 `启动 Nexus Rust server`
+- 浏览器打开首页返回 `200`
+
+## 第四步：最小配置
+
+`.env.example` 已带默认值。复制后通常可以直接启动。
+
+建议至少检查这些项：
+
+| 配置项 | 说明 |
+|---|---|
+| `JWT_SECRET` | JWT 签名密钥 |
+| `ACC_PASSWORD_HASH` | 登录密码的 bcrypt hash，默认密码是 `nexus123` |
+| `WORKSPACE_ROOT` | Nexus 允许访问的目录根 |
+| `PORT` | 默认 `59000` |
+
+如果只是本机试跑，可以先保留默认密码；正式使用前再换。
+
+## 第五步：创建 Profile
+
+Nexus 通过 `data/configs/*.json` 和 `data/codex-configs/*.json` 管理不同 agent profile。
+
+Claude 示例：
 
 ```bash
 mkdir -p data/configs
 ```
-
-### 3.2 选择模板创建 Profile
-
-**模板 A：Anthropic 官方 API（推荐）**
 
 创建 `data/configs/anthropic.json`：
 
@@ -118,168 +110,37 @@ mkdir -p data/configs
 }
 ```
 
-> 留空表示使用 Claude CLI 默认凭证（从 `claude login` 获取）。
-
-**模板 B：Kimi（Moonshot 国内服务）**
-
-创建 `data/configs/kimi.json`：
-
-```json
-{
-  "label": "Kimi",
-  "BASE_URL": "https://api.kimi.com/coding",
-  "AUTH_TOKEN": "sk-kimi-your-token-here",
-  "API_KEY": "",
-  "DEFAULT_MODEL": "kimi-for-coding",
-  "THINK_MODEL": "kimi-for-coding",
-  "LONG_CONTEXT_MODEL": "kimi-for-coding",
-  "DEFAULT_HAIKU_MODEL": "kimi-for-coding",
-  "API_TIMEOUT_MS": "3000000"
-}
-```
-
-**模板 C：OpenRouter（第三方聚合）**
-
-创建 `data/configs/openrouter.json`：
-
-```json
-{
-  "label": "OpenRouter",
-  "BASE_URL": "https://openrouter.ai/api/v1",
-  "AUTH_TOKEN": "sk-or-v1-your-token-here",
-  "API_KEY": "",
-  "DEFAULT_MODEL": "anthropic/claude-sonnet-4",
-  "THINK_MODEL": "anthropic/claude-opus-4",
-  "LONG_CONTEXT_MODEL": "anthropic/claude-opus-4",
-  "DEFAULT_HAIKU_MODEL": "anthropic/claude-haiku-4",
-  "API_TIMEOUT_MS": "3000000"
-}
-```
-
-### 3.3 Profile 字段说明
-
-| 字段 | 说明 |
-|------|------|
-| `label` | 显示名称 |
-| `BASE_URL` | API 基础地址，留空使用官方 |
-| `AUTH_TOKEN` | API Key（OpenAI/Anthropic/Kimi 等） |
-| `API_KEY` | 备用字段，通常留空 |
-| `DEFAULT_MODEL` | 默认对话模型 |
-| `THINK_MODEL` | "/think" 命令使用的模型 |
-| `LONG_CONTEXT_MODEL` | 长上下文模型 |
-| `DEFAULT_HAIKU_MODEL"` | 快速/低成本模型 |
-| `API_TIMEOUT_MS` | API 超时（毫秒） |
-
----
-
-## 第四步：启动服务
-
-### 开发模式
-
-```bash
-# 后端（热重载）
-npm run dev
-
-# 另开终端，启动前端开发服务器（可选）
-cd frontend && npm run dev
-```
-
-### 生产模式
-
-```bash
-# 直接启动
-npm start
-
-# 或使用 PM2 守护进程
-pm2 start ecosystem.config.cjs
-
-# 查看状态
-pm2 status
-
-# 查看日志
-pm2 logs nexus
-```
-
-服务启动后，访问：
-
-```
-http://localhost:59000
-```
-
----
-
-## 第五步：首次使用
-
-### 1. 登录
-
-首次访问需要输入密码。如果使用默认配置，密码是 **`nexus123`**。
-
-### 2. 创建工作区
-
-进入后，点击左上角 **Workspace** → **New Project**：
-
-- **Name**: 项目名（如 `my-project`）
-- **Directory**: 选择一个在 `WORKSPACE_ROOT` 下的目录
-- **Profile**: 选择刚才创建的 Profile（如 `anthropic` 或 `kimi`）
-
-### 3. 启动 Claude 会话
-
-创建 Project 后，会自动打开一个 tmux window 运行 Claude。你会看到：
-
-```
-╔══════════════════════════════════════════╗
-║  Nexus · Claude Session
-║  Profile : Anthropic Claude
-║  Project : /home/yourname/workspace/my-project
-║  API     : Anthropic (官方)
-╚══════════════════════════════════════════╝
-```
-
-现在可以直接在终端里和 Claude 对话了。
-
-### 4. 移动端访问（同一 WiFi 下）
-
-```bash
-# 查看本机 IP
-ip addr show | grep "inet " | head -1
-
-# 手机浏览器访问
-http://192.168.x.x:59000
-```
-
-**远程访问建议：** 使用 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) 或 [Tailscale](https://tailscale.com/)，避免暴露端口。
-
----
-
 ## 常见问题
 
-### Q: 提示 "Config profile 'xxx' not found"
+### 1. `frontend/dist/index.html` 缺失
 
-确认 `data/configs/xxx.json` 存在，且 JSON 格式正确（可以用 `cat data/configs/xxx.json | python3 -m json.tool` 验证）。
+结论：仓库内容不完整。当前仓库不再带前端源码或 Node 构建链，必须恢复 `frontend/dist/`。
 
-### Q: Claude 提示没有 API 权限
+### 2. `systemctl --user` 不可用
 
-- 官方 API：运行 `claude login` 重新授权
-- Kimi/OpenRouter：检查 `AUTH_TOKEN` 是否填对
+可以先用：
 
-### Q: 无法创建 tmux window
+```bash
+bash start.sh
+```
 
-确保 tmux 已安装，且没有名为 `main`（或你配置的 `TMUX_SESSION`）的会话在运行冲突的命令。
+但 `./setup.sh` 和用户级守护启动会失败。需要先启用 `systemd --user`。
 
-### Q: 手机访问不了
+### 3. 改了 Rust 代码但服务没更新
 
-- 确认手机和电脑在同一网络
-- 检查防火墙：`sudo ufw allow 59000`
-- 或者使用 SSH 隧道：`ssh -L 59000:localhost:59000 your-server`
+`bash start.sh` 只会补构建“缺失”的 release binary，不会强制重建现有产物。代码变更后显式重建：
 
----
+```bash
+cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime
+```
+
+然后重启服务。
+
+### 4. 如何改密码
+
+把 `.env` 里的 `ACC_PASSWORD_HASH` 改成新的 bcrypt hash。仓库当前不内置密码生成工具，使用你现有的 bcrypt 工具生成即可。
 
 ## 下一步
 
-- 阅读 [ARCHITECTURE.md](ARCHITECTURE.md) 了解系统架构
-- 阅读 [NORTH-STAR.md](NORTH-STAR.md) 了解设计原则
-- 配置 Telegram Bot 实现手机异步任务（可选）
-
----
-
-*有问题？提交 [Issue](https://github.com/Jiang0977/nexus/issues) 或查看 [Troubleshooting](TROUBLESHOOTING.md)*
+- 架构和模块边界：见 [ARCHITECTURE.md](ARCHITECTURE.md)
+- 上线、重启、回滚：见 [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)

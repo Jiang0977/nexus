@@ -25,7 +25,7 @@
 
 ![咖啡厅场景](https://cdn.gooo.ai/gen-images/d5145bdda0649a33a2cf95bcc0b14169b985e4c0b1f8a17aa15b4d70e444893d.jpg)
 
-公司要做一个新功能的技术选型。我在咖啡厅里，一边喝着拿铁，一边让 AI 帮我搭建三个不同技术栈的原型：React + Node.js、Vue + Python、Next.js + Supabase。
+公司要做一个新功能的技术选型。我在咖啡厅里，一边喝着拿铁，一边让 AI 帮我搭建三个不同技术栈的原型：React + Rust、Vue + Python、Next.js + Supabase。
 
 半小时后，三个可运行的 Demo 都完成了。我可以直接在手机上浏览代码，对比优劣。周一的技术评审会上，我带着充分的论据和可运行的代码，决策过程从两周缩短到了两小时。
 
@@ -352,12 +352,11 @@ cd nexus
 cp .env.example .env
 # 编辑 .env，设置密码和工作目录
 
-# 3. 安装依赖并构建
-npm install
-cd frontend && npm install && npm run build && cd ..
+# 3. 安装并启动 systemd 用户服务
+./setup.sh
 
-# 4. 启动服务
-npm start
+# 4. 或者不装服务，直接前台运行
+# bash start.sh
 
 # 5. 在任何设备上打开 http://你的服务器IP:59000
 ```
@@ -428,7 +427,7 @@ Nexus 诞生于我自己的真实需求。它让我能够在碎片化的时间�
 
 *本文所有场景均为真实经历，Nexus 已在我的日常工作中稳定运行数月。*
 
-*技术栈：Node.js + React + WebSocket + tmux + xterm.js*
+*技术栈：Rust + vendored Web bundle + WebSocket + tmux + xterm.js*
 
 *许可证：GPL v3（开源使用）+ 商业授权*
 

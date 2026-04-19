@@ -10,7 +10,7 @@ Anchor: `docs/NORTH-STAR.md` — 修改任何文档前先对照锚点三原则
 | Layer | Tech |
 |---|---|
 | Backend | Rust `nexus-server` + Rust child runtimes |
-| Frontend | React 18 + TypeScript + xterm.js + Vite |
+| Frontend delivery | Vendored static bundle in `frontend/dist/` |
 | Auth | JWT (30d) + bcrypt password hash |
 | Runtime | 宿主机（WSL2）直接运行，`start.sh` 默认拉起 Rust server |
 | Config | `.env` 由 Rust `nexus-server` 读取 |
@@ -19,29 +19,22 @@ Anchor: `docs/NORTH-STAR.md` — 修改任何文档前先对照锚点三原则
 ## Architecture Constraints
 
 - **多 PTY 架构**（F-11）：每个 `tmux session:window` 独立 PTY 实例，`ptyMap` 管理
-- **前端 dist 由 Vite 构建**，Rust `nexus-server` 静态伺服 `frontend/dist/` + `public/`
+- Rust `nexus-server` 静态伺服 `frontend/dist/` + `public/`
 - **no database**：会话状态从 tmux 实时读取，持久化只用 JSON 文件
 - `WORKSPACE_ROOT` 指向宿主机工作区根目录，由 Rust server 直接访问
+- 不要把 Node/npm/pm2 重新带回仓库；当前默认运行链只允许 Rust + shell + systemd/tmux
 
 ## Key Files
 
 ```
 rust-runtime/src/bin/
   nexus-server.rs          # 默认后端入口：HTTP + WS + runtimes + Telegram
+rust-runtime/tests/        # Rust integration tests for startup/setup/bundle paths
 data/                      # 持久化数据（toolbar、tasks、configs）
 public/
   sw.js                    # Service Worker（cache-first 静态资源）
   icon.svg                 # PWA 图标
-frontend/src/
-  App.tsx                  # 路由：登录页 / 终端页
-  Terminal.tsx             # xterm.js + WebSocket + 触摸处理 + 双 Effect 模式
-  Toolbar.tsx              # 可配置工具栏（固定行 + 展开区）
-  TabBar.tsx               # tmux window 标签（< 768px 顶部导航）
-  TaskPanel.tsx            # claude -p 异步任务面板（SSE 流式）
-  SessionManager.tsx       # 新建/切换 session 面板（lazy）
-  WorkspaceSelector.tsx    # 目录选择器（lazy）
-  toolbarDefaults.ts       # 按键定义与出厂配置
-  windowStatus.ts          # 窗口状态检测（Terminal + TabBar 共享）
+frontend/dist/             # vendored 前端静态资源
 docs/
   NORTH-STAR.md            # 锚点文件（核心问题/用户/Out-of-Scope）
   PRD.md                   # 功能规格
@@ -66,30 +59,16 @@ docs/
 
 **Source of truth: git tag**（`git describe --tags --abbrev=0`）
 
-每次发布新版本时必须同步更新以下文件，否则版本显示会不一致：
-
-| 文件 | 字段 |
-|---|---|
-| `package.json` | `"version"` |
-| `frontend/package.json` | `"version"` |
-
 发布流程：
+
 ```bash
-# 1. 确认工作区干净
 git status
-
-# 2. 更新两个 package.json 的 version 字段
-
-# 3. 提交
-git add package.json frontend/package.json
-git commit -m "chore: bump version to X.Y.Z"
-
-# 4. 打 tag 并推送
+git commit -am "chore: prepare release X.Y.Z"
 git tag vX.Y.Z
 git push && git push --tags
 ```
 
-**不要**在 i18n 文件或代码里硬编码版本号 — Settings > About 通过 `/api/version`（读 git tag）动态显示，无需手动维护。
+不要在代码、静态资源或文档里手工维护第二份版本号。
 
 ## Git Commit Standard
 
@@ -113,10 +92,10 @@ Rules: English subject, imperative mood, no trailing period, blank line before b
 - No speculative features, no opportunistic cleanup
 - One logical change per commit
 
-### TypeScript / React
-- Strict mode; no `any`
-- State and side effects via hooks only
-- Single responsibility per component
+### Frontend Bundle
+- 当前仓库只保留编译后的 `frontend/dist/`
+- 不要把 Node toolchain、Vite 配置或 TS/React 源码重新带回仓库
+- 任何前端 bundle 变更都要同步更新运行文档和验证记录
 
 ### Security
 - Secrets via env vars only — never hardcoded

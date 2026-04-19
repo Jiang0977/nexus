@@ -3,7 +3,7 @@
 # 在宿主机（WSL2）上直接运行: bash start.sh
 # 或: PORT=59000 bash start.sh
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -15,16 +15,11 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-# 检查 node_modules
-if [ ! -d node_modules ]; then
-    echo "安装依赖..."
-    npm install
-fi
-
-# 检查前端构建
-if [ ! -d frontend/dist ]; then
-    echo "构建前端..."
-    cd frontend && npm install && npm run build && cd ..
+# 检查前端静态资源
+if [ ! -f frontend/dist/index.html ]; then
+    echo "错误: 缺少 vendored 前端资源 frontend/dist/index.html"
+    echo "该仓库已移除 Node 工具链；请恢复 frontend/dist/ 或重新获取完整仓库内容。"
+    exit 1
 fi
 
 read_env_value() {
@@ -44,6 +39,42 @@ resolve_env_or_file() {
         return
     fi
     read_env_value "$key"
+}
+
+build_rust_release_bins() {
+    cargo build --manifest-path rust-runtime/Cargo.toml --release "$@"
+}
+
+rust_build_inputs_newer_than() {
+    local binary="$1"
+    local path
+
+    if [ ! -e "$binary" ]; then
+        return 0
+    fi
+
+    for path in rust-runtime/Cargo.toml rust-runtime/Cargo.lock; do
+        if [ -e "$path" ] && [ "$path" -nt "$binary" ]; then
+            return 0
+        fi
+    done
+
+    while IFS= read -r path; do
+        if [ "$path" -nt "$binary" ]; then
+            return 0
+        fi
+    done < <(find rust-runtime/src -type f 2>/dev/null)
+
+    return 1
+}
+
+mark_default_bin_rebuild_if_needed() {
+    local binary="$1"
+    local flag_name="$2"
+
+    if [ ! -x "$binary" ] || rust_build_inputs_newer_than "$binary"; then
+        printf -v "$flag_name" '%s' 1
+    fi
 }
 
 SERVER_EXECUTABLE="$(resolve_env_or_file NEXUS_SERVER_EXECUTABLE)"
@@ -69,59 +100,51 @@ fi
 if [ -n "$SERVER_EXECUTABLE" ]; then
     if [ -z "$TASK_RUNNER_RUST_EXECUTABLE" ]; then
         TASK_RUNNER_RUST_EXECUTABLE="$DEFAULT_TASK_RUNTIME"
-        if [ ! -x "$DEFAULT_TASK_RUNTIME" ]; then
-            NEED_TASK_RUNTIME=1
-        fi
+        mark_default_bin_rebuild_if_needed "$DEFAULT_TASK_RUNTIME" NEED_TASK_RUNTIME
     fi
 
     if [ -z "$PTY_BROKER_RUST_EXECUTABLE" ]; then
         PTY_BROKER_RUST_EXECUTABLE="$DEFAULT_PTY_RUNTIME"
-        if [ ! -x "$DEFAULT_PTY_RUNTIME" ]; then
-            NEED_PTY_RUNTIME=1
-        fi
+        mark_default_bin_rebuild_if_needed "$DEFAULT_PTY_RUNTIME" NEED_PTY_RUNTIME
     fi
 
     if [ -z "$WINDOW_LAUNCH_RUST_EXECUTABLE" ]; then
         WINDOW_LAUNCH_RUST_EXECUTABLE="$DEFAULT_WINDOW_LAUNCH_RUNTIME"
-        if [ ! -x "$DEFAULT_WINDOW_LAUNCH_RUNTIME" ]; then
-            NEED_WINDOW_LAUNCH_RUNTIME=1
-        fi
+        mark_default_bin_rebuild_if_needed "$DEFAULT_WINDOW_LAUNCH_RUNTIME" NEED_WINDOW_LAUNCH_RUNTIME
     fi
 
     if [ -z "$SESSION_MANAGEMENT_RUST_EXECUTABLE" ]; then
         SESSION_MANAGEMENT_RUST_EXECUTABLE="$DEFAULT_SESSION_MANAGEMENT_RUNTIME"
-        if [ ! -x "$DEFAULT_SESSION_MANAGEMENT_RUNTIME" ]; then
-            NEED_SESSION_MANAGEMENT_RUNTIME=1
-        fi
+        mark_default_bin_rebuild_if_needed "$DEFAULT_SESSION_MANAGEMENT_RUNTIME" NEED_SESSION_MANAGEMENT_RUNTIME
     fi
 fi
 
-if [ -n "$SERVER_EXECUTABLE" ] && [ "$SERVER_EXECUTABLE" = "$DEFAULT_RUST_SERVER_EXECUTABLE" ] && [ ! -x "$DEFAULT_RUST_SERVER_EXECUTABLE" ]; then
-    NEED_RUST_SERVER=1
+if [ -n "$SERVER_EXECUTABLE" ] && [ "$SERVER_EXECUTABLE" = "$DEFAULT_RUST_SERVER_EXECUTABLE" ]; then
+    mark_default_bin_rebuild_if_needed "$DEFAULT_RUST_SERVER_EXECUTABLE" NEED_RUST_SERVER
 fi
 
 NEED_RUST_RUNTIME_COUNT=$((NEED_TASK_RUNTIME + NEED_PTY_RUNTIME + NEED_WINDOW_LAUNCH_RUNTIME + NEED_SESSION_MANAGEMENT_RUNTIME))
 
 if [ "$NEED_RUST_RUNTIME_COUNT" -gt 1 ]; then
     echo "构建 Rust runtimes..."
-    npm run build:rust-runtimes
+    build_rust_release_bins --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime
 elif [ "$NEED_TASK_RUNTIME" -eq 1 ]; then
     echo "构建 Rust task runtime..."
-    npm run build:rust-task-runtime
+    build_rust_release_bins --bin nexus-task-runtime
 elif [ "$NEED_PTY_RUNTIME" -eq 1 ]; then
     echo "构建 Rust pty runtime..."
-    npm run build:rust-pty-runtime
+    build_rust_release_bins --bin nexus-pty-runtime
 elif [ "$NEED_WINDOW_LAUNCH_RUNTIME" -eq 1 ]; then
     echo "构建 Rust window launch runtime..."
-    npm run build:rust-launch-runtime
+    build_rust_release_bins --bin nexus-window-launch-runtime
 elif [ "$NEED_SESSION_MANAGEMENT_RUNTIME" -eq 1 ]; then
     echo "构建 Rust session management runtime..."
-    npm run build:rust-session-runtime
+    build_rust_release_bins --bin nexus-session-runtime
 fi
 
 if [ "$NEED_RUST_SERVER" -eq 1 ]; then
     echo "构建 Rust server..."
-    npm run build:rust-server
+    build_rust_release_bins --bin nexus-server
 fi
 
 if [ -n "$SERVER_EXECUTABLE" ] && [ ! -x "$SERVER_EXECUTABLE" ]; then

@@ -1,7 +1,6 @@
-use serde_json::to_string;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 fn main() {
@@ -15,14 +14,12 @@ fn run() -> Result<(), String> {
     let root = env::current_dir()
         .map_err(|error| format!("failed to determine current working directory: {error}"))?;
 
-    check_node_version(&root)?;
     ensure_tmux(&root)?;
+    ensure_systemd_user(&root)?;
     ensure_env_file(&root)?;
-    install_backend_dependencies(&root)?;
-    build_frontend(&root)?;
-    ensure_pm2(&root)?;
-    write_ecosystem_config(&root)?;
-    start_pm2(&root)?;
+    ensure_frontend_bundle(&root)?;
+    install_user_units(&root)?;
+    start_user_units(&root)?;
     ensure_tmux_session(&root)?;
     print_completion_banner();
     Ok(())
@@ -48,23 +45,6 @@ fn command_succeeds(program: &str, args: &[&str], cwd: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn capture_stdout(program: &str, args: &[&str], cwd: &Path) -> Result<String, String> {
-    let output = Command::new(program)
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .map_err(|error| format!("failed to run {program}: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if stderr.is_empty() {
-            format!("{program} exited with status {}", output.status)
-        } else {
-            format!("{program} failed: {stderr}")
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
 fn run_command_checked(
     program: &str,
     args: &[&str],
@@ -84,29 +64,6 @@ fn run_command_checked(
     } else {
         Err(failure_message.to_string())
     }
-}
-
-fn parse_node_major(version: &str) -> Option<u32> {
-    version
-        .trim()
-        .trim_start_matches('v')
-        .split('.')
-        .next()
-        .and_then(|major| major.parse::<u32>().ok())
-}
-
-fn check_node_version(root: &Path) -> Result<(), String> {
-    step("Checking Node.js version");
-    let version = capture_stdout("node", &["--version"], root)?;
-    let major = parse_node_major(&version)
-        .ok_or_else(|| format!("failed to parse Node.js version output: {version}"))?;
-    if major < 20 {
-        return Err(format!(
-            "Node.js 20+ required, found {version}. Install via: nvm install 20 && nvm use 20"
-        ));
-    }
-    ok(&format!("Node.js {version}"));
-    Ok(())
 }
 
 fn ensure_tmux(root: &Path) -> Result<(), String> {
@@ -138,6 +95,20 @@ fn ensure_tmux(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_systemd_user(root: &Path) -> Result<(), String> {
+    step("Checking systemd user services");
+    if command_succeeds("systemctl", &["--user", "--version"], root)
+        || command_succeeds("systemctl", &["--version"], root)
+    {
+        ok("systemd available");
+        return Ok(());
+    }
+
+    Err(
+        "systemd user services are required. Install/enable systemd and retry, or start Nexus manually with bash ./start.sh".to_string(),
+    )
+}
+
 fn ensure_env_file(root: &Path) -> Result<(), String> {
     step("Setting up .env");
     let env_file = root.join(".env");
@@ -162,98 +133,152 @@ fn ensure_env_file(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn install_backend_dependencies(root: &Path) -> Result<(), String> {
-    step("Installing backend dependencies");
-    run_command_checked("npm", &["install"], root, "npm install failed")?;
-    ok("Backend dependencies installed");
-    Ok(())
-}
-
-fn build_frontend(root: &Path) -> Result<(), String> {
-    step("Building frontend");
-    let frontend_dir = root.join("frontend");
-    run_command_checked(
-        "npm",
-        &["install"],
-        &frontend_dir,
-        "Frontend install failed",
-    )?;
-    run_command_checked(
-        "npm",
-        &["run", "build"],
-        &frontend_dir,
-        "Frontend build failed — check frontend/node_modules or run: cd frontend && npm install && npm run build",
-    )?;
-    ok("Frontend built");
-    Ok(())
-}
-
-fn ensure_pm2(root: &Path) -> Result<(), String> {
-    step("Checking PM2");
-    if !command_succeeds("pm2", &["--version"], root) {
-        println!("PM2 not found — installing globally...");
-        run_command_checked(
-            "npm",
-            &["install", "-g", "pm2"],
-            root,
-            "Failed to install PM2 globally. Try: sudo npm install -g pm2",
-        )?;
+fn ensure_frontend_bundle(root: &Path) -> Result<(), String> {
+    step("Checking vendored frontend bundle");
+    let index = root.join("frontend").join("dist").join("index.html");
+    if !index.exists() {
+        return Err(
+            "vendored frontend bundle is missing at frontend/dist/index.html — repo may be incomplete"
+                .to_string(),
+        );
     }
-    ok("PM2 available");
+    ok("frontend/dist present");
     Ok(())
 }
 
-fn ecosystem_config_content(root: &Path) -> Result<String, String> {
-    let cwd = path_literal(root)?;
+fn current_user() -> String {
+    env::var("USER").unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn current_home() -> Result<PathBuf, String> {
+    env::var("HOME")
+        .map(PathBuf::from)
+        .map_err(|_| "HOME is not set; cannot install systemd user units".to_string())
+}
+
+fn current_shell() -> String {
+    env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+}
+
+fn current_lang() -> String {
+    env::var("LANG").unwrap_or_else(|_| "C.UTF-8".to_string())
+}
+
+fn current_lc_all() -> String {
+    env::var("LC_ALL").unwrap_or_else(|_| current_lang())
+}
+
+fn current_path() -> String {
+    env::var("PATH").unwrap_or_else(|_| {
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string()
+    })
+}
+
+fn user_systemd_dir() -> Result<PathBuf, String> {
+    Ok(current_home()?.join(".config").join("systemd").join("user"))
+}
+
+fn systemd_quote(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+fn bash_path() -> &'static str {
+    "/usr/bin/bash"
+}
+
+fn nexus_service_content(root: &Path) -> Result<String, String> {
+    let root = root
+        .to_str()
+        .ok_or_else(|| format!("path is not valid UTF-8: {}", root.display()))?;
+    let home = current_home()?;
+    let home = home
+        .to_str()
+        .ok_or_else(|| format!("path is not valid UTF-8: {}", home.display()))?;
+    let start_script = format!("{root}/start.sh");
+
     Ok(format!(
-        "module.exports = {{\n  apps: [{{\n    name: 'nexus',\n    script: 'bash',\n    args: ['./start.sh'],\n    cwd: {cwd},\n    instances: 1,\n    exec_mode: 'fork',\n    env: {{\n      NODE_ENV: 'production'\n    }},\n    error_file: './logs/nexus-error.log',\n    out_file: './logs/nexus-out.log',\n    log_file: './logs/nexus-combined.log',\n    time: true\n  }}]\n}};\n"
+        "[Unit]\nDescription=Nexus service\nAfter=network-online.target nexus-tmux.service\nWants=network-online.target nexus-tmux.service\n\n[Service]\nType=simple\nWorkingDirectory={}\nEnvironment=HOME={}\nEnvironment=USER={}\nEnvironment=SHELL={}\nEnvironment=LANG={}\nEnvironment=LC_ALL={}\nEnvironment=PATH={}\nExecStart={} {}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=20\nKillMode=process\n\n[Install]\nWantedBy=default.target\n",
+        systemd_quote(root),
+        systemd_quote(home),
+        systemd_quote(&current_user()),
+        systemd_quote(&current_shell()),
+        systemd_quote(&current_lang()),
+        systemd_quote(&current_lc_all()),
+        systemd_quote(&current_path()),
+        bash_path(),
+        systemd_quote(&start_script),
     ))
 }
 
-fn path_literal(path: &Path) -> Result<String, String> {
-    let raw = path
+fn nexus_tmux_service_content(root: &Path) -> Result<String, String> {
+    let root = root
         .to_str()
-        .ok_or_else(|| format!("path is not valid UTF-8: {}", path.display()))?;
-    to_string(raw).map_err(|error| format!("failed to serialize path {}: {error}", path.display()))
+        .ok_or_else(|| format!("path is not valid UTF-8: {}", root.display()))?;
+    let home = current_home()?;
+    let home = home
+        .to_str()
+        .ok_or_else(|| format!("path is not valid UTF-8: {}", home.display()))?;
+    let tmux_script = format!("{root}/scripts/nexus-tmux-service.sh");
+
+    Ok(format!(
+        "[Unit]\nDescription=Persistent tmux server for Nexus\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nWorkingDirectory={}\nEnvironment=HOME={}\nEnvironment=USER={}\nEnvironment=SHELL={}\nEnvironment=LANG={}\nEnvironment=LC_ALL={}\nEnvironment=PATH={}\nExecStart={} {} start\nExecStop={} {} stop\nTimeoutStopSec=20\n\n[Install]\nWantedBy=default.target\n",
+        systemd_quote(root),
+        systemd_quote(home),
+        systemd_quote(&current_user()),
+        systemd_quote(&current_shell()),
+        systemd_quote(&current_lang()),
+        systemd_quote(&current_lc_all()),
+        systemd_quote(&current_path()),
+        bash_path(),
+        systemd_quote(&tmux_script),
+        bash_path(),
+        systemd_quote(&tmux_script),
+    ))
 }
 
-fn write_ecosystem_config(root: &Path) -> Result<(), String> {
-    step("Writing ecosystem.config.cjs");
-    let config_path = root.join("ecosystem.config.cjs");
-    fs::write(&config_path, ecosystem_config_content(root)?)
-        .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
-    fs::create_dir_all(root.join("logs"))
-        .map_err(|error| format!("failed to create logs directory: {error}"))?;
+fn install_user_units(root: &Path) -> Result<(), String> {
+    step("Installing systemd user units");
+    let systemd_dir = user_systemd_dir()?;
+    fs::create_dir_all(&systemd_dir)
+        .map_err(|error| format!("failed to create {}: {error}", systemd_dir.display()))?;
+
+    let nexus_service = systemd_dir.join("nexus.service");
+    let tmux_service = systemd_dir.join("nexus-tmux.service");
+
+    fs::write(&nexus_service, nexus_service_content(root)?)
+        .map_err(|error| format!("failed to write {}: {error}", nexus_service.display()))?;
+    fs::write(&tmux_service, nexus_tmux_service_content(root)?)
+        .map_err(|error| format!("failed to write {}: {error}", tmux_service.display()))?;
+
     ok(&format!(
-        "ecosystem.config.cjs written with cwd: {}",
-        root.display()
+        "installed user units in {}",
+        systemd_dir.display()
     ));
     Ok(())
 }
 
-fn start_pm2(root: &Path) -> Result<(), String> {
-    step("Starting Nexus with PM2");
-    let _ = Command::new("pm2")
-        .args(["delete", "nexus"])
-        .current_dir(root)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
+fn start_user_units(root: &Path) -> Result<(), String> {
+    step("Starting Nexus with systemd user services");
     run_command_checked(
-        "pm2",
-        &["start", "ecosystem.config.cjs"],
+        "systemctl",
+        &["--user", "daemon-reload"],
         root,
-        "PM2 start failed — check logs: pm2 logs nexus",
+        "Failed to reload systemd user daemon",
     )?;
-    let _ = Command::new("pm2")
-        .args(["save"])
-        .current_dir(root)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
-    ok("Nexus started and saved");
+    run_command_checked(
+        "systemctl",
+        &["--user", "enable", "--now", "nexus-tmux.service"],
+        root,
+        "Failed to enable/start nexus-tmux.service",
+    )?;
+    run_command_checked(
+        "systemctl",
+        &["--user", "enable", "--now", "nexus.service"],
+        root,
+        "Failed to enable/start nexus.service",
+    )?;
+    ok("systemd user services enabled and started");
     Ok(())
 }
 
@@ -275,6 +300,6 @@ fn ensure_tmux_session(root: &Path) -> Result<(), String> {
 
 fn print_completion_banner() {
     println!(
-        "\n\x1b[32m\n╔══════════════════════════════════════════╗\n║  Nexus setup complete!\n║\n║  URL:      http://localhost:59000\n║  Password: nexus123  (change in .env)\n║\n║  pm2 status     — check process\n║  pm2 logs nexus — view logs\n╚══════════════════════════════════════════╝\n\x1b[0m"
+        "\n\x1b[32m\n╔══════════════════════════════════════════╗\n║  Nexus setup complete!\n║\n║  URL:      http://localhost:59000\n║  Password: nexus123  (change in .env)\n║\n║  systemctl --user status nexus\n║  journalctl --user -u nexus -f\n╚══════════════════════════════════════════╝\n\x1b[0m"
     );
 }

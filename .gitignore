@@ -13,12 +13,7 @@ docs/superpowers/
 # Environment (contains secrets)
 .env
 
-# Dependencies
-node_modules/
-frontend/node_modules/
-
 # Build output
-frontend/dist/
 dist-server/
 rust-runtime/target/
 
@@ -27,9 +22,6 @@ e2e-*.cjs
 e2e-screenshots/
 screenshots/
 *.pdf
-
-# PM2
-ecosystem.config.cjs
 
 # Runtime data (tasks, session configs)
 data/

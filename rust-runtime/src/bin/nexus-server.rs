@@ -6004,7 +6004,7 @@ async fn serve_index(state: &AppState) -> Response {
     if !index_path.is_file() {
         return (
             StatusCode::NOT_FOUND,
-            "Not found - run: cd frontend && npm run build",
+            "Not found - vendored frontend bundle missing at frontend/dist/index.html",
         )
             .into_response();
     }
