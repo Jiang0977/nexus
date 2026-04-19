@@ -8,6 +8,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+source "$SCRIPT_DIR/scripts/nexus-paths.sh"
+ensure_codex_cli_on_path
+
 # 检查 .env 文件
 if [ ! -f .env ]; then
     echo "错误: .env 文件不存在"

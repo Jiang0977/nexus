@@ -19,6 +19,16 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn copy_startup_scripts(root: &Path) {
+    fs::copy(repo_root().join("start.sh"), root.join("start.sh")).unwrap();
+    fs::create_dir_all(root.join("scripts")).unwrap();
+    fs::copy(
+        repo_root().join("scripts/nexus-paths.sh"),
+        root.join("scripts/nexus-paths.sh"),
+    )
+    .unwrap();
+}
+
 #[cfg(unix)]
 fn write_executable(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
@@ -80,7 +90,7 @@ fn scrub_runtime_env(command: &mut Command) -> &mut Command {
 fn start_script_fails_when_vendored_bundle_is_missing() {
     let temp = tempdir().unwrap();
     let root = temp.path();
-    fs::copy(repo_root().join("start.sh"), root.join("start.sh")).unwrap();
+    copy_startup_scripts(root);
     fs::write(root.join(".env"), "JWT_SECRET=test\n").unwrap();
 
     let output = scrub_runtime_env(Command::new("bash").arg("start.sh").current_dir(root))
@@ -107,7 +117,7 @@ fn start_script_rebuilds_only_binaries_whose_depfile_inputs_are_newer() {
     let bin_dir = root.join("bin");
     let cargo_log = root.join("cargo.log");
 
-    fs::copy(repo_root().join("start.sh"), root.join("start.sh")).unwrap();
+    copy_startup_scripts(root);
     fs::write(root.join(".env"), "JWT_SECRET=test\n").unwrap();
     fs::create_dir_all(root.join("frontend/dist")).unwrap();
     fs::write(root.join("frontend/dist/index.html"), "<!doctype html>\n").unwrap();
@@ -200,7 +210,7 @@ fn start_script_ignores_unrelated_rust_sources_when_depfiles_are_present() {
     let bin_dir = root.join("bin");
     let cargo_log = root.join("cargo.log");
 
-    fs::copy(repo_root().join("start.sh"), root.join("start.sh")).unwrap();
+    copy_startup_scripts(root);
     fs::write(root.join(".env"), "JWT_SECRET=test\n").unwrap();
     fs::create_dir_all(root.join("frontend/dist")).unwrap();
     fs::write(root.join("frontend/dist/index.html"), "<!doctype html>\n").unwrap();
@@ -286,7 +296,7 @@ fn start_script_falls_back_to_home_cargo_bin_when_path_lacks_cargo() {
     let path_bin = root.join("path-bin");
     let cargo_log = root.join("cargo.log");
 
-    fs::copy(repo_root().join("start.sh"), root.join("start.sh")).unwrap();
+    copy_startup_scripts(root);
     fs::write(root.join(".env"), "JWT_SECRET=test\n").unwrap();
     fs::create_dir_all(root.join("frontend/dist")).unwrap();
     fs::write(root.join("frontend/dist/index.html"), "<!doctype html>\n").unwrap();
@@ -363,4 +373,91 @@ fn vendored_frontend_bundle_references_existing_served_files() {
     let manifest = fs::read_to_string(repo.join("public/manifest.json")).unwrap();
     assert!(manifest.contains("\"src\": \"/icon.svg\""));
     assert!(repo.join("public/icon.svg").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn start_script_prepends_real_codex_bin_when_only_wrapper_is_on_path() {
+    let temp = tempdir().unwrap();
+    let root = temp.path();
+    let home = root.join("home");
+    let local_bin = home.join(".local/bin");
+    let nvm_bin = home.join(".nvm/versions/node/v22.22.2/bin");
+    let server_log = root.join("server.log");
+    let which_log = root.join("which.log");
+    let version_log = root.join("version.log");
+    let bin_dir = root.join("bin");
+
+    copy_startup_scripts(root);
+    fs::write(root.join(".env"), "JWT_SECRET=test\n").unwrap();
+    fs::create_dir_all(root.join("frontend/dist")).unwrap();
+    fs::write(root.join("frontend/dist/index.html"), "<!doctype html>\n").unwrap();
+    fs::create_dir_all(&local_bin).unwrap();
+    fs::create_dir_all(&nvm_bin).unwrap();
+    fs::create_dir_all(&bin_dir).unwrap();
+
+    write_executable(
+        &local_bin.join("codex"),
+        "#!/usr/bin/env bash\nset -euo pipefail\nself_path=\"$(cd -- \"$(dirname -- \"${BASH_SOURCE[0]}\")\" && pwd)/$(basename -- \"${BASH_SOURCE[0]}\")\"\nreal_codex=\"\"\nwhile IFS= read -r candidate; do\n  [ -n \"$candidate\" ] || continue\n  if [ \"$candidate\" != \"$self_path\" ]; then\n    real_codex=\"$candidate\"\n    break\n  fi\ndone < <(which -a codex 2>/dev/null || true)\nif [ -z \"$real_codex\" ]; then\n  printf 'codex wrapper error: real codex binary not found in PATH\\n' >&2\n  exit 1\nfi\nexec \"$real_codex\" --dangerously-bypass-approvals-and-sandbox \"$@\"\n",
+    );
+    write_executable(
+        &nvm_bin.join("codex"),
+        "#!/usr/bin/env bash\nprintf 'codex-cli test\\n'\n",
+    );
+
+    for name in [
+        "nexus-task-runtime",
+        "nexus-pty-runtime",
+        "nexus-window-launch-runtime",
+        "nexus-session-runtime",
+    ] {
+        write_executable(&bin_dir.join(name), "#!/usr/bin/env bash\nexit 0\n");
+    }
+
+    write_executable(
+        &bin_dir.join("nexus-server"),
+        &format!(
+            "#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' \"$PATH\" > {:?}\nwhich -a codex > {:?}\ncodex --version > {:?}\n",
+            server_log, which_log, version_log
+        ),
+    );
+
+    let output = Command::new("/usr/bin/bash")
+        .arg("start.sh")
+        .current_dir(root)
+        .env("HOME", &home)
+        .env("PATH", format!("{}:/usr/bin:/bin", local_bin.display()))
+        .env("NEXUS_SERVER_EXECUTABLE", bin_dir.join("nexus-server"))
+        .env("NEXUS_TASK_RUNNER_RUST_EXECUTABLE", bin_dir.join("nexus-task-runtime"))
+        .env("NEXUS_PTY_BROKER_RUST_EXECUTABLE", bin_dir.join("nexus-pty-runtime"))
+        .env(
+            "NEXUS_WINDOW_LAUNCH_RUST_EXECUTABLE",
+            bin_dir.join("nexus-window-launch-runtime"),
+        )
+        .env(
+            "NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE",
+            bin_dir.join("nexus-session-runtime"),
+        )
+        .output()
+        .unwrap();
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(output.status.success(), "start.sh failed:\n{combined}");
+
+    let observed_path = fs::read_to_string(&server_log).unwrap();
+    assert!(observed_path.starts_with(&format!("{}:", nvm_bin.display())));
+
+    let which_output = fs::read_to_string(&which_log).unwrap();
+    assert_eq!(
+        which_output.lines().next().unwrap_or_default(),
+        nvm_bin.join("codex").display().to_string()
+    );
+
+    let version_output = fs::read_to_string(&version_log).unwrap();
+    assert_eq!(version_output.trim(), "codex-cli test");
 }

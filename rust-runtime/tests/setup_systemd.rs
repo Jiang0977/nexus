@@ -23,6 +23,29 @@ fn repo_root() -> &'static Path {
 }
 
 #[cfg(unix)]
+fn copy_tmux_service_fixture(root: &Path) {
+    let scripts_dir = root.join("scripts");
+    fs::create_dir_all(&scripts_dir).unwrap();
+    fs::copy(
+        repo_root().join("scripts/nexus-tmux-service.sh"),
+        scripts_dir.join("nexus-tmux-service.sh"),
+    )
+    .unwrap();
+    fs::copy(
+        repo_root().join("scripts/nexus-paths.sh"),
+        scripts_dir.join("nexus-paths.sh"),
+    )
+    .unwrap();
+
+    for file in ["nexus-tmux-service.sh", "nexus-paths.sh"] {
+        let path = scripts_dir.join(file);
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).unwrap();
+    }
+}
+
+#[cfg(unix)]
 #[test]
 fn nexus_setup_installs_systemd_units_without_node_or_pm2() {
     let temp = tempdir().unwrap();
@@ -119,21 +142,10 @@ fn nexus_tmux_script_uses_foreground_server_and_non_starting_session_init() {
     let temp = tempdir().unwrap();
     let root = temp.path();
     let bin_dir = root.join("bin");
-    let scripts_dir = root.join("scripts");
     let log_file = root.join("tmux.log");
 
-    fs::create_dir_all(&scripts_dir).unwrap();
     fs::write(root.join(".env"), "TMUX_SESSION=nexus\n").unwrap();
-    fs::copy(
-        repo_root().join("scripts/nexus-tmux-service.sh"),
-        scripts_dir.join("nexus-tmux-service.sh"),
-    )
-    .unwrap();
-    let mut perms = fs::metadata(scripts_dir.join("nexus-tmux-service.sh"))
-        .unwrap()
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(scripts_dir.join("nexus-tmux-service.sh"), perms).unwrap();
+    copy_tmux_service_fixture(root);
 
     write_executable(
         &bin_dir.join("tmux"),
@@ -174,4 +186,61 @@ fn nexus_tmux_script_uses_foreground_server_and_non_starting_session_init() {
     let log = fs::read_to_string(log_file).unwrap();
     assert!(log.contains("tmux -N new-session -Ad -s nexus -n shell exec zsh -i"));
     assert!(log.contains("tmux -D"));
+}
+
+#[cfg(unix)]
+#[test]
+fn nexus_tmux_script_prepends_real_codex_bin_before_spawning_tmux() {
+    let temp = tempdir().unwrap();
+    let root = temp.path();
+    let home = root.join("home");
+    let local_bin = home.join(".local/bin");
+    let nvm_bin = home.join(".nvm/versions/node/v22.22.2/bin");
+    let bin_dir = root.join("bin");
+    let log_file = root.join("tmux.log");
+
+    fs::write(root.join(".env"), "TMUX_SESSION=nexus\n").unwrap();
+    copy_tmux_service_fixture(root);
+    fs::create_dir_all(&local_bin).unwrap();
+    fs::create_dir_all(&nvm_bin).unwrap();
+
+    write_executable(
+        &local_bin.join("codex"),
+        "#!/usr/bin/env bash\nset -euo pipefail\nself_path=\"$(cd -- \"$(dirname -- \"${BASH_SOURCE[0]}\")\" && pwd)/$(basename -- \"${BASH_SOURCE[0]}\")\"\nreal_codex=\"\"\nwhile IFS= read -r candidate; do\n  [ -n \"$candidate\" ] || continue\n  if [ \"$candidate\" != \"$self_path\" ]; then\n    real_codex=\"$candidate\"\n    break\n  fi\ndone < <(which -a codex 2>/dev/null || true)\nif [ -z \"$real_codex\" ]; then\n  printf 'codex wrapper error: real codex binary not found in PATH\\n' >&2\n  exit 1\nfi\nexec \"$real_codex\" --dangerously-bypass-approvals-and-sandbox \"$@\"\n",
+    );
+    write_executable(
+        &nvm_bin.join("codex"),
+        "#!/usr/bin/env bash\nprintf 'codex-cli test\\n'\n",
+    );
+    write_executable(
+        &bin_dir.join("tmux"),
+        &format!(
+            "#!/usr/bin/bash\nprintf 'PATH=%s\\n' \"$PATH\" >> {:?}\nprintf 'tmux %s\\n' \"$*\" >> {:?}\ncase \"$1\" in\n  -N) shift; case \"$1\" in\n    new-session|kill-server|display-message) exit 0 ;;\n    *) exit 1 ;;\n  esac ;;\n  -D|new-session|kill-server|display-message|has-session) exit 0 ;;\n  *) exit 0 ;;\nesac\n",
+            log_file, log_file
+        ),
+    );
+
+    let output = Command::new("/usr/bin/bash")
+        .arg(root.join("scripts/nexus-tmux-service.sh"))
+        .arg("ensure-session")
+        .current_dir(root)
+        .env("HOME", &home)
+        .env(
+            "PATH",
+            format!("{}:{}:/usr/bin:/bin", local_bin.display(), bin_dir.display()),
+        )
+        .output()
+        .unwrap();
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(output.status.success(), "ensure-session failed: {combined}");
+
+    let log = fs::read_to_string(log_file).unwrap();
+    assert!(log.contains(&format!("PATH={}", nvm_bin.display())));
+    assert!(log.contains("tmux -N new-session -Ad -s nexus -n shell exec zsh -i"));
 }

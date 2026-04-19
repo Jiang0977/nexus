@@ -7,6 +7,9 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 DEFAULT_SHELL_COMMAND='exec zsh -i'
 
+source "$SCRIPT_DIR/nexus-paths.sh"
+ensure_codex_cli_on_path
+
 read_env_var() {
   local key="$1"
   if [[ ! -f "$ENV_FILE" ]]; then
