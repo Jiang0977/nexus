@@ -20,7 +20,6 @@ fn run() -> Result<(), String> {
     ensure_frontend_bundle(&root)?;
     install_user_units(&root)?;
     start_user_units(&root)?;
-    ensure_tmux_session(&root)?;
     print_completion_banner();
     Ok(())
 }
@@ -198,7 +197,7 @@ fn nexus_service_content(root: &Path) -> Result<String, String> {
     let start_script = format!("{root}/start.sh");
 
     Ok(format!(
-        "[Unit]\nDescription=Nexus service\nAfter=network-online.target nexus-tmux.service\nWants=network-online.target nexus-tmux.service\n\n[Service]\nType=simple\nWorkingDirectory={}\nEnvironment=HOME={}\nEnvironment=USER={}\nEnvironment=SHELL={}\nEnvironment=LANG={}\nEnvironment=LC_ALL={}\nEnvironment=PATH={}\nExecStart={} {}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=20\nKillMode=process\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Nexus service\nAfter=network-online.target nexus-tmux.service\nWants=network-online.target nexus-tmux.service\n\n[Service]\nType=simple\nWorkingDirectory={}\nEnvironment=HOME={}\nEnvironment=USER={}\nEnvironment=SHELL={}\nEnvironment=LANG={}\nEnvironment=LC_ALL={}\nEnvironment=PATH={}\nExecStart={} {}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=20\nKillMode=control-group\n\n[Install]\nWantedBy=default.target\n",
         systemd_quote(root),
         systemd_quote(home),
         systemd_quote(&current_user()),
@@ -222,7 +221,7 @@ fn nexus_tmux_service_content(root: &Path) -> Result<String, String> {
     let tmux_script = format!("{root}/scripts/nexus-tmux-service.sh");
 
     Ok(format!(
-        "[Unit]\nDescription=Persistent tmux server for Nexus\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nWorkingDirectory={}\nEnvironment=HOME={}\nEnvironment=USER={}\nEnvironment=SHELL={}\nEnvironment=LANG={}\nEnvironment=LC_ALL={}\nEnvironment=PATH={}\nExecStart={} {} start\nExecStop={} {} stop\nTimeoutStopSec=20\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Persistent tmux server for Nexus\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={}\nEnvironment=HOME={}\nEnvironment=USER={}\nEnvironment=SHELL={}\nEnvironment=LANG={}\nEnvironment=LC_ALL={}\nEnvironment=PATH={}\nExecStart={} {} start-foreground\nExecStartPost={} {} ensure-session\nExecStop={} {} stop\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=20\nKillMode=control-group\n\n[Install]\nWantedBy=default.target\n",
         systemd_quote(root),
         systemd_quote(home),
         systemd_quote(&current_user()),
@@ -230,6 +229,8 @@ fn nexus_tmux_service_content(root: &Path) -> Result<String, String> {
         systemd_quote(&current_lang()),
         systemd_quote(&current_lc_all()),
         systemd_quote(&current_path()),
+        bash_path(),
+        systemd_quote(&tmux_script),
         bash_path(),
         systemd_quote(&tmux_script),
         bash_path(),
@@ -279,22 +280,6 @@ fn start_user_units(root: &Path) -> Result<(), String> {
         "Failed to enable/start nexus.service",
     )?;
     ok("systemd user services enabled and started");
-    Ok(())
-}
-
-fn ensure_tmux_session(root: &Path) -> Result<(), String> {
-    step("Ensuring tmux session \"main\" exists");
-    if !command_succeeds("tmux", &["has-session", "-t", "main"], root) {
-        run_command_checked(
-            "tmux",
-            &["new-session", "-d", "-s", "main"],
-            root,
-            "Failed to create tmux session \"main\"",
-        )?;
-        ok("tmux session \"main\" created");
-        return Ok(());
-    }
-    ok("tmux session \"main\" already exists");
     Ok(())
 }
 
