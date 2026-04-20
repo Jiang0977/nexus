@@ -16,11 +16,12 @@
 2. `scripts/nexus-paths.sh`
 3. `rust-runtime/src/lib.rs`
 4. `rust-runtime/src/bin/nexus-server.rs`
-5. `rust-runtime/src/bin/nexus-session-runtime.rs`
-6. `rust-runtime/src/bin/nexus-window-launch-runtime.rs`
-7. `rust-runtime/src/bin/nexus-pty-runtime.rs`
-8. `rust-runtime/src/bin/nexus-task-runtime.rs`
-9. `rust-runtime/tests/*.rs`
+5. `rust-runtime/src/server/mod.rs`
+6. `rust-runtime/src/bin/nexus-session-runtime.rs`
+7. `rust-runtime/src/bin/nexus-window-launch-runtime.rs`
+8. `rust-runtime/src/bin/nexus-pty-runtime.rs`
+9. `rust-runtime/src/bin/nexus-task-runtime.rs`
+10. `rust-runtime/tests/*.rs`
 
 ## 根目录里最重要的文件
 
@@ -44,8 +45,21 @@
 
 | 文件 | 作用 |
 |---|---|
-| `rust-runtime/src/bin/nexus-server.rs` | HTTP / WS / 静态资源 / runtime 装配 |
+| `rust-runtime/src/bin/nexus-server.rs` | 薄入口，只负责调用 `nexus_rust_runtime::server::run()` |
 | `rust-runtime/src/lib.rs` | 共享 helper 出口 |
+
+### server 内部模块
+
+| 文件 | 作用 |
+|---|---|
+| `rust-runtime/src/server/mod.rs` | server 装配、router 和跨模块 handler |
+| `rust-runtime/src/server/runtime.rs` | child runtime 生命周期与 IPC |
+| `rust-runtime/src/server/tasks.rs` | task / SSE 相关 handler |
+| `rust-runtime/src/server/telegram.rs` | Telegram setup / webhook |
+| `rust-runtime/src/server/config.rs` | 配置、profile、feature config |
+| `rust-runtime/src/server/workspace.rs` | workspace / file system handler |
+| `rust-runtime/src/server/version.rs` | 版本与更新检查 |
+| `rust-runtime/src/server/session_ws.rs` | session / channel / websocket 入口 |
 
 ### 共享逻辑
 
@@ -116,7 +130,7 @@
 ## 验证入口
 
 ```bash
-cargo test --manifest-path rust-runtime/Cargo.toml
+npm run check
 ```
 
 如果改动启动链或安装器，再额外跑：

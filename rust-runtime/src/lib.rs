@@ -4,4 +4,5 @@ pub mod path_utils;
 pub mod project_defaults;
 pub mod runtime_config;
 pub mod sanitize;
+pub mod server;
 pub mod shell;

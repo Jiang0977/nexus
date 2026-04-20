@@ -1,6 +1,6 @@
 # ROADMAP — Nexus
 
-**锚点**: `docs/NORTH-STAR.md` | **PRD**: `docs/PRD.md` (v1 Complete) | **更新**: 2026-04-16
+**锚点**: `docs/NORTH-STAR.md` | **PRD**: `docs/PRD.md` (v1 Complete) | **更新**: 2026-04-20
 
 ---
 
@@ -13,12 +13,11 @@
 | P1 | Codex 历史浏览器级回归 | 用浏览器 smoke 覆盖桌面入口、移动入口、`warning / empty / error / resume` 主路径；细节见 `TODOS.md` |
 | P1 | Codex 历史可访问性收口 | 收口 `CodexSessionsPanel` 的键盘路径、ARIA/读屏语义和最小验证证据；细节见 `TODOS.md` |
 | P2 | `nexus` 启动 `left-over process` 运维债 | 收口 `systemd` 重启时的残留进程告警，不破坏 tmux 持久化语义 |
-| P2 | 文档与开源整理 | 对齐 `ROADMAP.md` / `story.md` / `code.md`，继续 open-source polish |
 
 ## Later Backlog
 
----
-
+| Item | Notes |
+|---|---|
 | ANSI output in task history | Add `-e` flag; frontend ansi-to-html |
 | Open-source polish | Git history rewrite, rate limits, etc. |
 
@@ -29,6 +28,12 @@
 - `Codex history sessions tab`
 
 这些能力已经落地或至少已进入“已上线、待补验证”的阶段，不再按“待实现功能”管理。
+
+## Notes
+
+- `ROADMAP.md` 是当前优先级摘要，不替代 [TODOS.md](../TODOS.md) 的 Done when。
+- 运行时默认值已统一到 `PORT=59000`、`GITHUB_REPO=Jiang0977/nexus`。
+- Rust 仍直接服务 `frontend/dist/`；前端源码变更后必须把新的 bundle 一起纳入 git 基线。
 
 ---
 

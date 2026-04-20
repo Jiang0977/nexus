@@ -29,8 +29,8 @@
 ```bash
 git status --short
 test -f frontend/dist/index.html
+npm run check
 cargo fmt --manifest-path rust-runtime/Cargo.toml --check
-cargo test --manifest-path rust-runtime/Cargo.toml
 cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime
 ```
 
@@ -42,6 +42,11 @@ npm --prefix frontend run build
 ```
 
 如果 `test -f frontend/dist/index.html` 失败，不要继续上线。
+
+说明：
+
+- `npm run check` 是当前本地与 CI 共用的验证入口。
+- 它会串行执行 Rust 测试、Node 测试、前端构建，以及 `frontend/dist` 无漂移校验。
 
 ### 2. 可选预演
 

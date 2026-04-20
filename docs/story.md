@@ -1,5 +1,6 @@
 # 你的 AI 军团，24小时待命 | 一个把本地 coding agent 随身携带的故事
 
+> 边界先说清楚：Nexus 是一个单用户、自托管工具；默认访问端口是 `59000`；许可证是 GPL v3 + 商业授权。
 
 ![封面图](https://cdn.gooo.ai/gen-images/2b738ea7963799c782f9af3fede54824fda40db46428a19d7a45f98389c718e0.jpg)
 

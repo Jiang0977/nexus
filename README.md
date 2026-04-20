@@ -85,6 +85,9 @@ Important:
 - The repo now carries a maintainable frontend source tree under `frontend/src/`.
 - Frontend source changes require rebuilding `frontend/dist/` from the `frontend/` toolchain.
 - `bash start.sh` only builds Rust binaries; it does not rebuild frontend assets.
+- Repository-wide verification now lives behind `npm run check`.
+- GitHub Actions CI runs the same `npm run check` contract on every push / PR.
+- Default runtime values are unified in `.env.example` and Rust config: `PORT=59000`, `GITHUB_REPO=Jiang0977/nexus`.
 
 > Full setup guide including session profile config, systemd, and mobile access: **[QUICKSTART.md →](docs/QUICKSTART.md)**
 
@@ -109,6 +112,12 @@ Default login password: `nexus123` (user can change it in `.env` after setup).
 Expose securely without port forwarding via [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) or [Tailscale](https://tailscale.com/).
 
 For production updates, restart, verification, and rollback, use **[DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md)** as the single source of truth.
+
+For local maintenance before opening a PR or deploying:
+
+```bash
+npm run check
+```
 
 ---
 

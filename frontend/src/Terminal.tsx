@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, useState, lazy, Suspense } from 'react'
 import type { SessionManagerSidebarDetailView, SessionManagerV2Handle } from './SessionManagerV2'
 import { useTranslation } from 'react-i18next'
-import { Terminal as XTerm, type ITheme } from '@xterm/xterm'
+import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
@@ -11,9 +11,16 @@ import DraggableFab from './DraggableFab'
 import GhostShield from './GhostShield'
 import { Icon } from './icons'
 import { getWindowStatus, STATUS_DOT_COLOR, STATUS_DOT_TITLE } from './windowStatus'
-import { isCodexHistoryEnabled } from './featureFlags.js'
-import { pickBootstrapSession, sessionExists } from './sessionBootstrap.js'
+import { isCodexHistoryEnabled } from './featureFlags'
+import { pickBootstrapSession, sessionExists } from './sessionBootstrap'
 import { CODEX_SHELL_TYPE, DEFAULT_SHELL_TYPE, type ShellType } from './shellType'
+import { ProfileGuideOverlay } from './terminal/ProfileGuideOverlay'
+import { ScrollbackOverlay } from './terminal/ScrollbackOverlay'
+import { applyNexusCssVars, getInitialTheme, THEME_KEY, THEMES, type ThemeMode } from './terminal/theme'
+import { UploadConflictDialog } from './terminal/UploadConflictDialog'
+import { UploadNotifications, type UploadNotification } from './terminal/UploadNotifications'
+import { useProfileGuide } from './terminal/useProfileGuide'
+import { WelcomeGuideOverlay } from './terminal/WelcomeGuideOverlay'
 
 const SessionManager = lazy(() => import('./SessionManager'))
 const SessionManagerV2 = lazy(() => import('./SessionManagerV2'))
@@ -35,103 +42,16 @@ interface Props {
 }
 
 const FONT_SIZE_KEY = 'nexus_font_size'
-const THEME_KEY = 'nexus_theme'
 const WINDOW_KEY = 'nexus_window'
 const SESSION_SOURCE_KEY = 'nexus_session_source'
 const TAP_THRESHOLD = 8
 const MAX_UPLOAD_NOTIFICATIONS = 5
 const DESKTOP_SIDEBAR_WIDTH = 350
 
-export type ThemeMode = 'dark' | 'light'
-
-const DARK_THEME: ITheme = {
-  background: '#0f172a',
-  foreground: '#e2e8f0',
-  cursor: '#94a3b8',
-  cursorAccent: '#0f172a',
-  selectionBackground: '#3b82f660',
-  selectionForeground: '#f1f5f9',
-  black: '#1a1a2e',
-  brightBlack: '#4a5568',
-  red: '#fc8181',
-  brightRed: '#feb2b2',
-  green: '#68d391',
-  brightGreen: '#9ae6b4',
-  yellow: '#f6e05e',
-  brightYellow: '#faf089',
-  blue: '#63b3ed',
-  brightBlue: '#90cdf4',
-  magenta: '#b794f4',
-  brightMagenta: '#d6bcfa',
-  cyan: '#76e4f7',
-  brightCyan: '#b2f5ea',
-  white: '#e2e8f0',
-  brightWhite: '#f7fafc',
-}
-
-const LIGHT_THEME: ITheme = {
-  background: '#ffffff',
-  foreground: '#1e293b',
-  cursor: '#475569',
-  cursorAccent: '#f8fafc',
-  selectionBackground: '#bfdbfe',
-  selectionForeground: '#1e293b',
-  black: '#000000',
-  brightBlack: '#666666',
-  red: '#cd3131',
-  brightRed: '#f14c4c',
-  green: '#00bc00',
-  brightGreen: '#23d18b',
-  yellow: '#949800',
-  brightYellow: '#f5f543',
-  blue: '#0451a5',
-  brightBlue: '#3b8eea',
-  magenta: '#bc05bc',
-  brightMagenta: '#d670d6',
-  cyan: '#0598bc',
-  brightCyan: '#29b8db',
-  white: '#cccccc',
-  brightWhite: '#e5e5e5',
-}
-
-export const THEMES: Record<ThemeMode, ITheme> = {
-  dark: DARK_THEME,
-  light: LIGHT_THEME,
-}
-
-export function getInitialTheme(): ThemeMode {
-  const saved = localStorage.getItem(THEME_KEY)
-  if (saved === 'light' || saved === 'dark') return saved
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
 function getInitialTrustedSession() {
   const source = localStorage.getItem(SESSION_SOURCE_KEY) || ''
   if (source !== 'user') return ''
   return localStorage.getItem('nexus_session') || ''
-}
-
-// 主题色板 — 统一 Tailwind slate 色阶
-function applyNexusCssVars(mode: ThemeMode) {
-  const isDark = mode === 'dark'
-  const root = document.documentElement
-  root.classList.toggle('light', !isDark)
-  root.style.colorScheme = isDark ? 'dark' : 'light'
-  root.style.setProperty('--nexus-bg',         isDark ? '#0f172a' : '#ffffff')   // slate-900 / white
-  root.style.setProperty('--nexus-bg2',        isDark ? '#1e293b' : '#f1f5f9')   // slate-800 / slate-100
-  root.style.setProperty('--nexus-menu-bg',    isDark ? '#1e293b' : '#ffffff')    // 面板/弹层背景
-  root.style.setProperty('--nexus-border',     isDark ? '#334155' : '#e2e8f0')   // slate-700 / slate-200
-  root.style.setProperty('--nexus-text',       isDark ? '#f1f5f9' : '#0f172a')   // slate-100 / slate-900
-  root.style.setProperty('--nexus-text2',      isDark ? '#94a3b8' : '#64748b')   // slate-400 / slate-500
-  root.style.setProperty('--nexus-muted',      isDark ? '#475569' : '#94a3b8')   // slate-600 / slate-400
-  root.style.setProperty('--nexus-tab-active', isDark ? '#1e293b' : '#f1f5f9')   // 选中标签高亮
-  root.style.setProperty('--nexus-accent',     '#3b82f6')                         // blue-500
-  root.style.setProperty('--nexus-success',    '#22c55e')                         // green-500
-  root.style.setProperty('--nexus-warning',    '#f59e0b')                         // amber-500
-  root.style.setProperty('--nexus-error',      '#ef4444')                         // red-500
-  document
-    .querySelector('meta[name="theme-color"]')
-    ?.setAttribute('content', isDark ? '#0f172a' : '#ffffff')
 }
 applyNexusCssVars(getInitialTheme())
 
@@ -201,7 +121,7 @@ export default function Terminal({ token }: Props) {
   })
   const toolbarCollapsedRef = useRef<boolean | undefined>(undefined)
   useEffect(() => { toolbarCollapsedRef.current = toolbarCollapsed }, [toolbarCollapsed])
-  const [uploadNotifications, setUploadNotifications] = useState<Array<{ id: string; filename: string; path: string }>>([])
+  const [uploadNotifications, setUploadNotifications] = useState<UploadNotification[]>([])
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
   // F-18: 多 tmux session 支持
@@ -221,6 +141,7 @@ export default function Terminal({ token }: Props) {
     channelCount: number
   }
   const [projects, setProjects] = useState<ProjectInfo[] | null>(null)
+  const { dismissProfileGuide, markProfilesDetected, showProfileGuide } = useProfileGuide({ token })
 
   function clearSessionSelection() {
     localStorage.removeItem('nexus_session')
@@ -236,31 +157,6 @@ export default function Terminal({ token }: Props) {
     windowsLoadedRef.current = true
     setWindowsLoaded(true)
   }
-
-  // F-XX: Profile 检查与引导
-  const [hasProfiles, setHasProfiles] = useState<boolean | null>(null)
-  const [showProfileGuide, setShowProfileGuide] = useState(false)
-
-  // 检查是否有 profile
-  useEffect(() => {
-    if (hasProfiles !== null) return // 已经检查过了
-    Promise.all([
-      fetch('/api/configs', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
-      fetch('/api/codex-configs', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
-    ])
-      .then(([claudeConfigs, codexConfigs]) => {
-        const hasAny =
-          (Array.isArray(claudeConfigs) && claudeConfigs.length > 0) ||
-          (Array.isArray(codexConfigs) && codexConfigs.length > 0)
-        setHasProfiles(hasAny)
-        if (!hasAny) {
-          setShowProfileGuide(true)
-        }
-      })
-      .catch(() => {
-        setHasProfiles(true)
-      })
-  }, [token, hasProfiles])
 
   // 加载服务端默认 session
   useEffect(() => {
@@ -1541,6 +1437,13 @@ export default function Terminal({ token }: Props) {
 
   triggerScrollbackRef.current = fetchScrollback
 
+  const scrollbackTheme = termRef.current?.options.theme ?? {}
+  const scrollbackBackground = String((scrollbackTheme as Record<string, unknown>).background ?? '#1a1a2e')
+  const scrollbackForeground = String((scrollbackTheme as Record<string, unknown>).foreground ?? '#e2e8f0')
+  const scrollbackFontSize = termRef.current?.options.fontSize ?? 14
+  const scrollbackFontFamily = termRef.current?.options.fontFamily ?? 'Menlo, Monaco, monospace'
+  const scrollbackMuted = String((scrollbackTheme as Record<string, unknown>).brightBlack ?? '#4a5568')
+
   const toolbarProps = {
     token,
     sendToWs,
@@ -1560,77 +1463,12 @@ export default function Terminal({ token }: Props) {
 
   return (
     <div className="flex flex-col w-full relative" style={{ height: vvHeight ?? '100dvh' }}>
-      {/* Profile 引导界面 */}
-      {showProfileGuide && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-nexus-bg/95 backdrop-blur-sm p-4">
-          <div className="bg-nexus-bg-2 rounded-xl p-8 max-w-md w-full shadow-[0_8px_32px_rgba(0,0,0,0.4)] border border-nexus-border">
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-nexus-accent/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Icon name="settings" size={32} className="text-nexus-accent" />
-              </div>
-              <h2 className="text-nexus-text text-xl font-bold mb-2">需要创建会话 Profile</h2>
-              <p className="text-nexus-text-2 text-sm">
-                检测到还没有可用的会话 Profile。你可以先在设置里创建，或者按下面的示例手动写入一个 Claude 配置。
-              </p>
-            </div>
-
-            <div className="bg-nexus-bg rounded-lg p-4 mb-6 border border-nexus-border">
-              <p className="text-nexus-text text-sm font-medium mb-2">在服务器上执行以下命令：</p>
-              <code className="block bg-nexus-bg-2 rounded p-3 text-nexus-muted text-xs font-mono overflow-x-auto whitespace-pre">
-{`mkdir -p data/configs
-cat > data/configs/anthropic.json << 'EOF'
-{
-  "label": "Anthropic Claude",
-  "BASE_URL": "",
-  "AUTH_TOKEN": "",
-  "API_KEY": "",
-  "DEFAULT_MODEL": "claude-sonnet-4-6",
-  "THINK_MODEL": "claude-opus-4-6",
-  "LONG_CONTEXT_MODEL": "claude-opus-4-6",
-  "DEFAULT_HAIKU_MODEL": "claude-haiku-4-5-20251001",
-  "API_TIMEOUT_MS": "3000000"
-}
-EOF`}
-              </code>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={() => {
-                  Promise.all([
-                    fetch('/api/configs', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
-                    fetch('/api/codex-configs', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
-                  ])
-                    .then(([claudeConfigs, codexConfigs]) => {
-                      const hasAny =
-                        (Array.isArray(claudeConfigs) && claudeConfigs.length > 0) ||
-                        (Array.isArray(codexConfigs) && codexConfigs.length > 0)
-                      if (hasAny) {
-                        setHasProfiles(true)
-                        setShowProfileGuide(false)
-                      } else {
-                        alert('仍未检测到可用的会话 Profile，请先在设置中创建，或执行上方命令写入配置')
-                      }
-                    })
-                }}
-                className="w-full bg-nexus-accent border-none rounded-lg text-white text-base font-semibold py-3 cursor-pointer hover:bg-nexus-accent/90 transition-colors"
-              >
-                我已创建，重新检测
-              </button>
-              <button
-                onClick={() => setShowProfileGuide(false)}
-                className="w-full bg-transparent border border-nexus-border rounded-lg text-nexus-text-2 text-base py-3 cursor-pointer hover:bg-nexus-bg transition-colors"
-              >
-                稍后设置
-              </button>
-            </div>
-
-            <p className="text-nexus-muted text-xs text-center mt-4">
-              详细说明请参考 <a href="https://github.com/Jiang0977/nexus/blob/master/docs/QUICKSTART.md" target="_blank" rel="noopener noreferrer" className="text-nexus-accent hover:underline">QUICKSTART.md</a>
-            </p>
-          </div>
-        </div>
-      )}
+      <ProfileGuideOverlay
+        visible={showProfileGuide}
+        token={token}
+        onDetected={markProfilesDetected}
+        onDismiss={dismissProfileGuide}
+      />
 
       <input
         ref={inputRef}
@@ -2108,33 +1946,13 @@ EOF`}
         </Suspense>
       )}
 
-      {/* 首次使用引导 */}
-      {showGuide && (
-        <div className="fixed inset-0 z-[500] bg-black/70 flex items-center justify-center p-5">
-          <div className="bg-nexus-menu-bg rounded-xl p-6 max-w-[400px] border border-nexus-border">
-            <h3 className="text-nexus-text mt-0">欢迎使用 Nexus</h3>
-            <ul className="text-nexus-text-2 leading-relaxed text-sm pl-5 my-2">
-              <li>黑色区域是终端，点击聚焦后可键盘输入</li>
-              <li>底部工具栏提供 Esc/Tab/^C 等快捷键</li>
-                            <li className="flex items-center gap-1.5"><Icon name="paperclip" size={14} />上传图片或文件后，可在“上传文件”里复制路径使用</li>
-              <li>📁 新建工作区：在选定目录打开一个新的工作区</li>
-              <li>➕ 新建窗口：在当前工作区目录再开一个窗口</li>
-            </ul>
-            <p className="text-nexus-muted text-[11px] mt-2">
-              Telegram Bot: /api/telegram/setup 一键配置
-            </p>
-            <button
-              onClick={() => {
-                setShowGuide(false)
-                localStorage.setItem('nexus_guide_seen', 'true')
-              }}
-              className="w-full bg-nexus-accent border-none rounded-md text-white cursor-pointer text-sm font-semibold py-2.5 px-5 mt-3"
-            >
-              开始使用
-            </button>
-          </div>
-        </div>
-      )}
+      <WelcomeGuideOverlay
+        visible={showGuide}
+        onClose={() => {
+          setShowGuide(false)
+          localStorage.setItem('nexus_guide_seen', 'true')
+        }}
+      />
 
       {/* 空状态提示：只在数据加载完成后才显示 */}
       {windows.length === 0 && windowsLoaded && !isConnecting && (
@@ -2145,126 +1963,35 @@ EOF`}
         </div>
       )}
 
-      {/* 文件上传覆盖确认对话框 */}
-      {uploadConflict.show && (
-        <div className="fixed inset-0 z-[500] bg-black/70 flex items-center justify-center p-5">
-          <div className="bg-nexus-menu-bg rounded-xl p-6 max-w-[400px] border border-nexus-border">
-            <h3 className="text-nexus-text mt-0 mb-2">文件已存在</h3>
-            <p className="text-nexus-text-2 text-sm mb-4">
-              文件 "<span className="text-nexus-text font-mono">{uploadConflict.filename}</span>" 已存在。
-              <br />是否覆盖？
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={handleOverwriteCancel}
-                className="flex-1 bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text cursor-pointer text-sm font-semibold py-2.5"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleOverwriteConfirm}
-                className="flex-1 bg-nexus-accent border-none rounded-md text-white cursor-pointer text-sm font-semibold py-2.5"
-              >
-                覆盖
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {showScrollback && (() => {
-        const termTheme = termRef.current?.options.theme ?? {}
-        const termBg = (termTheme as any).background ?? '#1a1a2e'
-        const termFg = (termTheme as any).foreground ?? '#e2e8f0'
-        const termFontSize = termRef.current?.options.fontSize ?? 14
-        const termFontFamily = termRef.current?.options.fontFamily ?? 'Menlo, Monaco, monospace'
-        const termMuted = (termTheme as any).brightBlack ?? '#4a5568'
-        return (
-          <div className="fixed inset-0 z-[500] flex flex-col" style={{ background: termBg }}>
-            <GhostShield />
-            <div className="flex items-center justify-between px-3.5 py-2.5 border-b flex-shrink-0" style={{ borderColor: `${termMuted}44` }}>
-              <span className="font-semibold text-sm" style={{ color: termFg }}>{t('terminal.scrollbackTitle')}</span>
-              <span className="text-xs flex-1 text-center px-3" style={{ color: termMuted }}>{t('terminal.scrollbackHint')}</span>
-              <button
-                className="bg-transparent border-none cursor-pointer p-1 flex items-center justify-center"
-                style={{ color: termMuted }}
-                onClick={closeScrollback}
-              ><Icon name="x" size={20} /></button>
-            </div>
-            <div
-              ref={scrollbackOverlayRef}
-              onScroll={handleOverlayScroll}
-              className="flex-1 overflow-auto py-2 select-text"
-              style={{
-                WebkitOverflowScrolling: 'touch',
-                userSelect: 'text',
-                WebkitUserSelect: 'text',
-                cursor: 'text',
-              }}
-            >
-              {scrollbackLoading ? (
-                <div className="text-center p-8" style={{ color: termMuted, fontFamily: termFontFamily, fontSize: termFontSize }}>加载中...</div>
-              ) : (
-                <pre
-                  className="m-0 p-3 whitespace-pre leading-tight select-text"
-                  style={{
-                    fontFamily: termFontFamily,
-                    fontSize: termFontSize,
-                    color: termFg,
-                    userSelect: 'text',
-                    WebkitUserSelect: 'text',
-                    cursor: 'text',
-                  }}
-                >
-                  {scrollbackContent}
-                </pre>
-              )}
-            </div>
-          </div>
-        )
-      })()}
-
-      {/* 上传文件通知条 */}
-      {uploadNotifications.length > 0 && (
-        <div
-          className="fixed left-1/2 -translate-x-1/2 z-[200] flex flex-col gap-2 max-w-[90vw] w-[480px]"
-          style={{ bottom: isWidePC ? 16 : (toolbarHeightRef.current + 16) }}
-        >
-          {uploadNotifications.map((notification) => (
-            <div
-              key={notification.id}
-              className="flex items-center gap-2.5 p-2.5 px-3 rounded-lg shadow-[0_4px_20px_rgba(0,0,0,0.25)] animate-slide-up"
-              style={{
-                background: 'color-mix(in srgb, var(--nexus-bg2) 85%, transparent)',
-                backdropFilter: 'blur(12px)',
-                WebkitBackdropFilter: 'blur(12px)',
-                border: '1px solid color-mix(in srgb, var(--nexus-border) 50%, transparent)',
-              }}
-            >
-              <span
-                className="flex-1 text-nexus-text text-sm overflow-hidden text-ellipsis whitespace-nowrap"
-                title={notification.path}
-              >
-                {notification.filename}
-              </span>
-              <button
-                onClick={() => handleCopyNotification(notification.id, notification.path)}
-                className={`rounded-md cursor-pointer py-1.5 px-2.5 flex items-center gap-1 text-xs whitespace-nowrap transition-all duration-100 active:scale-95 ${copiedId === notification.id ? 'bg-nexus-success border-none text-white' : 'bg-nexus-bg-2 border border-nexus-border text-nexus-text-2 active:bg-nexus-bg active:text-nexus-text'}`}
-                title="复制路径"
-              >
-                <Icon name={copiedId === notification.id ? 'check' : 'copy'} size={14} />
-                <span>{copiedId === notification.id ? '已复制' : '复制'}</span>
-              </button>
-              <button
-                onClick={() => removeUploadNotification(notification.id)}
-                className="bg-transparent border-none text-nexus-text-2 cursor-pointer p-1 flex items-center justify-center transition-all duration-100 active:scale-90 active:text-nexus-text"
-                title="关闭"
-              >
-                <Icon name="x" size={16} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <UploadConflictDialog
+        visible={uploadConflict.show}
+        filename={uploadConflict.filename}
+        onCancel={handleOverwriteCancel}
+        onConfirm={handleOverwriteConfirm}
+      />
+      <ScrollbackOverlay
+        visible={showScrollback}
+        background={scrollbackBackground}
+        content={scrollbackContent}
+        fontFamily={scrollbackFontFamily}
+        fontSize={scrollbackFontSize}
+        foreground={scrollbackForeground}
+        hint={t('terminal.scrollbackHint')}
+        loading={scrollbackLoading}
+        loadingLabel="加载中..."
+        muted={scrollbackMuted}
+        onClose={closeScrollback}
+        onScroll={handleOverlayScroll}
+        overlayRef={scrollbackOverlayRef}
+        title={t('terminal.scrollbackTitle')}
+      />
+      <UploadNotifications
+        notifications={uploadNotifications}
+        copiedId={copiedId}
+        onCopy={handleCopyNotification}
+        onRemove={removeUploadNotification}
+        bottomOffset={isWidePC ? 16 : (toolbarHeightRef.current + 16)}
+      />
     </div>
   )
 }

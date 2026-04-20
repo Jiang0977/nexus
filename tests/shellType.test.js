@@ -10,7 +10,7 @@ import {
   usesClaudeProfile,
   usesCodexProfile,
   usesShellProfile,
-} from '../frontend/src/shellType.js'
+} from '../frontend/src/shellType.ts'
 
 test('defaults missing or unknown shell types to interactive zsh', () => {
   assert.equal(DEFAULT_SHELL_TYPE, ZSH_SHELL_TYPE)

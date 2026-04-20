@@ -1,6 +1,14 @@
-/**
- * @typedef {{ name: string }} ProjectLike
- */
+export interface BootstrapProjectLike {
+  name: string
+}
+
+export interface PickBootstrapSessionInput {
+  storedSession?: string | null
+  storedSessionSource?: string | null
+  activeSession?: string | null
+  defaultSession?: string | null
+  projects?: BootstrapProjectLike[]
+}
 
 /**
  * Pick the safest session to restore after login.
@@ -9,17 +17,8 @@
  * explicitly present in the discovered project list. If multiple projects
  * exist and the default session is missing, fail closed instead of
  * attaching the UI to an unrelated tmux session.
- *
- * @param {{
- *   storedSession?: string | null
- *   storedSessionSource?: string | null
- *   activeSession?: string | null
- *   defaultSession?: string | null
- *   projects?: ProjectLike[]
- * }} input
- * @returns {string}
  */
-export function pickBootstrapSession(input) {
+export function pickBootstrapSession(input: PickBootstrapSessionInput): string {
   const projects = Array.isArray(input?.projects)
     ? input.projects.filter((project) => typeof project?.name === 'string' && project.name.trim())
     : []
@@ -42,20 +41,11 @@ export function pickBootstrapSession(input) {
   return ''
 }
 
-/**
- * @param {string | null | undefined} session
- * @param {ProjectLike[]} projects
- * @returns {boolean}
- */
-export function sessionExists(session, projects) {
+export function sessionExists(session: string | null | undefined, projects: BootstrapProjectLike[]): boolean {
   const normalized = normalizeSession(session)
   return !!normalized && projects.some((project) => project.name === normalized)
 }
 
-/**
- * @param {string | null | undefined} session
- * @returns {string}
- */
-function normalizeSession(session) {
+function normalizeSession(session: string | null | undefined): string {
   return typeof session === 'string' ? session.trim() : ''
 }

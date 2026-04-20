@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildCodexSessionDetailFields } from '../frontend/src/codexSessionDetailFields.js'
+import { buildCodexSessionDetailFields } from '../frontend/src/codexSessionDetailFields.ts'
 
 test('buildCodexSessionDetailFields keeps only non-empty whitelisted detail fields in stable order', () => {
   assert.deepEqual(
