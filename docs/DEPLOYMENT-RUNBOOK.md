@@ -17,6 +17,7 @@
 - 默认运行链不依赖 Node/npm/PM2，但仓库重新携带了 `frontend/src/` 与 `frontend/package.json`。
 - `start.sh` 会在默认 release binary 缺失或其真实依赖更新时重建对应 Rust binary。
 - `start.sh` 会优先使用 `PATH` 里的 `cargo`；如果 systemd 环境没带上 `cargo`，会回退到 `$HOME/.cargo/bin/cargo`。
+- `start.sh` 和 `scripts/nexus-tmux-service.sh` 会在启动早期尝试修正 Codex CLI 路径：如果当前 `codex --version` 失败，但真实 CLI 存在于 `NEXUS_CODEX_EXECUTABLE`、Volta、npm 或 NVM 目录，会把对应 bin 目录前置到 `PATH`。
 - `start.sh` 会在 `frontend/dist/index.html` 缺失时直接失败。
 - 如果这次改动触及 `frontend/src/`，发布前还要先在 `frontend/` 下执行前端构建，确保新的 `frontend/dist/` 已产出。
 - 所以发布前仍建议显式重建 Rust release binary，并确认 `frontend/dist/` 仍存在。
@@ -123,6 +124,21 @@ curl --silent --show-error --max-time 5 http://127.0.0.1:59000 | head -n 5
 - 首页返回 `200 OK`
 - `nexus-tmux.service` 处于 `active (running)`，并且 `tmux -D` 归属在 `nexus-tmux.service`，不是 `nexus.service`
 
+如果本次改动涉及 Codex 启动链，再额外验证：
+
+```bash
+server_pid="$(systemctl show -p MainPID --value nexus)"
+tmux_pid="$(systemctl show -p MainPID --value nexus-tmux)"
+tr '\0' '\n' < "/proc/${server_pid}/environ" | rg '^PATH='
+tr '\0' '\n' < "/proc/${tmux_pid}/environ" | rg '^PATH='
+tmux show-environment -g PATH
+```
+
+通过标准：
+
+- `PATH` 含真实 Codex CLI 所在目录，例如 `~/.nvm/versions/node/<version>/bin`
+- 不再只有 `~/.local/bin/codex` 这类 wrapper 路径
+
 ## 回滚
 
 触发条件：
@@ -197,6 +213,29 @@ sudo systemctl start nexus
 ### 5. `systemctl --user` 不可用
 
 说明：当前机器没有用户级 systemd。可以临时 `bash start.sh` 前台运行，但这不等于正式部署。
+
+### 6. Nexus 内 `codex` 报 `real codex binary not found in PATH`
+
+原因：服务或 tmux 的 `PATH` 里只有 wrapper，没带上真实 Codex CLI 所在目录。
+
+处理：
+
+```bash
+codex --version
+server_pid="$(systemctl show -p MainPID --value nexus)"
+tmux_pid="$(systemctl show -p MainPID --value nexus-tmux)"
+tr '\0' '\n' < "/proc/${server_pid}/environ" | rg '^PATH='
+tr '\0' '\n' < "/proc/${tmux_pid}/environ" | rg '^PATH='
+sudo systemctl restart nexus-tmux
+sudo systemctl restart nexus
+```
+
+如果重启后仍失败，检查真实 CLI 是否存在于以下任一路径：
+
+- `NEXUS_CODEX_EXECUTABLE`
+- `~/.volta/bin/codex`
+- `~/.npm/bin/codex`
+- `~/.nvm/versions/node/*/bin/codex`
 
 ## 交付约束
 

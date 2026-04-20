@@ -17,6 +17,7 @@
 - 默认运行链仍然不依赖 Node/PM2。
 - 仓库现在重新携带 `frontend/src/` 和 `frontend/package.json`，前端可以在本仓库内重新构建。
 - 线上运行仍直接使用 `frontend/dist/`。
+- 如果 Codex CLI 通过 NVM / Volta / npm 安装，Nexus 启动链会在运行时补齐对应 PATH；但前提是机器上真实 `codex` 二进制本来就存在。
 
 ## 第一步：克隆仓库
 
@@ -153,6 +154,30 @@ npm run build
 ```
 
 构建会把新产物写回 `frontend/dist/`，Rust server 会继续直接伺服这个目录。
+
+### 6. Nexus 内 `codex` 提示 wrapper 找不到真实二进制
+
+先检查宿主机上真实 CLI 是否存在：
+
+```bash
+codex --version
+which -a codex
+find "$HOME/.nvm/versions/node" -maxdepth 3 \( -type f -o -type l \) -path '*/bin/codex' 2>/dev/null
+```
+
+如果机器上本来就装了 Codex，再重启服务：
+
+```bash
+sudo systemctl restart nexus-tmux
+sudo systemctl restart nexus
+```
+
+然后确认服务 PATH 已带上真实 CLI 目录：
+
+```bash
+server_pid="$(systemctl show -p MainPID --value nexus)"
+tr '\0' '\n' < "/proc/${server_pid}/environ" | rg '^PATH='
+```
 
 ## 下一步
 

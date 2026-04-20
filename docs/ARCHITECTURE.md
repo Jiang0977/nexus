@@ -1,6 +1,6 @@
 # Nexus Architecture
 
-最后更新：2026-04-19
+最后更新：2026-04-20
 
 目标：给维护者一个当前真实可运行的结构图，不保留已经删除的 Node/npm/PM2 叙事。
 
@@ -30,6 +30,7 @@ tmux session:window
 bash start.sh
   -> 检查 .env
   -> 检查 frontend/dist/index.html
+  -> 必要时补齐 Claude / Codex CLI 所在 PATH
   -> 必要时补构建缺失的 Rust release binaries
   -> 启动 rust-runtime/target/release/nexus-server
 ```
@@ -47,6 +48,7 @@ bash start.sh
 ### 关键约束
 
 - `start.sh` 不会重建前端静态资源
+- `start.sh` 与 `scripts/nexus-tmux-service.sh` 会在运行时补齐 agent CLI PATH，但不会安装缺失的 CLI
 - Rust 代码改动后要先显式 `cargo build --release`
 - 前端代码改动后要在 `frontend/` 下显式构建
 - `frontend/dist/` 缺失时服务直接失败
@@ -136,6 +138,7 @@ bash start.sh
 |---|---|
 | `start.sh` | 前台启动入口 |
 | `setup.sh` | 安装器入口 |
+| `scripts/nexus-paths.sh` | 运行时补齐 Claude / Codex CLI PATH |
 | `scripts/nexus-tmux-service.sh` | tmux 守护脚本 |
 | `deploy/systemd/nexus.service` | systemd 服务样例 |
 | `deploy/systemd/nexus-tmux.service` | tmux 服务样例 |
