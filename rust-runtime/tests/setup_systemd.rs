@@ -190,7 +190,7 @@ fn nexus_tmux_script_uses_foreground_server_and_non_starting_session_init() {
 
 #[cfg(unix)]
 #[test]
-fn nexus_tmux_script_prepends_real_codex_bin_before_spawning_tmux() {
+fn nexus_tmux_script_keeps_codex_wrapper_ahead_of_real_cli() {
     let temp = tempdir().unwrap();
     let root = temp.path();
     let home = root.join("home");
@@ -241,6 +241,10 @@ fn nexus_tmux_script_prepends_real_codex_bin_before_spawning_tmux() {
     assert!(output.status.success(), "ensure-session failed: {combined}");
 
     let log = fs::read_to_string(log_file).unwrap();
-    assert!(log.contains(&format!("PATH={}", nvm_bin.display())));
+    assert!(log.contains(&format!(
+        "PATH={}:{}:",
+        local_bin.display(),
+        nvm_bin.display()
+    )));
     assert!(log.contains("tmux -N new-session -Ad -s nexus -n shell exec zsh -i"));
 }

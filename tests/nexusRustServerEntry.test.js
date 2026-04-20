@@ -160,6 +160,30 @@ function createProjectFixture() {
   return projectRoot
 }
 
+function writeJsonl(filePath, lines) {
+  mkdirSync(dirname(filePath), { recursive: true })
+  writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf8')
+}
+
+function createCodexSessionFile(baseDir, { id, datePath, cwd, timestamp = '2026-04-14T12:00:00.000Z', metaFields = {} }) {
+  const dir = join(baseDir, 'sessions', ...datePath.split('/'))
+  mkdirSync(dir, { recursive: true })
+  const filePath = join(dir, `rollout-${datePath.replaceAll('/', '-')}-${id}.jsonl`)
+  writeJsonl(filePath, [
+    JSON.stringify({
+      timestamp,
+      type: 'session_meta',
+      payload: {
+        id,
+        timestamp,
+        cwd,
+        ...metaFields,
+      },
+    }),
+  ])
+  return filePath
+}
+
 function createDeleteTmuxFixture() {
   const baseDir = mkdtempSync(join(tmpdir(), 'nexus-rust-server-delete-tmux-'))
   const logFile = join(baseDir, 'tmux.log')
@@ -199,6 +223,57 @@ case "$cmd" in
       exit 0
     fi
     exit 1
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`,
+    { mode: 0o755 },
+  )
+
+  return { baseDir, logFile, homeDir, dataDir }
+}
+
+function createCodexResumeTmuxFixture() {
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-rust-server-codex-resume-tmux-'))
+  const logFile = join(baseDir, 'tmux.log')
+  const homeDir = join(baseDir, 'home')
+  const dataDir = join(baseDir, 'data')
+  mkdirSync(homeDir, { recursive: true })
+  mkdirSync(dataDir, { recursive: true })
+
+  writeFileSync(
+    join(baseDir, 'tmux'),
+    `#!/bin/sh
+set -eu
+log_file="${logFile}"
+cmd="$1"
+shift || true
+printf '%s|%s\n' "$cmd" "$*" >> "$log_file"
+case "$cmd" in
+  has-session)
+    if [ "$1" = "-t" ] && [ "$2" = "demo-project" ]; then
+      exit 0
+    fi
+    exit 1
+    ;;
+  show-environment)
+    if [ "$1" = "-t" ] && [ "$2" = "demo-project" ] && [ "$3" = "NEXUS_CWD" ]; then
+      printf 'NEXUS_CWD=/workspace/demo\n'
+      exit 0
+    fi
+    exit 1
+    ;;
+  new-window)
+    if [ "$1" = "-P" ]; then
+      printf '@9|7|history\n'
+      exit 0
+    fi
+    exit 1
+    ;;
+  set-option|select-window|set-environment)
+    exit 0
     ;;
   *)
     exit 1
@@ -2320,6 +2395,99 @@ test('rust nexus-server routes window launch through the real rust runtimes', as
   assert.match(log, /set-environment\|-t demo-project HTTPS_PROXY http:\/\/proxy\.local/)
   assert.match(log, /new-window\|-t demo-project -c \/workspace\/apps\/demo -n workspace-apps-demo export HTTPS_PROXY="http:\/\/proxy\.local"; unset HOST; bash ".*\/nexus-run-codex\.sh" "work" "\/workspace\/apps\/demo" ""/)
   assert.match(log, /new-window\|-t demo-project -c \/workspace\/docs -n workspace-docs export HTTPS_PROXY="http:\/\/proxy\.local"; unset HOST; exec zsh -i/)
+})
+
+test('rust nexus-server resumes codex history sessions through the real rust session runtime', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const tmuxFixture = createCodexResumeTmuxFixture()
+  const codexHome = join(tmuxFixture.homeDir, '.codex')
+  writeJsonl(join(codexHome, 'session_index.jsonl'), [
+    JSON.stringify({
+      id: 'session-1',
+      thread_name: 'Fix bug',
+      updated_at: '2026-04-14T12:00:00.000Z',
+    }),
+  ])
+  createCodexSessionFile(codexHome, {
+    id: 'session-1',
+    datePath: '2026/04/14',
+    cwd: '/workspace/demo',
+    metaFields: {
+      originator: 'codex_cli_rs',
+      cli_version: '0.117.0',
+      source: 'cli',
+      model_provider: 'openai',
+    },
+  })
+  writeFileSync(
+    join(tmuxFixture.dataDir, 'project-shell-defaults.json'),
+    `${JSON.stringify({
+      '/workspace/demo': {
+        shell_type: 'codex',
+        profile: 'daily',
+        updated_at: '2026-04-18T00:00:00.000Z',
+      },
+    }, null, 2)}\n`,
+    'utf8',
+  )
+
+  const port = await getFreePort()
+  const password = 'codex-resume-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+    WORKSPACE_ROOT: '/workspace',
+    HTTP_PROXY: '',
+    HTTPS_PROXY: '',
+    ALL_PROXY: '',
+    http_proxy: '',
+    https_proxy: '',
+    HOME: tmuxFixture.homeDir,
+    PATH: `${tmuxFixture.baseDir}:${process.env.PATH || ''}`,
+    NEXUS_DATA_DIR: tmuxFixture.dataDir,
+    NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: RUST_SESSION_RUNTIME_BINARY,
+    NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([]),
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+    rmSync(tmuxFixture.baseDir, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const { token } = await login(port, password)
+  const response = await fetch(`http://127.0.0.1:${port}/api/codex-sessions/session-1/resume?project=demo-project`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    project: 'demo-project',
+    channelIndex: 7,
+    channelName: 'codex-history',
+    sessionId: 'session-1',
+  })
+
+  const log = readFileSync(tmuxFixture.logFile, 'utf8')
+  assert.match(log, /has-session\|-t demo-project/)
+  assert.match(log, /show-environment\|-t demo-project NEXUS_CWD/)
+  assert.match(
+    log,
+    /new-window\|-P -F #\{window_id\}\|#\{window_index\}\|#\{window_name\} -t demo-project -c \/workspace\/demo -n codex-history unset HOST; bash ".*\/nexus-run-codex\.sh" "daily" "\/workspace\/demo" "session-1"/,
+  )
+  assert.match(log, /set-option\|-w -t @9 @nexus_codex_resume_session_id session-1/)
+  assert.match(log, /select-window\|-t demo-project:7/)
+  assert.match(log, /set-environment\|-t demo-project NEXUS_LAST_CHANNEL 7/)
 })
 
 test('rust nexus-server wires session delete routes through the real rust session runtime', async (t) => {
