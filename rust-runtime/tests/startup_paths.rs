@@ -377,7 +377,7 @@ fn vendored_frontend_bundle_references_existing_served_files() {
 
 #[cfg(unix)]
 #[test]
-fn start_script_prepends_real_codex_bin_when_only_wrapper_is_on_path() {
+fn start_script_keeps_codex_wrapper_ahead_of_real_cli() {
     let temp = tempdir().unwrap();
     let root = temp.path();
     let home = root.join("home");
@@ -450,13 +450,17 @@ fn start_script_prepends_real_codex_bin_when_only_wrapper_is_on_path() {
     assert!(output.status.success(), "start.sh failed:\n{combined}");
 
     let observed_path = fs::read_to_string(&server_log).unwrap();
-    assert!(observed_path.starts_with(&format!("{}:", nvm_bin.display())));
+    assert!(observed_path.starts_with(&format!("{}:", local_bin.display())));
+    assert!(observed_path.contains(&nvm_bin.display().to_string()));
 
     let which_output = fs::read_to_string(&which_log).unwrap();
     assert_eq!(
         which_output.lines().next().unwrap_or_default(),
-        nvm_bin.join("codex").display().to_string()
+        local_bin.join("codex").display().to_string()
     );
+    assert!(which_output
+        .lines()
+        .any(|line| line == nvm_bin.join("codex").display().to_string()));
 
     let version_output = fs::read_to_string(&version_log).unwrap();
     assert_eq!(version_output.trim(), "codex-cli test");

@@ -136,8 +136,8 @@ tmux show-environment -g PATH
 
 通过标准：
 
-- `PATH` 含真实 Codex CLI 所在目录，例如 `~/.nvm/versions/node/<version>/bin`
-- 不再只有 `~/.local/bin/codex` 这类 wrapper 路径
+- `PATH` 以 `~/.local/bin` 开头，保证 Nexus 终端里手动输入 `codex` 时先命中 wrapper
+- `PATH` 同时含真实 Codex CLI 所在目录，例如 `~/.nvm/versions/node/<version>/bin`
 
 ## 回滚
 

@@ -3019,6 +3019,62 @@ async fn api_codex_session_resume(
         return response;
     }
 
+    let project_name = project_from_sources(body, query.project);
+    let detail = match state
+        .runtime_manager
+        .session_management_request(
+            "getCodexSessionDetail",
+            json!({
+                "sessionId": id,
+                "projectName": project_name.clone(),
+            }),
+        )
+        .await
+    {
+        Ok(Value::Object(payload)) => payload,
+        Ok(_) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "codex session detail missing payload",
+            );
+        }
+        Err(error) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
+    };
+
+    let cwd = detail
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| state.workspace_root.as_ref().clone());
+    let default_payload = get_project_default_payload(
+        state.project_defaults_file.as_ref(),
+        state.workspace_root.as_ref(),
+        Some(&cwd),
+    );
+    let response_profile = if default_payload
+        .get("shell_type")
+        .and_then(Value::as_str)
+        == Some("codex")
+    {
+        default_payload
+            .get("profile")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    } else {
+        None
+    };
+    let shell_cmd = build_interactive_shell_command(
+        state.project_root.as_ref(),
+        state.proxy_vars.as_ref(),
+        DEFAULT_INTERACTIVE_SHELL,
+        "codex",
+        response_profile.as_deref(),
+        &cwd,
+        Some(&id),
+    );
+
     runtime_request_response(
         state
             .runtime_manager
@@ -3026,7 +3082,12 @@ async fn api_codex_session_resume(
                 "resumeCodexSession",
                 json!({
                     "sessionId": id,
-                    "projectName": project_from_sources(body, query.project),
+                    "sessionName": project_name.clone(),
+                    "projectName": project_name,
+                    "cwd": cwd,
+                    "windowName": "codex-history",
+                    "shellCmd": shell_cmd,
+                    "proxyVars": proxy_vars_json(&state),
                 }),
             )
             .await,

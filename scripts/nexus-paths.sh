@@ -10,6 +10,25 @@ prepend_path_dir() {
   esac
 }
 
+prefer_path_dir() {
+  local dir="$1"
+  local segment=""
+  local reordered=""
+  [[ -n "$dir" && -d "$dir" ]] || return 0
+
+  IFS=':' read -r -a __nexus_path_segments <<< "${PATH:-}"
+  for segment in "${__nexus_path_segments[@]}"; do
+    [[ -n "$segment" && "$segment" != "$dir" ]] || continue
+    if [[ -n "$reordered" ]]; then
+      reordered="${reordered}:$segment"
+    else
+      reordered="$segment"
+    fi
+  done
+
+  export PATH="$dir${reordered:+:$reordered}"
+}
+
 find_codex_bin_dir() {
   local home_dir="${HOME:-}"
   local candidate=""
@@ -43,12 +62,17 @@ find_codex_bin_dir() {
 }
 
 ensure_codex_cli_on_path() {
+  local local_bin_dir="${HOME:-}/.local/bin"
+
   if codex --version >/dev/null 2>&1; then
+    prefer_path_dir "$local_bin_dir"
     return 0
   fi
 
   local codex_bin_dir=""
   codex_bin_dir="$(find_codex_bin_dir || true)"
-  [[ -n "$codex_bin_dir" ]] || return 0
-  prepend_path_dir "$codex_bin_dir"
+  if [[ -n "$codex_bin_dir" ]]; then
+    prepend_path_dir "$codex_bin_dir"
+  fi
+  prefer_path_dir "$local_bin_dir"
 }
