@@ -105,6 +105,9 @@ fn start_script_fails_when_vendored_bundle_is_missing() {
 
     assert!(!output.status.success());
     assert!(combined.contains("缺少 vendored 前端资源 frontend/dist/index.html"));
+    assert!(combined.contains(
+        "运行时仍直接伺服 frontend/dist；如果你改了 frontend/src，请先在 frontend/ 下执行 npm install && npm run build。"
+    ));
 }
 
 #[test]

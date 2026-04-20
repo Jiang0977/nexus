@@ -8,9 +8,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const DEFAULT_HOST: &str = "0.0.0.0";
-pub const DEFAULT_PORT: u16 = 3000;
+pub const DEFAULT_PORT: u16 = 59000;
 pub const DEFAULT_RUNTIME_READY_TIMEOUT_MS: u64 = 5_000;
 pub const DEFAULT_TMUX_SESSION: &str = "~";
+pub const DEFAULT_GITHUB_REPO: &str = "Jiang0977/nexus";
 pub const TELEGRAM_API_BASE_URL: &str = "https://api.telegram.org";
 
 pub struct AppConfig {
@@ -66,7 +67,7 @@ impl AppConfig {
                 .map(|value| value != "0")
                 .unwrap_or(true),
             github_repo: env_or_dotenv("GITHUB_REPO", &dotenv)
-                .unwrap_or_else(|| "Jiang0977/nexus".to_string()),
+                .unwrap_or_else(|| DEFAULT_GITHUB_REPO.to_string()),
             workspace_root: env_or_dotenv("WORKSPACE_ROOT", &dotenv)
                 .unwrap_or_else(|| "/workspace".to_string()),
             telegram_bot_token: env_or_dotenv("TELEGRAM_BOT_TOKEN", &dotenv).unwrap_or_default(),
@@ -168,5 +169,16 @@ impl RuntimeServiceConfig {
             args,
             ready_timeout,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_GITHUB_REPO, DEFAULT_PORT};
+
+    #[test]
+    fn runtime_defaults_match_repository_defaults() {
+        assert_eq!(DEFAULT_PORT, 59000);
+        assert_eq!(DEFAULT_GITHUB_REPO, "Jiang0977/nexus");
     }
 }

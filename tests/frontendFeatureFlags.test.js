@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { isCodexHistoryEnabled } from '../frontend/src/featureFlags.js'
+import { isCodexHistoryEnabled } from '../frontend/src/featureFlags.ts'
 
 test('isCodexHistoryEnabled defaults to true only when the capability is absent', () => {
   assert.equal(isCodexHistoryEnabled({}), true)

@@ -59,8 +59,21 @@ bash start.sh
 
 | 文件 | 作用 |
 |---|---|
-| `rust-runtime/src/bin/nexus-server.rs` | HTTP / WS 路由、runtime 装配、静态资源伺服 |
+| `rust-runtime/src/bin/nexus-server.rs` | 薄入口，只负责调用 `nexus_rust_runtime::server::run()` |
 | `rust-runtime/src/lib.rs` | 共享模块出口 |
+
+### Rust server 内部模块
+
+| 路径 | 作用 |
+|---|---|
+| `rust-runtime/src/server/mod.rs` | server 装配、router 构建、跨模块共享 handler |
+| `rust-runtime/src/server/runtime.rs` | child runtime 可执行路径与进程编排 |
+| `rust-runtime/src/server/tasks.rs` | task runtime 相关 HTTP / SSE 行为 |
+| `rust-runtime/src/server/telegram.rs` | Telegram setup 与桥接入口 |
+| `rust-runtime/src/server/config.rs` | 配置读取、profile / feature config 入口 |
+| `rust-runtime/src/server/workspace.rs` | workspace / 文件系统相关 handler |
+| `rust-runtime/src/server/version.rs` | 版本与更新检查 |
+| `rust-runtime/src/server/session_ws.rs` | tmux session / window / websocket 入口 |
 
 ### 共享逻辑
 
@@ -148,14 +161,20 @@ bash start.sh
 当前权威验证路径：
 
 ```bash
-cargo test --manifest-path rust-runtime/Cargo.toml
+npm run check
 ```
 
 重点覆盖：
 
+- 根脚本、CI、frontend dist 漂移保护
 - `nexus-setup` 不再依赖 Node/PM2
 - `start.sh` 对 vendored frontend bundle 的行为
 - `frontend/dist/` 资源完整性 smoke
+
+默认值真相源：
+
+- `PORT=59000`
+- `GITHUB_REPO=Jiang0977/nexus`
 
 ## 不要再做的事
 

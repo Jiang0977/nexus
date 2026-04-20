@@ -3,53 +3,10 @@ import { useTranslation } from 'react-i18next'
 import GhostShield from './GhostShield'
 import CodexSessionsPanel from './CodexSessionsPanel'
 import { Icon } from './icons'
-
-const STORAGE_KEY = 'nexus_token'
-
-/** Parse API error response into a user-friendly message.
- *  For 401, clears the token and reloads (auto-logout). */
-async function parseApiError(r: Response, fallback?: string): Promise<string> {
-  if (r.status === 401) {
-    localStorage.removeItem(STORAGE_KEY)
-    window.location.reload()
-    return '' // unreachable after reload
-  }
-  try {
-    const data = await r.json()
-    if (data?.error) return data.error
-  } catch { /* response body not JSON */ }
-  const statusMessages: Record<number, string> = {
-    400: '请求参数有误',
-    403: '无访问权限',
-    404: '资源不存在',
-    409: '操作冲突，可能已存在',
-    500: '服务器内部错误',
-    502: '网关错误，服务可能未启动',
-    503: '服务暂时不可用',
-  }
-  return statusMessages[r.status] ?? fallback ?? `请求失败 (${r.status})`
-}
-
-/** Friendly message when fetch() itself throws (network unreachable). */
-function parseNetworkError(e: unknown): string {
-  if (e instanceof TypeError) return '无法连接服务器，请检查服务是否已启动'
-  if (e instanceof Error) return e.message
-  return '未知错误'
-}
-
-interface Channel {
-  index: number
-  name: string
-  active: boolean
-  cwd: string
-}
-
-interface Project {
-  name: string
-  path: string
-  active: boolean
-  channelCount: number
-}
+import { ErrorBanner } from './sessionManager/ErrorBanner'
+import type { Channel, Project, SessionManagerSidebarDetailView } from './sessionManager/types'
+import { useSessionManagerActions } from './sessionManager/useSessionManagerActions'
+import { useSessionManagerData } from './sessionManager/useSessionManagerData'
 
 interface Props {
   token: string
@@ -96,8 +53,7 @@ function getChannelStatus(channel: Channel, isActive: boolean): keyof typeof STA
 export interface SessionManagerV2Handle {
   refresh: () => void
 }
-
-export type SessionManagerSidebarDetailView = 'channels' | 'codex'
+export type { SessionManagerSidebarDetailView } from './sessionManager/types'
 
 export default forwardRef<SessionManagerV2Handle, Props>(function SessionManagerV2({
   token,
@@ -120,11 +76,18 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   const { t } = useTranslation()
   const isDesktop = useIsDesktop()
   const isSidebar = layout === 'sidebar'
-  const [projects, setProjects] = useState<Project[]>([])
-  const [channels, setChannels] = useState<Channel[]>([])
-  const [loadingProjects, setLoadingProjects] = useState(false)
-  const [loadingChannels, setLoadingChannels] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const {
+    channels,
+    error,
+    fetchChannels,
+    fetchProjects,
+    handleRefresh,
+    headers,
+    loadingChannels,
+    loadingProjects,
+    projects,
+    setError,
+  } = useSessionManagerData({ currentProject, t, token })
 
   // Mobile/modal gesture state
   const clickTimerRef = useRef<number | null>(null)
@@ -142,43 +105,8 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   const [sidebarProjectMenu, setSidebarProjectMenu] = useState<{ project: Project; x: number; y: number } | null>(null)
   const [expandedProjectName, setExpandedProjectName] = useState<string | null>(currentProject || null)
 
-  const headers = { Authorization: `Bearer ${token}` }
   const activeSidebarDetailView = isSidebar && currentProject && codexHistoryEnabled ? sidebarDetailView : 'channels'
   const usesProjectTreeLayout = isSidebar || !isDesktop
-
-  // --- Data fetching ---
-
-  const fetchProjects = useCallback(async () => {
-    setLoadingProjects(true)
-    try {
-      const r = await fetch('/api/projects', { headers })
-      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.loadFailed'))); return }
-      setProjects(await r.json())
-    } catch (e: unknown) {
-      setError(parseNetworkError(e))
-    } finally {
-      setLoadingProjects(false)
-    }
-  }, [token])
-
-  const fetchChannels = useCallback(async (projectName: string, opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoadingChannels(true)
-    try {
-      const r = await fetch(`/api/projects/${encodeURIComponent(projectName)}/channels`, { headers })
-      const data = await r.json()
-      setChannels((data as any).channels || [])
-    } catch (e: unknown) {
-      console.error('Load channels failed:', e)
-      setChannels([])
-    } finally {
-      if (!opts?.silent) setLoadingChannels(false)
-    }
-  }, [token])
-
-  useEffect(() => { fetchProjects() }, [fetchProjects])
-  useEffect(() => {
-    if (currentProject) fetchChannels(currentProject)
-  }, [currentProject, fetchChannels])
 
   useEffect(() => {
     if (!isSidebar) return
@@ -207,112 +135,41 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
     }
   }, [currentProject, isSidebar, sidebarDetailView])
 
-  const handleRefresh = useCallback(() => {
-    fetchProjects()
-    if (currentProject) fetchChannels(currentProject)
-  }, [fetchProjects, fetchChannels, currentProject])
-
   useImperativeHandle(ref, () => ({ refresh: handleRefresh }), [handleRefresh])
 
   // --- Actions ---
-
-  const handleProjectClick = async (project: Project) => {
-    if (project.name === currentProject) return true
-    try {
-      const r = await fetch(`/api/projects/${encodeURIComponent(project.name)}/activate`, { method: 'POST', headers })
-      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.switchFailed'))); return false }
-      const data = await r.json()
-      onSwitchProject(project.name, data.lastChannel)
-      return true
-    } catch (e: unknown) {
-      setError(parseNetworkError(e))
-      return false
-    }
-  }
-
-  const doSwitchChannel = async (channel: Channel, shouldClose: boolean) => {
-    try {
-      const r = await fetch(`/api/sessions/${channel.index}/attach?session=${encodeURIComponent(currentProject)}`, {
-        method: 'POST',
-        headers,
-      })
-      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.switchFailed'))); return }
-      onSwitchChannel(channel.index)
-      if (shouldClose) onClose()
-    } catch (e: unknown) {
-      setError(parseNetworkError(e))
-    }
-  }
-
-  const handleRenameChannel = async (channel: Channel) => {
+  const dismissChannelMenus = useCallback(() => {
     setChannelMenu(null)
     setLongPressMenu(null)
     setSidebarChannelMenu(null)
-    const newName = window.prompt(t('sessionMgr.renameChannelPrompt'), channel.name)
-    if (!newName || newName === channel.name) return
-    try {
-      const r = await fetch(`/api/sessions/${channel.index}/rename?session=${encodeURIComponent(currentProject)}`, {
-        method: 'POST',
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName }),
-      })
-      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.renameFailed'))); return }
-      fetchChannels(currentProject)
-    } catch (e: unknown) {
-      setError(parseNetworkError(e))
-    }
-  }
+  }, [])
 
-  const handleCloseChannel = async (channel: Channel) => {
-    setChannelMenu(null)
-    setLongPressMenu(null)
-    setSidebarChannelMenu(null)
-    try {
-      const r = await fetch(`/api/sessions/${channel.index}?session=${encodeURIComponent(currentProject)}`, {
-        method: 'DELETE',
-        headers,
-      })
-      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.closeFailed'))); return }
-      fetchChannels(currentProject)
-    } catch (e: unknown) {
-      setError(parseNetworkError(e))
-    }
-  }
-
-  const handleRenameProject = async (project: Project) => {
+  const dismissProjectMenus = useCallback(() => {
     setProjectMenu(null)
     setSidebarProjectMenu(null)
-    const newName = window.prompt(t('sessionMgr.renameProjectPrompt'), project.name)
-    if (!newName || newName === project.name) return
-    try {
-      const r = await fetch(`/api/projects/${encodeURIComponent(project.name)}/rename`, {
-        method: 'POST',
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName }),
-      })
-      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.renameFailed'))); return }
-      fetchProjects()
-      if (project.name === currentProject) onSwitchProject(newName)
-    } catch (e: unknown) {
-      setError(parseNetworkError(e))
-    }
-  }
+  }, [])
 
-  const handleCloseProject = async (project: Project) => {
-    setProjectMenu(null)
-    setSidebarProjectMenu(null)
-    try {
-      const r = await fetch(`/api/projects/${encodeURIComponent(project.name)}`, { method: 'DELETE', headers })
-      if (!r.ok) { setError(await parseApiError(r, t('sessionMgr.closeFailed'))); return }
-      fetchProjects()
-      if (project.name === currentProject) {
-        const remaining = projects.filter(p => p.name !== project.name)
-        if (remaining.length > 0) handleProjectClick(remaining[0])
-      }
-    } catch (e: unknown) {
-      setError(parseNetworkError(e))
-    }
-  }
+  const {
+    doSwitchChannel,
+    handleCloseChannel,
+    handleCloseProject,
+    handleProjectClick,
+    handleRenameChannel,
+    handleRenameProject,
+  } = useSessionManagerActions({
+    currentProject,
+    dismissChannelMenus,
+    dismissProjectMenus,
+    fetchChannels,
+    fetchProjects,
+    headers,
+    onClose,
+    onSwitchChannel,
+    onSwitchProject,
+    projects,
+    setError,
+    t,
+  })
 
   // --- Modal mode: position-based menus ---
 
@@ -532,14 +389,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
 
   const renderMobileTreeContent = () => (
     <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-      {error && (
-        <div className="bg-red-500/15 text-nexus-error px-4 py-2.5 text-sm flex items-center justify-between border-b border-nexus-border shrink-0">
-          {error}
-          <button className="bg-transparent border-none text-nexus-error cursor-pointer p-0.5" onPointerDown={() => setError(null)}>
-            <Icon name="x" size={14} />
-          </button>
-        </div>
-      )}
+      <ErrorBanner error={error} onDismiss={() => setError(null)} shrink />
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
         {loadingProjects ? (
@@ -656,14 +506,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   // ====== Shared content ======
   const content = (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-      {error && (
-        <div className="bg-red-500/15 text-nexus-error px-4 py-2.5 text-sm flex items-center justify-between border-b border-nexus-border">
-          {error}
-          <button className="bg-transparent border-none text-nexus-error cursor-pointer p-0.5" onPointerDown={() => setError(null)}>
-            <Icon name="x" size={14} />
-          </button>
-        </div>
-      )}
+      <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Project 列表 */}
@@ -833,14 +676,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   if (isSidebar) {
     return (
       <div className="flex h-full flex-col bg-nexus-bg text-nexus-text">
-        {error && (
-          <div className="bg-red-500/15 text-nexus-error px-4 py-2.5 text-sm flex items-center justify-between border-b border-nexus-border shrink-0">
-            {error}
-            <button className="bg-transparent border-none text-nexus-error cursor-pointer p-0.5" onPointerDown={() => setError(null)}>
-              <Icon name="x" size={14} />
-            </button>
-          </div>
-        )}
+        <ErrorBanner error={error} onDismiss={() => setError(null)} shrink />
 
         <div className="pl-3 pr-11 py-2 border-b border-nexus-border shrink-0">
           <div className="text-xs font-semibold text-nexus-text tracking-wide flex items-center justify-between gap-1.5">

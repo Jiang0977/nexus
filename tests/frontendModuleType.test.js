@@ -9,7 +9,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 test('importing frontend shellType does not emit module typeless warning', () => {
   const result = spawnSync(
     process.execPath,
-    ['--input-type=module', '-e', "await import('./frontend/src/shellType.js')"],
+    ['--input-type=module', '-e', "await import('./frontend/src/shellType.ts')"],
     { cwd: ROOT, encoding: 'utf8' },
   )
 

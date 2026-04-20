@@ -117,6 +117,13 @@ function runStartScript(fixture, envOverrides = {}) {
 test('package.json keeps only rust startup scripts in the default runtime path', () => {
   const packageJson = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
   assert.equal(packageJson.scripts.start, 'bash ./start.sh')
+  assert.equal(packageJson.scripts.test, 'npm run test:rust && npm run test:node')
+  assert.equal(packageJson.scripts['test:rust'], 'cargo test --manifest-path rust-runtime/Cargo.toml')
+  assert.equal(packageJson.scripts['test:node'], 'node --test tests/*.test.js')
+  assert.equal(packageJson.scripts['typecheck:frontend'], 'npm --prefix frontend run typecheck')
+  assert.equal(packageJson.scripts['build:frontend'], 'npm --prefix frontend run build')
+  assert.equal(packageJson.scripts['check:frontend-dist'], 'npm run build:frontend && node ./scripts/check-frontend-dist.mjs')
+  assert.equal(packageJson.scripts.check, 'npm run test:rust && npm run test:node && npm run check:frontend-dist')
   assert.equal(
     packageJson.scripts.setup,
     'cargo run --manifest-path rust-runtime/Cargo.toml --release --bin nexus-setup --',
@@ -128,6 +135,28 @@ test('package.json keeps only rust startup scripts in the default runtime path',
   assert.equal(packageJson.scripts['build:rust-codex-home'], 'cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-codex-home')
   assert.equal('build:server' in packageJson.scripts, false)
   assert.equal('typecheck:server' in packageJson.scripts, false)
+  assert.equal('dependencies' in packageJson, false)
+  assert.equal('playwright' in packageJson.devDependencies, false)
+  assert.deepEqual(Object.keys(packageJson.devDependencies).sort(), ['@types/node', 'bcrypt', 'typescript', 'ws'])
+})
+
+test('frontend package exposes explicit typecheck and build guardrails', () => {
+  const packageJson = JSON.parse(readFileSync(join(ROOT, 'frontend', 'package.json'), 'utf8'))
+  assert.equal(packageJson.scripts.typecheck, 'tsc')
+  assert.equal(packageJson.scripts.build, 'npm run typecheck && vite build')
+})
+
+test('repository exposes CI and frontend dist drift guardrails', () => {
+  const workflow = readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8')
+  const checkScript = readFileSync(join(ROOT, 'scripts', 'check-frontend-dist.mjs'), 'utf8')
+  const envExample = readFileSync(join(ROOT, '.env.example'), 'utf8')
+
+  assert.match(workflow, /npm ci/)
+  assert.match(workflow, /npm --prefix frontend ci/)
+  assert.match(workflow, /npm run check/)
+  assert.match(checkScript, /frontend\/dist is out of sync/)
+  assert.match(envExample, /^PORT=59000$/m)
+  assert.match(envExample, /^GITHUB_REPO=Jiang0977\/nexus$/m)
 })
 
 test('legacy node backend source files are removed from the repo root', () => {

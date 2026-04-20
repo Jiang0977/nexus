@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { pickBootstrapSession } from '../frontend/src/sessionBootstrap.js'
+import { pickBootstrapSession } from '../frontend/src/sessionBootstrap.ts'
 
 test('prefers a persisted user-selected session when it still exists', () => {
   const session = pickBootstrapSession({

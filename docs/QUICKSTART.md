@@ -17,6 +17,7 @@
 - 默认运行链仍然不依赖 Node/PM2。
 - 仓库现在重新携带 `frontend/src/` 和 `frontend/package.json`，前端可以在本仓库内重新构建。
 - 线上运行仍直接使用 `frontend/dist/`。
+- 仓库级验证入口统一为 `npm run check`。
 - 如果 Codex CLI 通过 NVM / Volta / npm 安装，Nexus 启动链会在运行时补齐对应 PATH；但前提是机器上真实 `codex` 二进制本来就存在。
 
 ## 第一步：克隆仓库
@@ -84,6 +85,7 @@ journalctl --user -u nexus -n 30 --no-pager
 | `ACC_PASSWORD_HASH` | 登录密码的 bcrypt hash，默认密码是 `nexus123` |
 | `WORKSPACE_ROOT` | Nexus 允许访问的目录根 |
 | `PORT` | 默认 `59000` |
+| `GITHUB_REPO` | 默认 `Jiang0977/nexus`，用于版本检查 |
 
 如果只是本机试跑，可以先保留默认密码；正式使用前再换。
 
@@ -148,12 +150,17 @@ cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server
 如果你改了 `frontend/src/*`：
 
 ```bash
-cd frontend
 npm install
-npm run build
+npm run build:frontend
 ```
 
 构建会把新产物写回 `frontend/dist/`，Rust server 会继续直接伺服这个目录。
+
+如果你想在本地一次性验证 Rust、Node 测试和 `frontend/dist` 漂移保护：
+
+```bash
+npm run check
+```
 
 ### 6. Nexus 内 `codex` 提示 wrapper 找不到真实二进制
 

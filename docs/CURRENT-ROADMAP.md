@@ -1,6 +1,6 @@
 # CURRENT ROADMAP — Nexus
 
-最后整理：2026-04-16
+最后整理：2026-04-20
 
 目的：给“当前到底还有哪些 TODO、下一步该做什么”一个短而硬的答案，避免继续被历史文档误导。
 
@@ -17,13 +17,13 @@
 4. [ARCHITECTURE.md](ARCHITECTURE.md)
 5. [README.md](../README.md) / [README_CN.md](../README_CN.md)
 
-以下文档只能当历史参考，不能直接当当前 backlog：
+以下文档不作为 backlog 权威来源，但内容已基本对齐当前实现，可作为补充阅读：
 
 - [ROADMAP.md](ROADMAP.md)
 - [story.md](story.md)
 - [code.md](code.md)
 
-原因：这些文档里有一部分内容已经落地但未迁出 backlog，或仍保留与锚点冲突的历史叙述。
+原因：它们的职责分别是优先级摘要、叙事介绍和源码导览，不应该反过来覆盖 `TODOS.md` 与设计文档。
 
 ## 当前 Open TODO
 
@@ -81,18 +81,16 @@
 
 ## 当前主开发方向
 
-按收益 / 风险比，下一阶段建议只做这四件事：
+按收益 / 风险比，下一阶段建议只做这三件事：
 
 1. 补 Codex 历史浏览器级回归证据
 2. 补 Codex 历史可访问性闭环
 3. 处理 `left-over process` 运维债
-4. 清理文档漂移，统一 backlog 口径
 
 原因：
 
 - 前两项是已上线能力的收口，最接近交付闭环。
 - 第三项是当前唯一明确仍开的后端 / 运维债。
-- 第四项不做，后续排期会持续被旧文档污染。
 
 ## 暂不建议当主线推进的事项
 
@@ -108,42 +106,30 @@
 - 前两项已经完成，继续写只会重复计账。
 - 后两项和 [NORTH-STAR.md](NORTH-STAR.md) 的单用户边界不一致，至少不是当前承诺。
 
-## 文档漂移清单
+## 文档同步状态
 
 ### `ROADMAP.md`
 
-- 仍把 `Codex history sessions tab` 放在 v2 backlog。
-- 仍把 `F-19 Project-Window hierarchy` 和 `F-20 Unified session manager` 放在 backlog。
+- 已同步为“只记录当前 open backlog”的摘要页。
+- 已移出 `F-19 Project-Window hierarchy`、`F-20 Unified session manager` 和 `Codex history sessions tab` 这类已落地项。
 
-但这些能力至少已部分落地，`README`、`PRD`、`ARCHITECTURE` 都已按“现状能力”在写。
+它现在可以当优先级摘要读，但具体 Done when 仍以 [TODOS.md](../TODOS.md) 为准。
 
 ### `story.md`
 
-- 仍写“团队协作，共享会话（即将推出）”
-- 仍写 MIT 许可证
-- 仍写默认访问端口 `3000`
-
-这些表述分别与：
-
-- 单用户锚点
-- 当前 GPL v3 + 商业授权
-- 当前正式端口 `59000`
-
-不一致。
+- 已对齐到单用户、自托管、GPL v3 + 商业授权和默认访问端口 `59000`。
+- 它仍是叙事文，不是产品承诺或 backlog 入口。
 
 ### `code.md`
 
-- 已经改写为当前 Rust runtime 入口和前端主路径的源码导览
-- 后续如果继续拆 `rust-runtime/src/lib.rs` 或 runtime 边界，要同步更新模块地图
+- 已同步为当前 Rust runtime、`server/` 模块和前端源码/产物双层结构的导览。
+- 后续如果继续拆 `rust-runtime/src/server/` 或前端主入口，还要继续同步模块地图。
 
-## 建议的文档清理顺序
+## 文档维护顺序
 
-1. 更新 [ROADMAP.md](ROADMAP.md)
-   - 移出已完成项
-   - 只保留真实还开的 backlog
-2. 更新 [story.md](story.md)
-   - 去掉团队协作 / MIT / `3000` 等错误信息
-3. 继续维护 [code.md](code.md) 的模块地图，避免再次和真实结构脱节
+1. 先改 [TODOS.md](../TODOS.md) 和最新设计文档
+2. 再同步 [ROADMAP.md](ROADMAP.md) 摘要
+3. 最后补 [story.md](story.md) / [code.md](code.md) 这种叙事或导览文档
 
 ## 部署约束
 

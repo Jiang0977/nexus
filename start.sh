@@ -21,7 +21,7 @@ fi
 # 检查前端静态资源
 if [ ! -f frontend/dist/index.html ]; then
     echo "错误: 缺少 vendored 前端资源 frontend/dist/index.html"
-    echo "该仓库已移除 Node 工具链；请恢复 frontend/dist/ 或重新获取完整仓库内容。"
+    echo "运行时仍直接伺服 frontend/dist；如果你改了 frontend/src，请先在 frontend/ 下执行 npm install && npm run build。"
     exit 1
 fi
 

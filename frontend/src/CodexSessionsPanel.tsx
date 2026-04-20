@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import GhostShield from './GhostShield'
-import { buildCodexSessionDetailFields } from './codexSessionDetailFields.js'
+import { buildCodexSessionDetailFields } from './codexSessionDetailFields'
 import { Icon } from './icons'
 
 interface CodexSessionItem {

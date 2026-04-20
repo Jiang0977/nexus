@@ -85,6 +85,9 @@ bash start.sh
 - 仓库现在重新携带可维护的前端源码，位于 `frontend/src/`。
 - 前端源码改动后，需要通过 `frontend/` 下的构建链重新产出 `frontend/dist/`。
 - `bash start.sh` 只负责 Rust 二进制，不会重建前端静态资源。
+- 仓库级验证入口统一为 `npm run check`。
+- GitHub Actions CI 会执行同一套 `npm run check` 约束。
+- 默认值已经统一到 `.env.example` 和 Rust 配置：`PORT=59000`、`GITHUB_REPO=Jiang0977/nexus`。
 
 > 完整配置指南（会话 Profile、systemd、移动端访问、故障排查）：**[QUICKSTART.md →](docs/QUICKSTART.md)**
 
@@ -109,6 +112,12 @@ bash start.sh
 通过 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) 或 [Tailscale](https://tailscale.com/) 安全暴露服务，无需端口转发。
 
 线上更新、重启、验证与回滚请直接按 **[DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md)** 执行。
+
+本地改动在提 PR 或上线前，先跑：
+
+```bash
+npm run check
+```
 
 ---
 
