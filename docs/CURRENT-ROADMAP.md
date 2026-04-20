@@ -1,6 +1,6 @@
 # CURRENT ROADMAP — Nexus
 
-最后整理：2026-04-20
+最后整理：2026-04-21
 
 目的：给“当前到底还有哪些 TODO、下一步该做什么”一个短而硬的答案，避免继续被历史文档误导。
 
@@ -27,48 +27,7 @@
 
 ## 当前 Open TODO
 
-### P1. Codex 历史浏览器级回归
-
-- What:
-  - 用浏览器 smoke 覆盖桌面入口、移动入口、 `warning / empty / error / resume` 主路径。
-- Why:
-  - 当前主要证据还是单测、build、部署探活，缺真实 UI 行为留痕。
-- Done when:
-  - 桌面端可进入当前工作区内的 Codex 历史视图
-  - 移动端 modal 入口可打开和返回
-  - `warning / empty / error` 三种状态各有浏览器级验证记录
-  - `resume` 主路径至少有一次真实 smoke
-- Source:
-  - [TODOS.md](../TODOS.md)
-  - [codex-history-sessions-tab.md](designs/codex-history-sessions-tab.md)
-
-### P1. Codex 历史可访问性收口
-
-- What:
-  - 给 `CodexSessionsPanel` 补齐键盘和读屏合同。
-- Why:
-  - 设计文档已定义 `Enter / Esc / focus / readable text`，但实现和验证还没完全闭环。
-- Done when:
-  - 关键交互有显式 keyboard path
-  - `warning / error / row action` 有可读文本语义
-  - 有最小自动化或浏览器验证证据
-- Source:
-  - [TODOS.md](../TODOS.md)
-  - [codex-history-sessions-tab.md](designs/codex-history-sessions-tab.md)
-
-### P2. `nexus` 启动 `left-over process` 运维债
-
-- What:
-  - 收口 `systemd` 重启时的 left-over process 告警，不破坏 tmux 持久化语义。
-- Why:
-  - 当前服务可用，但日志仍提示旧 cgroup 残留；这是运维债，不是功能阻塞。
-- Done when:
-  - 重启 `nexus` 后不再出现成串告警
-  - tmux 持久化会话语义不回归
-  - 相关 runbook 和任务文档同步更新
-- Source:
-  - [TODOS.md](../TODOS.md)
-  - [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)
+当前没有新的 open backlog。
 
 ## 已完成，不再算 Open Backlog
 
@@ -76,21 +35,16 @@
 - `TS runtime entry` 已完成。
 - Codex 历史 `kill switch` 已完成。
 - Codex 历史 `detail API` 与最小 detail 视图已完成。
+- Codex 历史浏览器级回归已完成。
+- Codex 历史可访问性收口已完成。
+- `nexus` 启动 `left-over process` 运维债已完成。
 - `DESIGN.md` 已完成。
-- Codex 历史功能本体已实现并部署，剩下的是验证债，不是功能缺口。
+- Codex 历史功能与验证债都已闭环；证据见 [codex-history-browser-smoke-2026-04-21.md](verification/codex-history-browser-smoke-2026-04-21.md)。
+- systemd residue 关闭证据见 [systemd-residue-smoke-2026-04-21.md](verification/systemd-residue-smoke-2026-04-21.md)。
 
 ## 当前主开发方向
 
-按收益 / 风险比，下一阶段建议只做这三件事：
-
-1. 补 Codex 历史浏览器级回归证据
-2. 补 Codex 历史可访问性闭环
-3. 处理 `left-over process` 运维债
-
-原因：
-
-- 前两项是已上线能力的收口，最接近交付闭环。
-- 第三项是当前唯一明确仍开的后端 / 运维债。
+按当前仓库状态，已没有明确仍开的交付 backlog。
 
 ## 暂不建议当主线推进的事项
 
@@ -98,12 +52,13 @@
 
 - 继续把 Node 后端优化当成大迁移主线
 - 把 Codex 历史当成“待实现功能”
+- 把 `left-over process` 继续当成当前阻塞主线
 - 团队协作 / 多用户 / 共享终端
 - 任务模板 / 插件系统 / 多种 webhook 扩张
 
 原因：
 
-- 前两项已经完成，继续写只会重复计账。
+- 前三项已经完成，继续写只会重复计账。
 - 后两项和 [NORTH-STAR.md](NORTH-STAR.md) 的单用户边界不一致，至少不是当前承诺。
 
 ## 文档同步状态

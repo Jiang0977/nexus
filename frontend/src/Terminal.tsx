@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState, lazy, Suspense } from 'react'
+import { useEffect, useRef, useCallback, useState, lazy, Suspense, startTransition } from 'react'
 import type { SessionManagerSidebarDetailView, SessionManagerV2Handle } from './SessionManagerV2'
 import { useTranslation } from 'react-i18next'
 import { Terminal as XTerm } from '@xterm/xterm'
@@ -22,14 +22,23 @@ import { UploadNotifications, type UploadNotification } from './terminal/UploadN
 import { useProfileGuide } from './terminal/useProfileGuide'
 import { WelcomeGuideOverlay } from './terminal/WelcomeGuideOverlay'
 
-const SessionManager = lazy(() => import('./SessionManager'))
-const SessionManagerV2 = lazy(() => import('./SessionManagerV2'))
-const WorkspaceSelector = lazy(() => import('./WorkspaceSelector'))
-const NewWindowDialog = lazy(() => import('./NewWindowDialog'))
-const FilePanel = lazy(() => import('./FilePanel'))
-const WorkspaceBrowser = lazy(() => import('./WorkspaceBrowser'))
-const GeneralSettings = lazy(() => import('./GeneralSettings'))
-const CodexSessionsPanel = lazy(() => import('./CodexSessionsPanel'))
+const loadSessionManager = () => import('./SessionManager')
+const loadSessionManagerV2 = () => import('./SessionManagerV2')
+const loadWorkspaceSelector = () => import('./WorkspaceSelector')
+const loadNewWindowDialog = () => import('./NewWindowDialog')
+const loadFilePanel = () => import('./FilePanel')
+const loadWorkspaceBrowser = () => import('./WorkspaceBrowser')
+const loadGeneralSettings = () => import('./GeneralSettings')
+const loadCodexSessionsPanel = () => import('./CodexSessionsPanel')
+
+const SessionManager = lazy(loadSessionManager)
+const SessionManagerV2 = lazy(loadSessionManagerV2)
+const WorkspaceSelector = lazy(loadWorkspaceSelector)
+const NewWindowDialog = lazy(loadNewWindowDialog)
+const FilePanel = lazy(loadFilePanel)
+const WorkspaceBrowser = lazy(loadWorkspaceBrowser)
+const GeneralSettings = lazy(loadGeneralSettings)
+const CodexSessionsPanel = lazy(loadCodexSessionsPanel)
 
 interface TmuxWindow {
   index: number
@@ -71,6 +80,7 @@ export default function Terminal({ token }: Props) {
   const [showGeneralSettings, setShowGeneralSettings] = useState(false)
   const [showSessionManagerV2, setShowSessionManagerV2] = useState(false)
   const [showCodexSessions, setShowCodexSessions] = useState(false)
+  const codexHistoryTriggerRef = useRef<HTMLElement | null>(null)
   const [codexHistoryEnabled, setCodexHistoryEnabled] = useState(true)
   const [showNewSession, setShowNewSession] = useState(false)
   const [showNewWindow, setShowNewWindow] = useState(false)
@@ -632,14 +642,23 @@ export default function Terminal({ token }: Props) {
     sessionManagerRef.current?.refresh()
   }
 
-  function openCodexHistory() {
+  function openCodexHistory(trigger?: HTMLElement | null) {
     if (!codexHistoryEnabled) return
+    codexHistoryTriggerRef.current = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
     if (isWidePC) {
-      setSidebarCollapsed(false)
-      setSidebarDetailView('codex')
+      loadSessionManagerV2()
+      localStorage.setItem('nexus_sidebar_collapsed', 'false')
+      startTransition(() => {
+        setSidebarCollapsed(false)
+        setSidebarDetailView('codex')
+      })
       return
     }
-    setShowCodexSessions(true)
+
+    loadCodexSessionsPanel()
+    startTransition(() => {
+      setShowCodexSessions(true)
+    })
   }
 
   function startNewCodexWindow() {
@@ -1606,9 +1625,10 @@ export default function Terminal({ token }: Props) {
 
                     {codexHistoryEnabled && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); setSidebarCollapsed(false); setSidebarDetailView('codex'); localStorage.setItem('nexus_sidebar_collapsed', 'false'); }}
+                        onClick={(e) => { e.stopPropagation(); openCodexHistory(e.currentTarget) }}
                         className="w-12 h-10 bg-transparent border-none text-nexus-text-2 flex items-center justify-center cursor-pointer"
                         title={t('codexSessions.title')}
+                        aria-label={t('codexSessions.title')}
                       >
                         <Icon name="history" size={18} />
                       </button>
@@ -1879,6 +1899,7 @@ export default function Terminal({ token }: Props) {
             token={token}
             projectName={activeTmuxSession}
             layout="modal"
+            focusReturnTarget={codexHistoryTriggerRef.current}
             onClose={() => setShowCodexSessions(false)}
             onResumeSuccess={(index) => {
               attachToWindow(index)

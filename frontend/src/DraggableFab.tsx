@@ -10,7 +10,7 @@ interface Pos {
 
 interface Props {
   storageKey: string
-  onClick: () => void
+  onClick: (trigger?: HTMLElement | null) => void
   children: ReactNode
   badge?: ReactNode
   title?: string
@@ -173,7 +173,7 @@ export default function DraggableFab({
     e.preventDefault()
     isDragging.current = false
     if (!moved.current) {
-      onClick()
+      onClick(e.currentTarget)
       return
     }
     finishDrag(e.clientX, e.clientY)
@@ -187,7 +187,7 @@ export default function DraggableFab({
   const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'Enter' && e.key !== ' ') return
     e.preventDefault()
-    onClick()
+    onClick(e.currentTarget)
   }, [onClick])
 
   return (

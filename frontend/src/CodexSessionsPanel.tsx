@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import GhostShield from './GhostShield'
 import { buildCodexSessionDetailFields } from './codexSessionDetailFields'
@@ -45,6 +45,7 @@ interface Props {
   projectName: string
   layout?: 'sidebar' | 'modal'
   variant?: 'default' | 'compact'
+  focusReturnTarget?: HTMLElement | null
   onClose?: () => void
   onResumeSuccess?: (channelIndex: number) => void
   onDeleteSuccess?: (closedWindowIndexes: number[]) => void | Promise<void>
@@ -119,6 +120,7 @@ export default function CodexSessionsPanel({
   projectName,
   layout = 'sidebar',
   variant = 'default',
+  focusReturnTarget,
   onClose,
   onResumeSuccess,
   onDeleteSuccess,
@@ -126,6 +128,13 @@ export default function CodexSessionsPanel({
 }: Props) {
   const { t } = useTranslation()
   const isCompact = variant === 'compact'
+  const panelTitleId = useId()
+  const panelScopeId = useId()
+  const panelHintId = useId()
+  const panelDescriptionId = useId()
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const lastFocusedElementRef = useRef<HTMLElement | null>(null)
   const [items, setItems] = useState<CodexSessionItem[]>([])
   const [scope, setScope] = useState<CodexSessionsResponse['scope'] | null>(null)
   const [warning, setWarning] = useState<CodexSessionsResponse['warning'] | null>(null)
@@ -207,6 +216,35 @@ export default function CodexSessionsPanel({
     setLoadingDetailId(null)
     loadSessions()
   }, [loadSessions])
+
+  useEffect(() => {
+    if (layout !== 'modal') return
+    lastFocusedElementRef.current = focusReturnTarget
+      ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+
+    const focusTarget = window.setTimeout(() => {
+      if (closeButtonRef.current) {
+        closeButtonRef.current.focus()
+        return
+      }
+      dialogRef.current?.focus()
+    }, 0)
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onClose?.()
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.clearTimeout(focusTarget)
+      document.removeEventListener('keydown', handleKeyDown)
+      if (lastFocusedElementRef.current?.isConnected) {
+        lastFocusedElementRef.current.focus({ preventScroll: true })
+      }
+    }
+  }, [focusReturnTarget, layout, onClose])
 
   const handleResume = useCallback(async (sessionId: string) => {
     setActionError(null)
@@ -302,13 +340,21 @@ export default function CodexSessionsPanel({
   }, [detailCache, expandedDetails, headers, loadingDetailId, projectName, t])
 
   const panelBody = (
-    <div className={`flex flex-col min-h-0 ${layout === 'sidebar' ? 'h-full bg-nexus-bg' : ''}`}>
+    <div
+      ref={layout === 'modal' ? dialogRef : undefined}
+      className={`flex flex-col min-h-0 ${layout === 'sidebar' ? 'h-full bg-nexus-bg' : ''}`}
+      role={layout === 'modal' ? 'dialog' : undefined}
+      aria-modal={layout === 'modal' ? 'true' : undefined}
+      aria-labelledby={layout === 'modal' ? panelTitleId : undefined}
+      aria-describedby={layout === 'modal' ? panelDescriptionId : undefined}
+      tabIndex={layout === 'modal' ? -1 : undefined}
+    >
       <div className={`flex items-center justify-between gap-3 ${layout === 'sidebar' ? 'px-4 py-3 border-b border-nexus-border' : 'px-4 py-3.5 border-b border-nexus-border flex-shrink-0'}`}>
         <div className="min-w-0">
-          <div className="text-nexus-text text-sm font-semibold truncate">
+          <div id={panelTitleId} className="text-nexus-text text-sm font-semibold truncate">
             {t('codexSessions.title')} {scope?.project ? `· ${scope.project}` : projectName ? `· ${projectName}` : ''}
           </div>
-          <div className="text-[11px] text-nexus-text-2 mt-1 truncate">
+          <div id={panelScopeId} className="text-[11px] text-nexus-text-2 mt-1 truncate">
             {scope ? (
               scope.repoRoot
                 ? t('codexSessions.scopeRepo', { path: scope.repoRoot })
@@ -321,6 +367,8 @@ export default function CodexSessionsPanel({
             className="bg-transparent border border-nexus-border rounded-md text-nexus-text-2 text-sm px-2.5 py-1.5 cursor-pointer hover:bg-nexus-bg-2 transition-colors"
             onClick={() => loadSessions()}
             disabled={loading}
+            type="button"
+            aria-label={t('common.refresh')}
           >
             <span className="flex items-center gap-1.5">
               <Icon name="refresh" size={14} />
@@ -329,8 +377,10 @@ export default function CodexSessionsPanel({
           </button>
           {layout === 'modal' && (
             <button
+              ref={closeButtonRef}
               className="bg-transparent border border-nexus-border rounded-md text-nexus-text text-sm px-2.5 py-1.5 cursor-pointer hover:bg-nexus-bg-2 transition-colors"
               onClick={onClose}
+              type="button"
             >
               <span className="flex items-center gap-1.5">
                 <Icon name="arrowLeft" size={14} />
@@ -347,6 +397,7 @@ export default function CodexSessionsPanel({
           <button
             className="bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text text-sm px-3 py-2 cursor-pointer hover:bg-nexus-tab-active transition-colors"
             onClick={onStartNewCodex}
+            type="button"
           >
             {t('codexSessions.startNew')}
           </button>
@@ -355,19 +406,29 @@ export default function CodexSessionsPanel({
               className="bg-transparent border border-nexus-border rounded-md text-nexus-text-2 text-sm px-3 py-2 cursor-pointer hover:bg-nexus-bg-2 transition-colors"
               onClick={() => loadSessions({ cursor: nextCursor, append: true })}
               disabled={loadingMore}
+              type="button"
             >
               {loadingMore ? t('common.loading') : t('codexSessions.loadMore')}
             </button>
           )}
         </div>
-        <div className="text-[12px] text-nexus-text-2 mt-2">
+        <div id={panelHintId} className="text-[12px] text-nexus-text-2 mt-2">
           {t('codexSessions.resumeHint')}
         </div>
+        {layout === 'modal' && (
+          <div id={panelDescriptionId} className="sr-only">
+            {`${t('codexSessions.title')} ${projectName || ''}. ${t('codexSessions.resumeHint')}`}
+          </div>
+        )}
       </div>
 
       {warning && (
         <div className={`${layout === 'sidebar' ? 'px-4 pb-2' : 'px-4 pb-2 flex-shrink-0'}`}>
-          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5">
+          <div
+            className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5"
+            role="status"
+            aria-live="polite"
+          >
             <div className="flex items-start gap-2">
               <div className="text-amber-400 mt-0.5">
                 <Icon name="alert" size={16} />
@@ -383,13 +444,20 @@ export default function CodexSessionsPanel({
 
       {actionError && (
         <div className={`${layout === 'sidebar' ? 'px-4 pb-2' : 'px-4 pb-2 flex-shrink-0'}`}>
-          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-red-200 text-sm">
+          <div
+            className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-red-200 text-sm"
+            role="alert"
+            aria-live="assertive"
+          >
             {actionError}
           </div>
         </div>
       )}
 
-      <div className={`flex-1 min-h-0 ${layout === 'sidebar' ? 'overflow-y-auto px-4 pb-4' : 'overflow-y-auto px-4 pb-4'}`}>
+      <div
+        className={`flex-1 min-h-0 ${layout === 'sidebar' ? 'overflow-y-auto px-4 pb-4' : 'overflow-y-auto px-4 pb-4'}`}
+        aria-busy={loading ? 'true' : 'false'}
+      >
         {loading ? (
           <div className="flex flex-col gap-2">
             {Array.from({ length: 4 }).map((_, index) => (
@@ -403,13 +471,14 @@ export default function CodexSessionsPanel({
             ))}
           </div>
         ) : error && items.length === 0 ? (
-          <div className="rounded-xl border border-nexus-border bg-nexus-bg-2/60 px-4 py-5">
+          <div className="rounded-xl border border-nexus-border bg-nexus-bg-2/60 px-4 py-5" role="alert" aria-live="assertive">
             <div className="text-nexus-text text-base font-semibold">{t('codexSessions.errorTitle')}</div>
             <div className="text-nexus-text-2 text-sm mt-2 leading-6">{error}</div>
             <div className="flex flex-wrap gap-2 mt-4">
               <button
                 className="bg-nexus-accent border-none rounded-md text-white text-sm font-semibold px-3 py-2 cursor-pointer"
                 onClick={() => loadSessions()}
+                type="button"
               >
                 {t('codexSessions.retry')}
               </button>
@@ -417,6 +486,7 @@ export default function CodexSessionsPanel({
                 <button
                   className="bg-transparent border border-nexus-border rounded-md text-nexus-text text-sm px-3 py-2 cursor-pointer"
                   onClick={onClose}
+                  type="button"
                 >
                   {t('codexSessions.backToSession')}
                 </button>
@@ -424,28 +494,30 @@ export default function CodexSessionsPanel({
             </div>
           </div>
         ) : items.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-nexus-border bg-nexus-bg-2/40 px-4 py-6">
+          <div className="rounded-xl border border-dashed border-nexus-border bg-nexus-bg-2/40 px-4 py-6" role="status" aria-live="polite">
             <div className="text-nexus-text text-base font-semibold">{t('codexSessions.emptyTitle')}</div>
             <div className="text-nexus-text-2 text-sm mt-2 leading-6">{t('codexSessions.emptyDescription')}</div>
             <div className="flex flex-wrap gap-2 mt-4">
               <button
                 className="bg-nexus-accent border-none rounded-md text-white text-sm font-semibold px-3 py-2 cursor-pointer"
                 onClick={onStartNewCodex}
+                type="button"
               >
                 {t('codexSessions.startNew')}
               </button>
               <button
                 className="bg-transparent border border-nexus-border rounded-md text-nexus-text text-sm px-3 py-2 cursor-pointer"
                 onClick={() => loadSessions()}
+                type="button"
               >
                 {t('common.refresh')}
               </button>
             </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2" role="list" aria-describedby={`${panelScopeId} ${panelHintId}`}>
             {items.map(item => (
-              <div key={item.id} className="rounded-xl border border-nexus-border bg-nexus-bg-2/60 px-3 py-3">
+              <div key={item.id} className="rounded-xl border border-nexus-border bg-nexus-bg-2/60 px-3 py-3" role="listitem">
                 <div className="flex flex-col">
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-nexus-text leading-6 break-words">
@@ -467,6 +539,9 @@ export default function CodexSessionsPanel({
                         onClick={() => handleToggleDetail(item.id)}
                         disabled={loadingDetailId === item.id}
                         type="button"
+                        aria-expanded={expandedDetails[item.id] === true}
+                        aria-controls={`${panelTitleId}-${item.id}-detail`}
+                        aria-label={`${expandedDetails[item.id] ? t('codexSessions.hideDetails') : t('codexSessions.details')}: ${item.title || basename(item.cwd)}`}
                       >
                         {loadingDetailId === item.id
                           ? t('codexSessions.loadingDetails')
@@ -477,7 +552,10 @@ export default function CodexSessionsPanel({
                     </div>
                   </div>
                   {expandedDetails[item.id] && (
-                    <div className="mt-3 rounded-lg border border-nexus-border bg-nexus-bg px-3 py-3">
+                    <div
+                      id={`${panelTitleId}-${item.id}-detail`}
+                      className="mt-3 rounded-lg border border-nexus-border bg-nexus-bg px-3 py-3"
+                    >
                       <div className="text-xs font-semibold uppercase tracking-wide text-nexus-text-2">
                         {t('codexSessions.detailTitle')}
                       </div>
@@ -509,6 +587,8 @@ export default function CodexSessionsPanel({
                         className="flex-1 min-h-[44px] bg-transparent border border-nexus-border rounded-lg text-nexus-text-2 text-sm font-medium px-3 py-2 cursor-pointer hover:bg-nexus-tab-active transition-colors disabled:opacity-60 disabled:cursor-default"
                         onClick={() => handleDelete(item.id, item.title)}
                         disabled={resumingId === item.id || deletingId === item.id}
+                        type="button"
+                        aria-label={`${t('common.delete')}: ${item.title || basename(item.cwd)}`}
                       >
                         <span className="flex items-center justify-center gap-1.5">
                           <Icon name="trash" size={14} />
@@ -519,6 +599,8 @@ export default function CodexSessionsPanel({
                         className="flex-1 min-h-[44px] bg-transparent border border-nexus-border rounded-lg text-nexus-text text-sm font-medium px-3 py-2 cursor-pointer hover:bg-nexus-tab-active transition-colors disabled:opacity-60 disabled:cursor-default"
                         onClick={() => handleResume(item.id)}
                         disabled={resumingId === item.id || deletingId === item.id}
+                        type="button"
+                        aria-label={`${t('codexSessions.resume')}: ${item.title || basename(item.cwd)}`}
                       >
                         {resumingId === item.id ? t('codexSessions.opening') : t('codexSessions.resume')}
                       </button>
@@ -568,13 +650,13 @@ export default function CodexSessionsPanel({
       </div>
 
       {actionError && (
-        <div className="mb-2 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-200">
+        <div className="mb-2 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-200" role="alert" aria-live="assertive">
           {actionError}
         </div>
       )}
 
       {warning && (
-        <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100/90">
+        <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-100/90" role="status" aria-live="polite">
           <span className="text-amber-300">
             <Icon name="alert" size={12} />
           </span>
@@ -594,7 +676,7 @@ export default function CodexSessionsPanel({
           ))}
         </div>
       ) : error && items.length === 0 ? (
-        <div className="rounded-lg bg-red-500/10 px-3 py-3">
+        <div className="rounded-lg bg-red-500/10 px-3 py-3" role="alert" aria-live="assertive">
           <div className="text-sm font-medium text-red-100">{t('codexSessions.errorTitle')}</div>
           <div className="mt-1 text-xs leading-5 text-red-100/85">{error}</div>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -608,16 +690,17 @@ export default function CodexSessionsPanel({
           </div>
         </div>
       ) : items.length === 0 ? (
-        <div className="rounded-lg px-3 py-4">
+        <div className="rounded-lg px-3 py-4" role="status" aria-live="polite">
           <div className="text-sm font-medium text-nexus-text">{t('codexSessions.emptyTitle')}</div>
           <div className="mt-1 text-xs leading-5 text-nexus-text-2">{t('codexSessions.emptyDescription')}</div>
         </div>
       ) : (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5" role="list">
           {items.map(item => (
             <div
               key={item.id}
               className="flex items-center gap-2 rounded-lg px-2.5 py-2 transition-colors hover:bg-nexus-bg-2/60"
+              role="listitem"
             >
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium text-nexus-text" title={item.title || basename(item.cwd)}>
@@ -633,7 +716,7 @@ export default function CodexSessionsPanel({
                 disabled={resumingId === item.id || deletingId === item.id}
                 type="button"
                 title={t('common.delete')}
-                aria-label={t('common.delete')}
+                aria-label={`${t('common.delete')}: ${item.title || basename(item.cwd)}`}
               >
                 {deletingId === item.id ? (
                   <span className="text-[11px] leading-none">...</span>
@@ -646,6 +729,7 @@ export default function CodexSessionsPanel({
                 onClick={() => handleResume(item.id)}
                 disabled={resumingId === item.id || deletingId === item.id}
                 type="button"
+                aria-label={`${t('codexSessions.resume')}: ${item.title || basename(item.cwd)}`}
               >
                 {resumingId === item.id ? t('codexSessions.opening') : t('codexSessions.resume')}
               </button>
@@ -668,7 +752,7 @@ export default function CodexSessionsPanel({
   return (
     <>
       <GhostShield />
-      <div className="fixed inset-0 z-[410] bg-black/55" onPointerDown={onClose} />
+      <div className="fixed inset-0 z-[410] bg-black/55" onPointerDown={onClose} aria-hidden="true" />
       <div className="fixed inset-x-0 bottom-0 z-[411] bg-nexus-menu-bg rounded-t-2xl border border-nexus-border border-b-0 max-h-[76vh] flex flex-col shadow-[0_-10px_32px_rgba(0,0,0,0.38)]">
         {panelBody}
       </div>
