@@ -12,6 +12,8 @@ export interface ToolbarConfig {
   expanded: string[]
 }
 
+export type ToolbarTranslate = (key: string) => string
+
 // Unified label conventions:
 // - ^X for Ctrl+X
 // - M-x for Alt+x
@@ -64,6 +66,29 @@ export const ALL_KEYS: KeyDef[] = [
   { id: 'copy-term',  label: 'Cp',    seq: '',         desc: 'toolbarKeys.copyTerminal', action: 'copyTerminal', category: 'ui' },
   { id: 'fit',        label: 'Fit',   seq: '',         desc: 'toolbarKeys.fitTerminal', action: 'fit', category: 'ui' },
 ]
+
+const STANDARD_KEYCAP_IDS = new Set([
+  'up',
+  'down',
+  'left',
+  'right',
+  'backspace',
+  'tab',
+  'esc',
+  'enter',
+  'slash',
+  'bang',
+  'at',
+  'backslash',
+])
+
+export function isToolbarKeycap(key: KeyDef): boolean {
+  return STANDARD_KEYCAP_IDS.has(key.id)
+}
+
+export function getToolbarButtonText(key: KeyDef, t: ToolbarTranslate): string {
+  return isToolbarKeycap(key) ? key.label : t(key.desc)
+}
 
 // Reorganized factory defaults by priority and category grouping
 export const FACTORY_PINNED = [
