@@ -1,6 +1,6 @@
 # Nexus 源码导览
 
-最后更新：2026-04-19
+最后更新：2026-04-20
 
 目标：告诉维护者“现在该从哪里读”，同时区分源码层和运行时入口。
 
@@ -13,19 +13,21 @@
 ## 推荐阅读顺序
 
 1. `start.sh`
-2. `rust-runtime/src/lib.rs`
-3. `rust-runtime/src/bin/nexus-server.rs`
-4. `rust-runtime/src/bin/nexus-session-runtime.rs`
-5. `rust-runtime/src/bin/nexus-window-launch-runtime.rs`
-6. `rust-runtime/src/bin/nexus-pty-runtime.rs`
-7. `rust-runtime/src/bin/nexus-task-runtime.rs`
-8. `rust-runtime/tests/*.rs`
+2. `scripts/nexus-paths.sh`
+3. `rust-runtime/src/lib.rs`
+4. `rust-runtime/src/bin/nexus-server.rs`
+5. `rust-runtime/src/bin/nexus-session-runtime.rs`
+6. `rust-runtime/src/bin/nexus-window-launch-runtime.rs`
+7. `rust-runtime/src/bin/nexus-pty-runtime.rs`
+8. `rust-runtime/src/bin/nexus-task-runtime.rs`
+9. `rust-runtime/tests/*.rs`
 
 ## 根目录里最重要的文件
 
 | 路径 | 作用 |
 |---|---|
 | `start.sh` | 前台启动入口 |
+| `scripts/nexus-paths.sh` | 启动早期修正 Claude / Codex CLI PATH |
 | `setup.sh` | Rust 安装器入口 |
 | `nexus-run-claude.sh` | Claude shell 启动脚本 |
 | `nexus-run-codex.sh` | Codex shell 启动脚本 |
@@ -126,6 +128,7 @@ cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server
 ## 别再踩的坑
 
 - 不要把 `frontend/src/` 当线上入口，线上仍只服务 `frontend/dist/`
+- 不要忽略 `scripts/nexus-paths.sh`；`start.sh` 和 `scripts/nexus-tmux-service.sh` 都会先经过它修正 agent CLI 路径
 - 不要把 `pm2` 当成有效运维入口
 - 不要把 `data/` 当数据库
 - 不要把“零 Node 仓库”的旧文档当当前事实
