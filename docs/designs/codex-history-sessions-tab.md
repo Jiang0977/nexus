@@ -1,6 +1,6 @@
 # Codex History Sessions Tab
 
-Status: Implemented / deployed with follow-up verification debt
+Status: Implemented / deployed / verified
 Date: 2026-04-15
 Branch: master
 
@@ -66,21 +66,23 @@ Reviewed by:
 - `cargo test --manifest-path rust-runtime/Cargo.toml --test setup_systemd`
 - `cargo test --manifest-path rust-runtime/Cargo.toml --test startup_paths`
 - `cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server`
+- `npm --prefix frontend run build`
 - 正式部署后服务可达验证通过
+- 浏览器级 smoke 已完成，见 [codex-history-browser-smoke-2026-04-21.md](../verification/codex-history-browser-smoke-2026-04-21.md)
+  - 桌面入口可打开当前工作区内的 Codex history 视图
+  - `warning / empty / error` 主状态有真实浏览器证据
+  - `resume` 真实 smoke 已创建新 tmux window
+  - 移动端 modal 初始焦点落到 `Back to Session`
+  - `Esc` 关闭后焦点返回 `Codex History` 触发器
 
-## Remaining Follow-ups
+## Closeout Status
 
-这项能力还剩下两类非阻塞补偿项：
+这项能力原本剩余的两类补偿项已在 2026-04-21 收口：
 
-1. 浏览器级回归留痕
-   - 桌面入口
-   - 移动入口
-   - warning / empty / error 主状态
-   - resume smoke
-2. 可访问性收口
-   - 键盘路径
-   - 更明确的 ARIA / 读屏语义
-   - 对设计文档里 `Enter` / `Esc` / focus 合同做真实验证
+- 浏览器级回归留痕
+- 可访问性收口
+
+因此 Codex history 不再有 feature-level open TODO。剩余 `systemd left-over process` 属于运行时运维债，不属于本设计文档的功能欠账。
 
 ## Not in Scope
 

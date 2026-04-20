@@ -1,6 +1,6 @@
 # Nexus 部署与更新 Runbook
 
-最后验证日期：2026-04-20
+最后验证日期：2026-04-21
 
 目标：线上更新时只按这份文档执行。不要再走 `npm`、`pm2`、前端现场构建这类旧路径。
 
@@ -128,6 +128,12 @@ curl --silent --show-error --max-time 5 http://127.0.0.1:59000 | head -n 5
 - 日志里出现 `启动 Nexus Rust server on :59000`
 - 首页返回 `200 OK`
 - `nexus-tmux.service` 处于 `active (running)`，并且 `tmux -D` 归属在 `nexus-tmux.service`，不是 `nexus.service`
+
+补充说明：
+
+- 活跃的 `tmux attach-session` client 仍可能出现在 `nexus.service` cgroup 下；这代表浏览器终端前台连接，而不是 tmux server 漂移。
+- 2026-04-21 的真实重启验证表明，这类 attach client 会在 `nexus.service` 重启后被新进程重建，不再触发新的 `left-over process` 启动告警。
+- 关闭证据见 [systemd-residue-smoke-2026-04-21.md](verification/systemd-residue-smoke-2026-04-21.md)。
 
 如果本次改动涉及 Codex 启动链，再额外验证：
 
