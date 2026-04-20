@@ -5,7 +5,14 @@ import GhostShield from './GhostShield'
 import useOverlayGuard from './useOverlayGuard'
 import { Icon } from './icons'
 import type { Terminal } from '@xterm/xterm'
-import { KeyDef, ToolbarConfig, ALL_KEYS, FACTORY_CONFIG } from './toolbarDefaults'
+import {
+  KeyDef,
+  ToolbarConfig,
+  ALL_KEYS,
+  FACTORY_CONFIG,
+  getToolbarButtonText,
+  isToolbarKeycap,
+} from './toolbarDefaults'
 import type { ThemeMode } from './terminal/theme'
 
 interface Props {
@@ -301,10 +308,11 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
           return (
             <button
               key={id}
-              className={isPC ? keyPCClass : keyClass}
+              className={getToolbarButtonClass(key, isPC ? 'pc' : 'mobile')}
               onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); handleKey(key) }}
+              title={t(key.desc)}
             >
-              {key.label}
+              {getToolbarButtonText(key, t)}
             </button>
           )
         })}
@@ -530,10 +538,10 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
             return (
               <button
                 key={id}
-                className={keyEmbeddedClass}
+                className={getToolbarButtonClass(key, 'embedded')}
                 onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); handleKey(key) }}
                 title={t(key.desc)}
-              >{key.label}</button>
+              >{getToolbarButtonText(key, t)}</button>
             )
           })}
         </div>
@@ -595,10 +603,11 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
               return (
                 <button
                   key={id}
-                  className={keyPCClass}
+                  className={getToolbarButtonClass(key, 'pc')}
                   onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); handleKey(key) }}
+                  title={t(key.desc)}
                 >
-                  {key.label}
+                  {getToolbarButtonText(key, t)}
                 </button>
               )
             })}
@@ -663,10 +672,11 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
                   return (
                     <button
                       key={id}
-                      className={keyPCClass}
+                      className={getToolbarButtonClass(key, 'pc')}
                       onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); handleKey(key) }}
+                      title={t(key.desc)}
                     >
-                      {key.label}
+                      {getToolbarButtonText(key, t)}
                     </button>
                   )
                 })}
@@ -786,10 +796,11 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
                 return (
                   <button
                     key={id}
-                    className={keyClass}
+                    className={getToolbarButtonClass(key, 'mobile')}
                     onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); handleKey(key) }}
+                    title={t(key.desc)}
                   >
-                    {key.label}
+                    {getToolbarButtonText(key, t)}
                   </button>
                 )
               })}
@@ -812,6 +823,9 @@ function chunk<T>(arr: T[], n: number): T[][] {
 const keyClass = 'bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text cursor-pointer text-xs font-mono min-w-[38px] py-1.5 px-[7px] text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
 const keyPCClass = 'bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text cursor-pointer text-sm font-mono min-w-[48px] py-2 px-2.5 text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
 const keyEmbeddedClass = 'bg-nexus-bg-2 border border-nexus-border rounded text-nexus-text cursor-pointer text-[11px] font-mono min-w-[30px] py-1 px-[5px] text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
+const actionKeyClass = 'bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text cursor-pointer text-[11px] font-medium py-1.5 px-2.5 text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
+const actionKeyPCClass = 'bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text cursor-pointer text-[13px] font-medium py-2 px-3 text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
+const actionKeyEmbeddedClass = 'bg-nexus-bg-2 border border-nexus-border rounded text-nexus-text cursor-pointer text-[11px] font-medium py-1 px-2 text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
 const iconBtnClass = 'bg-transparent border-none text-nexus-text-2 cursor-pointer text-sm py-1 px-2 rounded flex items-center justify-center transition-all duration-100 active:scale-90 active:text-nexus-text active:bg-nexus-bg-2'
 const iconBtnPCClass = 'bg-transparent border-none text-nexus-text-2 cursor-pointer text-[13px] py-[3px] px-1.5 rounded flex-shrink-0 flex items-center justify-center transition-all duration-100 active:scale-90 active:text-nexus-text active:bg-nexus-bg-2'
 const quickMenuItemClass = 'flex items-center gap-2.5 bg-transparent border-none text-nexus-text cursor-pointer text-sm py-2.5 px-3.5 w-full text-left touch-manipulation transition-all duration-100 active:bg-nexus-bg-2 active:pl-4'
@@ -821,3 +835,14 @@ const editBtnPrimaryClass = 'bg-nexus-accent border-none rounded text-white curs
 const editBtnPrimaryPCClass = 'bg-nexus-accent border-none rounded text-white cursor-pointer text-[13px] font-semibold py-1.5 px-4 transition-all duration-100 active:scale-95 active:bg-blue-600'
 const addBtnClass = 'bg-nexus-bg-2 border border-nexus-border rounded text-nexus-accent cursor-pointer text-[11px] py-1 px-2 transition-all duration-100 active:scale-95 active:bg-nexus-bg'
 const addBtnPCClass = 'bg-nexus-bg-2 border border-nexus-border rounded text-nexus-accent cursor-pointer text-xs py-1.5 px-3 transition-all duration-100 active:scale-95 active:bg-nexus-bg'
+
+function getToolbarButtonClass(key: KeyDef, mode: 'mobile' | 'pc' | 'embedded') {
+  if (isToolbarKeycap(key)) {
+    if (mode === 'pc') return keyPCClass
+    if (mode === 'embedded') return keyEmbeddedClass
+    return keyClass
+  }
+  if (mode === 'pc') return actionKeyPCClass
+  if (mode === 'embedded') return actionKeyEmbeddedClass
+  return actionKeyClass
+}
