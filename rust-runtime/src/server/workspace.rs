@@ -1,4 +1,6 @@
-async fn api_browse(
+use super::*;
+
+pub(super) async fn api_browse(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<PathQuery>,
@@ -12,7 +14,7 @@ async fn api_browse(
     )
 }
 
-async fn api_workspace_entries(
+pub(super) async fn api_workspace_entries(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<PathQuery>,
@@ -26,7 +28,7 @@ async fn api_workspace_entries(
     )
 }
 
-async fn api_workspace_mkdir(
+pub(super) async fn api_workspace_mkdir(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<WorkspaceCreateEntryBody>,
@@ -45,7 +47,7 @@ async fn api_workspace_mkdir(
     )
 }
 
-async fn api_workspace_create_file(
+pub(super) async fn api_workspace_create_file(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<WorkspaceCreateEntryBody>,
@@ -65,7 +67,7 @@ async fn api_workspace_create_file(
     )
 }
 
-async fn api_workspace_read_file(
+pub(super) async fn api_workspace_read_file(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<PathQuery>,
@@ -79,7 +81,7 @@ async fn api_workspace_read_file(
     )
 }
 
-async fn api_workspace_write_file(
+pub(super) async fn api_workspace_write_file(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<WorkspaceWriteFileBody>,
@@ -98,7 +100,7 @@ async fn api_workspace_write_file(
     )
 }
 
-async fn api_workspace_delete_entry(
+pub(super) async fn api_workspace_delete_entry(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<PathQuery>,
@@ -115,7 +117,7 @@ async fn api_workspace_delete_entry(
     workspace_json_response(delete_workspace_entry(state.workspace_root.as_ref(), &path).await)
 }
 
-async fn api_workspace_rename_entry(
+pub(super) async fn api_workspace_rename_entry(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<WorkspaceRenameBody>,
@@ -134,7 +136,7 @@ async fn api_workspace_rename_entry(
     )
 }
 
-async fn api_workspace_copy_entry(
+pub(super) async fn api_workspace_copy_entry(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<WorkspaceTransferBody>,
@@ -153,7 +155,7 @@ async fn api_workspace_copy_entry(
     )
 }
 
-async fn api_workspace_move_entry(
+pub(super) async fn api_workspace_move_entry(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<WorkspaceTransferBody>,
@@ -172,7 +174,7 @@ async fn api_workspace_move_entry(
     )
 }
 
-async fn api_workspace_file_root(
+pub(super) async fn api_workspace_file_root(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<WorkspaceServeQuery>,
@@ -180,7 +182,7 @@ async fn api_workspace_file_root(
     serve_workspace_file_response(state, headers, query, "").await
 }
 
-async fn api_workspace_file_path(
+pub(super) async fn api_workspace_file_path(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<WorkspaceServeQuery>,
@@ -189,7 +191,7 @@ async fn api_workspace_file_path(
     serve_workspace_file_response(state, headers, query, &path).await
 }
 
-async fn api_upload_workspace_file(
+pub(super) async fn api_upload_workspace_file(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     multipart: Multipart,
@@ -226,7 +228,7 @@ async fn api_upload_workspace_file(
     .into_response()
 }
 
-async fn api_upload_managed_file(
+pub(super) async fn api_upload_managed_file(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<OverwriteQuery>,
@@ -259,7 +261,7 @@ async fn api_upload_managed_file(
     }
 }
 
-async fn api_files(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_files(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
@@ -270,7 +272,7 @@ async fn api_files(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
     }
 }
 
-async fn api_delete_file(
+pub(super) async fn api_delete_file(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath((date, filename)): AxumPath<(String, String)>,
@@ -285,7 +287,10 @@ async fn api_delete_file(
     }
 }
 
-async fn api_delete_all_files(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_delete_all_files(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
@@ -296,8 +301,7 @@ async fn api_delete_all_files(State(state): State<Arc<AppState>>, headers: Heade
     }
 }
 
-
-async fn static_uploads(
+pub(super) async fn static_uploads(
     State(state): State<Arc<AppState>>,
     AxumPath(path): AxumPath<String>,
 ) -> Response {
@@ -311,13 +315,13 @@ async fn static_uploads(
     serve_file(full_path).await
 }
 
-struct WorkspaceRouteError {
-    status_code: StatusCode,
-    message: String,
+pub(super) struct WorkspaceRouteError {
+    pub(super) status_code: StatusCode,
+    pub(super) message: String,
 }
 
 impl WorkspaceRouteError {
-    fn new(status_code: StatusCode, message: impl Into<String>) -> Self {
+    pub(super) fn new(status_code: StatusCode, message: impl Into<String>) -> Self {
         Self {
             status_code,
             message: message.into(),
@@ -325,14 +329,14 @@ impl WorkspaceRouteError {
     }
 }
 
-fn workspace_json_response(result: Result<Value, WorkspaceRouteError>) -> Response {
+pub(super) fn workspace_json_response(result: Result<Value, WorkspaceRouteError>) -> Response {
     match result {
         Ok(payload) => Json(payload).into_response(),
         Err(error) => json_error(error.status_code, &error.message),
     }
 }
 
-async fn serve_workspace_file_response(
+pub(super) async fn serve_workspace_file_response(
     state: Arc<AppState>,
     headers: HeaderMap,
     query: WorkspaceServeQuery,
@@ -351,17 +355,17 @@ async fn serve_workspace_file_response(
     {
         Ok(full_path) => {
             let mut response = serve_file(full_path.clone()).await;
-            if response.status() == StatusCode::OK && query.dl.as_deref() == Some("1") {
-                if let Some(file_name) = full_path.file_name().and_then(|value| value.to_str()) {
-                    if let Ok(header_value) = HeaderValue::from_str(&format!(
-                        "attachment; filename*=UTF-8''{}",
-                        percent_encode_utf8(file_name)
-                    )) {
-                        response
-                            .headers_mut()
-                            .insert(CONTENT_DISPOSITION, header_value);
-                    }
-                }
+            if response.status() == StatusCode::OK
+                && query.dl.as_deref() == Some("1")
+                && let Some(file_name) = full_path.file_name().and_then(|value| value.to_str())
+                && let Ok(header_value) = HeaderValue::from_str(&format!(
+                    "attachment; filename*=UTF-8''{}",
+                    percent_encode_utf8(file_name)
+                ))
+            {
+                response
+                    .headers_mut()
+                    .insert(CONTENT_DISPOSITION, header_value);
             }
             response
         }
@@ -369,7 +373,7 @@ async fn serve_workspace_file_response(
     }
 }
 
-async fn browse_workspace_directories(
+pub(super) async fn browse_workspace_directories(
     workspace_root: &str,
     path: Option<&str>,
 ) -> Result<Value, WorkspaceRouteError> {
@@ -413,7 +417,7 @@ async fn browse_workspace_directories(
     }))
 }
 
-async fn list_workspace_entries(
+pub(super) async fn list_workspace_entries(
     workspace_root: &str,
     path: Option<&str>,
 ) -> Result<Value, WorkspaceRouteError> {
@@ -472,7 +476,7 @@ async fn list_workspace_entries(
     }))
 }
 
-async fn create_workspace_directory(
+pub(super) async fn create_workspace_directory(
     workspace_root: &str,
     path: Option<&str>,
     name: Option<&str>,
@@ -507,7 +511,7 @@ async fn create_workspace_directory(
     }))
 }
 
-async fn create_workspace_file(
+pub(super) async fn create_workspace_file(
     workspace_root: &str,
     path: Option<&str>,
     name: Option<&str>,
@@ -543,7 +547,7 @@ async fn create_workspace_file(
     }))
 }
 
-async fn read_workspace_file_content(
+pub(super) async fn read_workspace_file_content(
     workspace_root: &str,
     path: Option<&str>,
 ) -> Result<Value, WorkspaceRouteError> {
@@ -564,7 +568,7 @@ async fn read_workspace_file_content(
     }))
 }
 
-async fn write_workspace_file_content(
+pub(super) async fn write_workspace_file_content(
     workspace_root: &str,
     path: Option<&str>,
     content: &str,
@@ -579,7 +583,7 @@ async fn write_workspace_file_content(
     }))
 }
 
-async fn delete_workspace_entry(
+pub(super) async fn delete_workspace_entry(
     workspace_root: &str,
     path: &str,
 ) -> Result<Value, WorkspaceRouteError> {
@@ -600,7 +604,7 @@ async fn delete_workspace_entry(
     Ok(json!({ "ok": true }))
 }
 
-async fn rename_workspace_entry(
+pub(super) async fn rename_workspace_entry(
     workspace_root: &str,
     path: Option<&str>,
     new_name: Option<&str>,
@@ -651,7 +655,7 @@ async fn rename_workspace_entry(
     }))
 }
 
-async fn copy_workspace_entry(
+pub(super) async fn copy_workspace_entry(
     workspace_root: &str,
     source_path: Option<&str>,
     target_path: Option<&str>,
@@ -692,7 +696,7 @@ async fn copy_workspace_entry(
     }))
 }
 
-async fn move_workspace_entry(
+pub(super) async fn move_workspace_entry(
     workspace_root: &str,
     source_path: Option<&str>,
     target_path: Option<&str>,
@@ -749,8 +753,7 @@ async fn move_workspace_entry(
     }))
 }
 
-
-async fn parse_upload_multipart(
+pub(super) async fn parse_upload_multipart(
     mut multipart: Multipart,
 ) -> Result<UploadMultipartPayload, Response> {
     let mut payload = UploadMultipartPayload {
@@ -812,7 +815,7 @@ async fn parse_upload_multipart(
     Ok(payload)
 }
 
-async fn resolve_workspace_upload_destination(
+pub(super) async fn resolve_workspace_upload_destination(
     state: &AppState,
     session_name: Option<&str>,
 ) -> String {
@@ -865,7 +868,7 @@ async fn resolve_workspace_upload_destination(
     }
 }
 
-async fn save_managed_upload_file(
+pub(super) async fn save_managed_upload_file(
     uploads_dir: &Path,
     file_buffer: &[u8],
     original_name: &str,
@@ -908,7 +911,7 @@ async fn save_managed_upload_file(
     }))
 }
 
-async fn list_managed_files(uploads_dir: &Path) -> Result<Value, ServiceRouteError> {
+pub(super) async fn list_managed_files(uploads_dir: &Path) -> Result<Value, ServiceRouteError> {
     let mut date_dirs = Vec::new();
     let mut root_entries = fs::read_dir(uploads_dir).await.map_err(|error| {
         ServiceRouteError::from_message(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
@@ -987,7 +990,7 @@ async fn list_managed_files(uploads_dir: &Path) -> Result<Value, ServiceRouteErr
     Ok(Value::Array(groups))
 }
 
-async fn delete_managed_file(
+pub(super) async fn delete_managed_file(
     uploads_dir: &Path,
     date: &str,
     filename: &str,
@@ -1018,7 +1021,9 @@ async fn delete_managed_file(
     Ok(json!({ "ok": true }))
 }
 
-async fn delete_all_managed_files(uploads_dir: &Path) -> Result<Value, ServiceRouteError> {
+pub(super) async fn delete_all_managed_files(
+    uploads_dir: &Path,
+) -> Result<Value, ServiceRouteError> {
     let mut root_entries = fs::read_dir(uploads_dir).await.map_err(|error| {
         ServiceRouteError::from_message(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
     })?;

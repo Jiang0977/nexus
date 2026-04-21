@@ -1,6 +1,6 @@
 # Nexus 源码导览
 
-最后更新：2026-04-20
+最后更新：2026-04-21
 
 目标：告诉维护者“现在该从哪里读”，同时区分源码层和运行时入口。
 
@@ -52,8 +52,8 @@
 
 | 文件 | 作用 |
 |---|---|
-| `rust-runtime/src/server/mod.rs` | server 装配、router 和跨模块 handler |
-| `rust-runtime/src/server/runtime.rs` | child runtime 生命周期与 IPC |
+| `rust-runtime/src/server/mod.rs` | server 入口、router 装配、服务生命周期 |
+| `rust-runtime/src/server/runtime.rs` | server 共享核心：`AppState`、managed runtimes、DTO、通用 helper |
 | `rust-runtime/src/server/tasks.rs` | task / SSE 相关 handler |
 | `rust-runtime/src/server/telegram.rs` | Telegram setup / webhook |
 | `rust-runtime/src/server/config.rs` | 配置、profile、feature config |
@@ -103,6 +103,22 @@
 
 - `frontend/dist/*`
 - `public/*`
+
+前端主入口当前推荐阅读顺序：
+
+1. `frontend/src/Terminal.tsx`
+2. `frontend/src/terminal/useTerminalRuntime.ts`
+3. `frontend/src/terminal/useTerminalSessions.ts`
+4. `frontend/src/terminal/useTerminalArtifacts.ts`
+5. `frontend/src/terminal/DesktopSidebar.tsx`
+6. `frontend/src/terminal/MobileSessionDrawer.tsx`
+
+这样读能更快看清：
+
+- `Terminal.tsx` 只负责顶层装配
+- xterm / WebSocket / resize 逻辑下沉到 runtime hook
+- session / window 状态下沉到 sessions hook
+- scrollback / upload / 通知下沉到 artifacts hook
 
 ## 最重要的调用链
 

@@ -1,4 +1,9 @@
-async fn api_version(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+use super::*;
+
+pub(super) async fn api_version(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
@@ -6,7 +11,10 @@ async fn api_version(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
     Json(current_version_payload(state.project_root.as_ref()).await).into_response()
 }
 
-async fn api_latest_version(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_latest_version(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
@@ -17,8 +25,9 @@ async fn api_latest_version(State(state): State<Arc<AppState>>, headers: HeaderM
     }
 }
 
-
-async fn fetch_latest_version_payload(github_repo: &str) -> Result<Value, ServiceRouteError> {
+pub(super) async fn fetch_latest_version_payload(
+    github_repo: &str,
+) -> Result<Value, ServiceRouteError> {
     let remote = version_remote_ref(github_repo);
     let output = Command::new("git")
         .args([
@@ -56,7 +65,7 @@ async fn fetch_latest_version_payload(github_repo: &str) -> Result<Value, Servic
     }))
 }
 
-fn version_remote_ref(github_repo: &str) -> String {
+pub(super) fn version_remote_ref(github_repo: &str) -> String {
     if looks_like_github_repo_slug(github_repo) {
         format!("https://github.com/{github_repo}.git")
     } else {
@@ -64,7 +73,7 @@ fn version_remote_ref(github_repo: &str) -> String {
     }
 }
 
-fn version_release_url(github_repo: &str, tag: &str) -> String {
+pub(super) fn version_release_url(github_repo: &str, tag: &str) -> String {
     if looks_like_github_repo_slug(github_repo) {
         format!("https://github.com/{github_repo}/releases/tag/{tag}")
     } else {
@@ -72,7 +81,7 @@ fn version_release_url(github_repo: &str, tag: &str) -> String {
     }
 }
 
-fn looks_like_github_repo_slug(value: &str) -> bool {
+pub(super) fn looks_like_github_repo_slug(value: &str) -> bool {
     !value.is_empty()
         && !value.starts_with('/')
         && !value.starts_with('.')

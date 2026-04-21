@@ -148,7 +148,7 @@ fn ensure_tmux_session(session: &str, default_shell_cmd: &str) -> Result<(), Str
         return Ok(());
     }
 
-    run_tmux(&vec![
+    run_tmux(&[
         "new-session".to_string(),
         "-d".to_string(),
         "-s".to_string(),
@@ -160,7 +160,7 @@ fn ensure_tmux_session(session: &str, default_shell_cmd: &str) -> Result<(), Str
 }
 
 fn set_tmux_env(session: &str, key: &str, value: &str) -> Result<(), String> {
-    run_tmux(&vec![
+    run_tmux(&[
         "set-environment".to_string(),
         "-t".to_string(),
         session.to_string(),
@@ -181,7 +181,7 @@ fn launch_window(state: &SharedState, params: LaunchWindowParams) -> Result<Valu
         set_tmux_env(&params.session_name, &key, &value)?;
     }
 
-    run_tmux(&vec![
+    run_tmux(&[
         "new-window".to_string(),
         "-t".to_string(),
         params.session_name,
@@ -239,53 +239,46 @@ fn main() {
             }
         };
 
-        match message.kind.as_str() {
-            "request" => {
-                let id = message.id.unwrap_or_default();
-                let method = message.method.unwrap_or_default();
-                match method.as_str() {
-                    "ready" | "runtimeStatus" => {
-                        send_response(&state, id, true, Some(state.runtime_status()), None);
-                    }
-                    "launchWindow" => {
-                        match serde_json::from_value::<LaunchWindowParams>(message.params) {
-                            Ok(params) => match launch_window(&state, params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
+        if message.kind.as_str() == "request" {
+            let id = message.id.unwrap_or_default();
+            let method = message.method.unwrap_or_default();
+            match method.as_str() {
+                "ready" | "runtimeStatus" => {
+                    send_response(&state, id, true, Some(state.runtime_status()), None);
+                }
+                "launchWindow" => {
+                    match serde_json::from_value::<LaunchWindowParams>(message.params) {
+                        Ok(params) => match launch_window(&state, params) {
+                            Ok(result) => send_response(&state, id, true, Some(result), None),
+                            Err(error) => {
+                                send_response::<Value>(&state, id, false, None, Some(error))
+                            }
+                        },
+                        Err(error) => {
+                            send_response::<Value>(&state, id, false, None, Some(error.to_string()))
                         }
                     }
-                    "shutdown" => {
-                        send_response(
-                            &state,
-                            id,
-                            true,
-                            Some(serde_json::json!({ "ok": true })),
-                            None,
-                        );
-                        break;
-                    }
-                    _ => {
-                        send_response::<Value>(
-                            &state,
-                            id,
-                            false,
-                            None,
-                            Some(format!("unsupported method: {method}")),
-                        );
-                    }
+                }
+                "shutdown" => {
+                    send_response(
+                        &state,
+                        id,
+                        true,
+                        Some(serde_json::json!({ "ok": true })),
+                        None,
+                    );
+                    break;
+                }
+                _ => {
+                    send_response::<Value>(
+                        &state,
+                        id,
+                        false,
+                        None,
+                        Some(format!("unsupported method: {method}")),
+                    );
                 }
             }
-            _ => {}
         }
     }
 

@@ -256,33 +256,6 @@ fn replay_output(output: &str) -> String {
     output[keep_from..].to_string()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{MAX_OUTPUT_BUFFER, RECENT_OUTPUT_REPLAY, replay_output, trim_output};
-
-    #[test]
-    fn trim_output_keeps_utf8_boundaries() {
-        let mut output = format!("中{}", "a".repeat(MAX_OUTPUT_BUFFER - 2));
-        trim_output(&mut output);
-
-        assert_eq!(output, "a".repeat(MAX_OUTPUT_BUFFER - 2));
-        assert!(output.len() <= MAX_OUTPUT_BUFFER);
-    }
-
-    #[test]
-    fn replay_output_keeps_utf8_boundaries() {
-        let output = format!(
-            "{}为{}",
-            "a".repeat(5),
-            "b".repeat(RECENT_OUTPUT_REPLAY - 3)
-        );
-        let replay = replay_output(&output);
-
-        assert!(replay.starts_with('为'));
-        assert!(replay.len() <= RECENT_OUTPUT_REPLAY);
-    }
-}
-
 fn pty_key(session: &str, window_index: u32) -> String {
     format!("{}:{}", session, window_index)
 }
@@ -495,23 +468,23 @@ fn handle_connection_message(state: &SharedState, params: ConnectionNotifyParams
     let raw_message = params.raw_message.unwrap_or_default();
     let mut handled_resize = false;
 
-    if let Ok(value) = serde_json::from_str::<Value>(&raw_message) {
-        if value.get("type").and_then(Value::as_str) == Some("resize") {
-            let cols = value
-                .get("cols")
-                .and_then(Value::as_u64)
-                .map(|value| value as u16);
-            let rows = value
-                .get("rows")
-                .and_then(Value::as_u64)
-                .map(|value| value as u16);
-            if let (Some(cols), Some(rows)) = (cols, rows) {
-                if let Ok(mut client_sizes) = entry.client_sizes.lock() {
-                    client_sizes.insert(params.connection_id, (cols, rows));
-                }
-                resize_entry(&entry, cols, rows);
-                handled_resize = true;
+    if let Ok(value) = serde_json::from_str::<Value>(&raw_message)
+        && value.get("type").and_then(Value::as_str) == Some("resize")
+    {
+        let cols = value
+            .get("cols")
+            .and_then(Value::as_u64)
+            .map(|value| value as u16);
+        let rows = value
+            .get("rows")
+            .and_then(Value::as_u64)
+            .map(|value| value as u16);
+        if let (Some(cols), Some(rows)) = (cols, rows) {
+            if let Ok(mut client_sizes) = entry.client_sizes.lock() {
+                client_sizes.insert(params.connection_id, (cols, rows));
             }
+            resize_entry(&entry, cols, rows);
+            handled_resize = true;
         }
     }
 
@@ -734,4 +707,31 @@ fn main() {
     drop(state);
     drop(tx);
     let _ = writer.join();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_OUTPUT_BUFFER, RECENT_OUTPUT_REPLAY, replay_output, trim_output};
+
+    #[test]
+    fn trim_output_keeps_utf8_boundaries() {
+        let mut output = format!("中{}", "a".repeat(MAX_OUTPUT_BUFFER - 2));
+        trim_output(&mut output);
+
+        assert_eq!(output, "a".repeat(MAX_OUTPUT_BUFFER - 2));
+        assert!(output.len() <= MAX_OUTPUT_BUFFER);
+    }
+
+    #[test]
+    fn replay_output_keeps_utf8_boundaries() {
+        let output = format!(
+            "{}为{}",
+            "a".repeat(5),
+            "b".repeat(RECENT_OUTPUT_REPLAY - 3)
+        );
+        let replay = replay_output(&output);
+
+        assert!(replay.starts_with('为'));
+        assert!(replay.len() <= RECENT_OUTPUT_REPLAY);
+    }
 }

@@ -1,4 +1,6 @@
-async fn api_login(
+use super::*;
+
+pub(super) async fn api_login(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<LoginRequest>,
 ) -> Response {
@@ -33,7 +35,7 @@ async fn api_login(
     }
 }
 
-async fn api_config(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_config(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
@@ -48,7 +50,10 @@ async fn api_config(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
     .into_response()
 }
 
-async fn api_claude_configs(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_claude_configs(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
@@ -56,7 +61,7 @@ async fn api_claude_configs(State(state): State<Arc<AppState>>, headers: HeaderM
     Json(list_claude_configs(state.configs_dir.as_ref())).into_response()
 }
 
-async fn api_save_claude_config(
+pub(super) async fn api_save_claude_config(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
@@ -73,7 +78,7 @@ async fn api_save_claude_config(
     ))
 }
 
-async fn api_sync_current_claude_config(
+pub(super) async fn api_sync_current_claude_config(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
@@ -88,7 +93,7 @@ async fn api_sync_current_claude_config(
     ))
 }
 
-async fn api_delete_claude_config(
+pub(super) async fn api_delete_claude_config(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
@@ -100,7 +105,10 @@ async fn api_delete_claude_config(
     config_profiles_response(delete_claude_config_route(state.configs_dir.as_ref(), &id))
 }
 
-async fn api_runtime_status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_runtime_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
@@ -108,7 +116,10 @@ async fn api_runtime_status(State(state): State<Arc<AppState>>, headers: HeaderM
     Json(state.runtime_manager.runtime_status_payload().await).into_response()
 }
 
-async fn api_codex_configs(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_codex_configs(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
@@ -116,7 +127,7 @@ async fn api_codex_configs(State(state): State<Arc<AppState>>, headers: HeaderMa
     Json(list_codex_configs(state.codex_configs_dir.as_ref())).into_response()
 }
 
-async fn api_import_global_codex_config(
+pub(super) async fn api_import_global_codex_config(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     body: Option<Json<IdBody>>,
@@ -131,7 +142,7 @@ async fn api_import_global_codex_config(
     ))
 }
 
-async fn api_sync_current_codex_config(
+pub(super) async fn api_sync_current_codex_config(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
@@ -146,7 +157,7 @@ async fn api_sync_current_codex_config(
     ))
 }
 
-async fn api_validate_codex_config(
+pub(super) async fn api_validate_codex_config(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
@@ -167,7 +178,7 @@ async fn api_validate_codex_config(
     )
 }
 
-async fn api_save_codex_config(
+pub(super) async fn api_save_codex_config(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
@@ -184,7 +195,7 @@ async fn api_save_codex_config(
     ))
 }
 
-async fn api_delete_codex_config(
+pub(super) async fn api_delete_codex_config(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
@@ -199,7 +210,7 @@ async fn api_delete_codex_config(
     ))
 }
 
-async fn api_cc_switch_providers(
+pub(super) async fn api_cc_switch_providers(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<KindQuery>,
@@ -215,7 +226,7 @@ async fn api_cc_switch_providers(
     ))
 }
 
-async fn api_import_cc_switch_provider(
+pub(super) async fn api_import_cc_switch_provider(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath((kind, provider_id)): AxumPath<(String, String)>,
@@ -232,7 +243,7 @@ async fn api_import_cc_switch_provider(
     ))
 }
 
-async fn api_project_defaults(
+pub(super) async fn api_project_defaults(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<PathQuery>,
@@ -249,7 +260,10 @@ async fn api_project_defaults(
     .into_response()
 }
 
-async fn api_toolbar_config(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_toolbar_config(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
@@ -257,7 +271,7 @@ async fn api_toolbar_config(State(state): State<Arc<AppState>>, headers: HeaderM
     Json(read_toolbar_config_file(state.toolbar_config_file.as_ref()).await).into_response()
 }
 
-async fn api_save_toolbar_config(
+pub(super) async fn api_save_toolbar_config(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(payload): Json<Value>,
@@ -272,7 +286,7 @@ async fn api_save_toolbar_config(
     }
 }
 
-async fn api_telegram_webhook(
+pub(super) async fn api_telegram_webhook(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(update): Json<TelegramUpdate>,
@@ -292,7 +306,10 @@ async fn api_telegram_webhook(
     Json(json!({ "ok": true })).into_response()
 }
 
-async fn api_telegram_setup(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_telegram_setup(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
@@ -316,22 +333,22 @@ async fn api_telegram_setup(State(state): State<Arc<AppState>>, headers: HeaderM
     }
 }
 
-fn config_profiles_response(result: Result<Value, ServiceRouteError>) -> Response {
+pub(super) fn config_profiles_response(result: Result<Value, ServiceRouteError>) -> Response {
     match result {
         Ok(payload) => Json(payload).into_response(),
         Err(error) => json_response(error.status_code, error.body),
     }
 }
 
-fn sync_metadata_keys() -> [&'static str; 3] {
+pub(super) fn sync_metadata_keys() -> [&'static str; 3] {
     ["SYNC_SOURCE", "SYNC_SOURCE_ID", "SYNC_SOURCE_NAME"]
 }
 
-fn object_value(value: &Value) -> serde_json::Map<String, Value> {
+pub(super) fn object_value(value: &Value) -> serde_json::Map<String, Value> {
     value.as_object().cloned().unwrap_or_default()
 }
 
-fn value_string(value: Option<&Value>) -> String {
+pub(super) fn value_string(value: Option<&Value>) -> String {
     value
         .and_then(Value::as_str)
         .unwrap_or_default()
@@ -339,14 +356,14 @@ fn value_string(value: Option<&Value>) -> String {
         .to_string()
 }
 
-fn json_object_file(path: &Path) -> Option<serde_json::Map<String, Value>> {
+pub(super) fn json_object_file(path: &Path) -> Option<serde_json::Map<String, Value>> {
     stdfs::read_to_string(path)
         .ok()
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
         .and_then(|value| value.as_object().cloned())
 }
 
-fn write_json_object_file(
+pub(super) fn write_json_object_file(
     path: &Path,
     object: &serde_json::Map<String, Value>,
     trailing_newline: bool,
@@ -368,7 +385,7 @@ fn write_json_object_file(
     })
 }
 
-fn sanitize_profile_id(id: &str) -> String {
+pub(super) fn sanitize_profile_id(id: &str) -> String {
     id.chars()
         .map(|character| {
             if character.is_ascii_alphanumeric() || character == '_' || character == '-' {
@@ -380,20 +397,20 @@ fn sanitize_profile_id(id: &str) -> String {
         .collect::<String>()
 }
 
-fn merge_sync_metadata(
+pub(super) fn merge_sync_metadata(
     current: &serde_json::Map<String, Value>,
     next: &mut serde_json::Map<String, Value>,
 ) {
     for key in sync_metadata_keys() {
-        if !next.contains_key(key) {
-            if let Some(value) = current.get(key) {
-                next.insert(key.to_string(), value.clone());
-            }
+        if !next.contains_key(key)
+            && let Some(value) = current.get(key)
+        {
+            next.insert(key.to_string(), value.clone());
         }
     }
 }
 
-fn metadata_mtime_ms(path: &Path) -> u64 {
+pub(super) fn metadata_mtime_ms(path: &Path) -> u64 {
     stdfs::metadata(path)
         .ok()
         .and_then(|metadata| metadata.modified().ok())
@@ -402,7 +419,7 @@ fn metadata_mtime_ms(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-fn build_claude_config_response_object(
+pub(super) fn build_claude_config_response_object(
     id: &str,
     raw: Option<serde_json::Map<String, Value>>,
 ) -> Value {
@@ -420,7 +437,7 @@ fn build_claude_config_response_object(
     Value::Object(payload)
 }
 
-fn read_stored_claude_config(configs_dir: &Path, id: &str) -> Option<Value> {
+pub(super) fn read_stored_claude_config(configs_dir: &Path, id: &str) -> Option<Value> {
     let sanitized_id = sanitize_profile_id(id);
     if sanitized_id.is_empty() {
         return None;
@@ -435,7 +452,7 @@ fn read_stored_claude_config(configs_dir: &Path, id: &str) -> Option<Value> {
     ))
 }
 
-fn list_claude_configs(configs_dir: &Path) -> Value {
+pub(super) fn list_claude_configs(configs_dir: &Path) -> Value {
     let mut files = match stdfs::read_dir(configs_dir) {
         Ok(entries) => entries
             .filter_map(|entry| entry.ok())
@@ -448,7 +465,7 @@ fn list_claude_configs(configs_dir: &Path) -> Value {
         Err(_) => Vec::new(),
     };
 
-    files.sort_by(|left, right| metadata_mtime_ms(right).cmp(&metadata_mtime_ms(left)));
+    files.sort_by_key(|path| std::cmp::Reverse(metadata_mtime_ms(path)));
     Value::Array(
         files
             .into_iter()
@@ -464,7 +481,7 @@ fn list_claude_configs(configs_dir: &Path) -> Value {
     )
 }
 
-fn save_stored_claude_config(
+pub(super) fn save_stored_claude_config(
     configs_dir: &Path,
     id: &str,
     config: Value,
@@ -491,7 +508,7 @@ fn save_stored_claude_config(
     ))
 }
 
-fn save_claude_config_route(
+pub(super) fn save_claude_config_route(
     configs_dir: &Path,
     id: &str,
     config: Value,
@@ -503,7 +520,7 @@ fn save_claude_config_route(
     }))
 }
 
-fn read_global_claude_config() -> Option<Value> {
+pub(super) fn read_global_claude_config() -> Option<Value> {
     let home_dir = env::var("HOME").ok()?;
     let settings_file = Path::new(&home_dir).join(".claude").join("settings.json");
     let settings = json_object_file(&settings_file)?;
@@ -550,7 +567,7 @@ fn read_global_claude_config() -> Option<Value> {
     }))
 }
 
-fn sync_current_claude_config_route(
+pub(super) fn sync_current_claude_config_route(
     configs_dir: &Path,
     id: &str,
 ) -> Result<Value, ServiceRouteError> {
@@ -597,7 +614,10 @@ fn sync_current_claude_config_route(
     }))
 }
 
-fn delete_claude_config_route(configs_dir: &Path, id: &str) -> Result<Value, ServiceRouteError> {
+pub(super) fn delete_claude_config_route(
+    configs_dir: &Path,
+    id: &str,
+) -> Result<Value, ServiceRouteError> {
     let sanitized_id = sanitize_profile_id(id);
     if sanitized_id.is_empty() {
         return Err(ServiceRouteError::from_message(
@@ -614,13 +634,13 @@ fn delete_claude_config_route(configs_dir: &Path, id: &str) -> Result<Value, Ser
     Ok(json!({ "ok": true }))
 }
 
-fn parse_json_object_from_str(raw: &str) -> Option<serde_json::Map<String, Value>> {
+pub(super) fn parse_json_object_from_str(raw: &str) -> Option<serde_json::Map<String, Value>> {
     serde_json::from_str::<Value>(raw)
         .ok()
         .and_then(|value| value.as_object().cloned())
 }
 
-fn normalize_json_text_value(value: Option<&Value>) -> String {
+pub(super) fn normalize_json_text_value(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(raw)) => parse_json_object_from_str(raw)
             .and_then(|object| serde_json::to_string_pretty(&Value::Object(object)).ok())
@@ -632,7 +652,7 @@ fn normalize_json_text_value(value: Option<&Value>) -> String {
     }
 }
 
-fn empty_codex_config_object(label: &str) -> serde_json::Map<String, Value> {
+pub(super) fn empty_codex_config_object(label: &str) -> serde_json::Map<String, Value> {
     serde_json::Map::from_iter([
         ("label".to_string(), Value::String(label.to_string())),
         ("OPENAI_API_KEY".to_string(), Value::String(String::new())),
@@ -647,7 +667,7 @@ fn empty_codex_config_object(label: &str) -> serde_json::Map<String, Value> {
     ])
 }
 
-fn normalize_codex_config_value(value: &Value) -> serde_json::Map<String, Value> {
+pub(super) fn normalize_codex_config_value(value: &Value) -> serde_json::Map<String, Value> {
     let raw = object_value(value);
     let auth_json = normalize_json_text_value(raw.get("AUTH_JSON"));
     let auth_payload = parse_json_object_from_str(&auth_json).unwrap_or_default();
@@ -684,7 +704,7 @@ fn normalize_codex_config_value(value: &Value) -> serde_json::Map<String, Value>
     normalized
 }
 
-fn build_codex_config_response_object(
+pub(super) fn build_codex_config_response_object(
     id: &str,
     raw: Option<serde_json::Map<String, Value>>,
 ) -> Value {
@@ -705,7 +725,7 @@ fn build_codex_config_response_object(
     Value::Object(normalized)
 }
 
-fn read_codex_config(configs_dir: &Path, id: &str) -> Option<Value> {
+pub(super) fn read_codex_config(configs_dir: &Path, id: &str) -> Option<Value> {
     let sanitized_id = sanitize_profile_id(id);
     if sanitized_id.is_empty() {
         return None;
@@ -720,7 +740,7 @@ fn read_codex_config(configs_dir: &Path, id: &str) -> Option<Value> {
     ))
 }
 
-fn list_codex_configs(configs_dir: &Path) -> Value {
+pub(super) fn list_codex_configs(configs_dir: &Path) -> Value {
     let mut files = match stdfs::read_dir(configs_dir) {
         Ok(entries) => entries
             .filter_map(|entry| entry.ok())
@@ -733,7 +753,7 @@ fn list_codex_configs(configs_dir: &Path) -> Value {
         Err(_) => Vec::new(),
     };
 
-    files.sort_by(|left, right| metadata_mtime_ms(right).cmp(&metadata_mtime_ms(left)));
+    files.sort_by_key(|path| std::cmp::Reverse(metadata_mtime_ms(path)));
     Value::Array(
         files
             .into_iter()
@@ -749,7 +769,7 @@ fn list_codex_configs(configs_dir: &Path) -> Value {
     )
 }
 
-fn save_codex_config_file(
+pub(super) fn save_codex_config_file(
     configs_dir: &Path,
     id: &str,
     config: Value,
@@ -767,7 +787,7 @@ fn save_codex_config_file(
     Ok(sanitized_id)
 }
 
-fn save_codex_config_with_metadata(
+pub(super) fn save_codex_config_with_metadata(
     configs_dir: &Path,
     id: &str,
     config: Value,
@@ -783,7 +803,7 @@ fn save_codex_config_with_metadata(
     Ok((saved_id, saved_config))
 }
 
-fn save_codex_config_route(
+pub(super) fn save_codex_config_route(
     configs_dir: &Path,
     id: &str,
     config: Value,
@@ -795,12 +815,12 @@ fn save_codex_config_route(
     }))
 }
 
-struct SimpleToml {
-    root: HashMap<String, String>,
-    sections: HashMap<String, HashMap<String, String>>,
+pub(super) struct SimpleToml {
+    pub(super) root: HashMap<String, String>,
+    pub(super) sections: HashMap<String, HashMap<String, String>>,
 }
 
-fn parse_toml_scalar(raw: &str) -> String {
+pub(super) fn parse_toml_scalar(raw: &str) -> String {
     let value = raw.trim();
     if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
         serde_json::from_str::<String>(value)
@@ -810,7 +830,7 @@ fn parse_toml_scalar(raw: &str) -> String {
     }
 }
 
-fn parse_simple_toml(text: &str) -> SimpleToml {
+pub(super) fn parse_simple_toml(text: &str) -> SimpleToml {
     let mut root = HashMap::new();
     let mut sections: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut current_section: Option<String> = None;
@@ -843,7 +863,10 @@ fn parse_simple_toml(text: &str) -> SimpleToml {
     SimpleToml { root, sections }
 }
 
-fn import_codex_config_from_global(config_toml_text: &str, auth_json_text: &str) -> Value {
+pub(super) fn import_codex_config_from_global(
+    config_toml_text: &str,
+    auth_json_text: &str,
+) -> Value {
     let normalized_config_toml = config_toml_text.trim().to_string();
     let normalized_auth_json =
         normalize_json_text_value(Some(&Value::String(auth_json_text.to_string())));
@@ -881,7 +904,7 @@ fn import_codex_config_from_global(config_toml_text: &str, auth_json_text: &str)
     Value::Object(normalize_codex_config_value(&config))
 }
 
-fn read_global_codex_config() -> Option<Value> {
+pub(super) fn read_global_codex_config() -> Option<Value> {
     let home_dir = env::var("HOME").ok()?;
     let codex_dir = Path::new(&home_dir).join(".codex");
     let config_file = codex_dir.join("config.toml");
@@ -898,7 +921,7 @@ fn read_global_codex_config() -> Option<Value> {
     ))
 }
 
-fn import_global_codex_config_route(
+pub(super) fn import_global_codex_config_route(
     configs_dir: &Path,
     preferred_id: Option<String>,
 ) -> Result<Value, ServiceRouteError> {
@@ -933,7 +956,7 @@ fn import_global_codex_config_route(
     }))
 }
 
-fn sync_current_codex_config_route(
+pub(super) fn sync_current_codex_config_route(
     configs_dir: &Path,
     id: &str,
 ) -> Result<Value, ServiceRouteError> {
@@ -969,7 +992,7 @@ fn sync_current_codex_config_route(
     }))
 }
 
-fn detect_codex_auth_mode(config: &Value) -> String {
+pub(super) fn detect_codex_auth_mode(config: &Value) -> String {
     let normalized = normalize_codex_config_value(config);
     let auth_payload =
         parse_json_object_from_str(&value_string(normalized.get("AUTH_JSON"))).unwrap_or_default();
@@ -983,13 +1006,13 @@ fn detect_codex_auth_mode(config: &Value) -> String {
     String::new()
 }
 
-fn build_codex_validation_config(config: &Value) -> Value {
+pub(super) fn build_codex_validation_config(config: &Value) -> Value {
     let mut normalized = normalize_codex_config_value(config);
     normalized.insert("CONFIG_TOML".to_string(), Value::String(String::new()));
     Value::Object(normalized)
 }
 
-fn ensure_trailing_newline(text: &str) -> String {
+pub(super) fn ensure_trailing_newline(text: &str) -> String {
     if text.is_empty() {
         String::new()
     } else if text.ends_with('\n') {
@@ -999,7 +1022,7 @@ fn ensure_trailing_newline(text: &str) -> String {
     }
 }
 
-fn append_trusted_project_section(config_toml_text: &str, project_path: &str) -> String {
+pub(super) fn append_trusted_project_section(config_toml_text: &str, project_path: &str) -> String {
     let trimmed = config_toml_text.trim();
     if project_path.is_empty() {
         return ensure_trailing_newline(trimmed);
@@ -1020,7 +1043,7 @@ fn append_trusted_project_section(config_toml_text: &str, project_path: &str) ->
     ensure_trailing_newline(&merged)
 }
 
-fn build_codex_config_toml(config: &Value, project_path: &str) -> String {
+pub(super) fn build_codex_config_toml(config: &Value, project_path: &str) -> String {
     let normalized = normalize_codex_config_value(config);
     let config_toml = value_string(normalized.get("CONFIG_TOML"));
     if !config_toml.is_empty() {
@@ -1075,7 +1098,7 @@ fn build_codex_config_toml(config: &Value, project_path: &str) -> String {
     ensure_trailing_newline(&lines.join("\n"))
 }
 
-fn materialize_codex_home(
+pub(super) fn materialize_codex_home(
     config: &Value,
     home_dir: &Path,
     project_path: &Path,
@@ -1117,18 +1140,18 @@ fn materialize_codex_home(
     Ok(())
 }
 
-enum CommandRunError {
+pub(super) enum CommandRunError {
     Timeout,
     Io(String),
 }
 
-struct CommandRunResult {
-    status: i32,
-    stdout: String,
-    stderr: String,
+pub(super) struct CommandRunResult {
+    pub(super) status: i32,
+    pub(super) stdout: String,
+    pub(super) stderr: String,
 }
 
-fn resolve_codex_executable() -> String {
+pub(super) fn resolve_codex_executable() -> String {
     match std::process::Command::new("bash")
         .args(["-lc", "which -a codex | tail -1"])
         .output()
@@ -1145,7 +1168,7 @@ fn resolve_codex_executable() -> String {
     }
 }
 
-async fn run_command_with_timeout(
+pub(super) async fn run_command_with_timeout(
     executable: &str,
     args: &[String],
     home_dir: &Path,
@@ -1171,7 +1194,7 @@ async fn run_command_with_timeout(
     })
 }
 
-fn summarize_command_success(result: &CommandRunResult) -> String {
+pub(super) fn summarize_command_success(result: &CommandRunResult) -> String {
     let stdout = result.stdout.trim();
     let stderr = result.stderr.trim();
     if !stdout.is_empty() {
@@ -1183,7 +1206,7 @@ fn summarize_command_success(result: &CommandRunResult) -> String {
     }
 }
 
-fn summarize_command_failure(result: &CommandRunResult) -> String {
+pub(super) fn summarize_command_failure(result: &CommandRunResult) -> String {
     let stderr = result.stderr.trim();
     let stdout = result.stdout.trim();
     let source = if !stderr.is_empty() { stderr } else { stdout };
@@ -1196,11 +1219,13 @@ fn summarize_command_failure(result: &CommandRunResult) -> String {
     }
 }
 
-fn codex_timeout_message(step: &str, timeout_ms: u64) -> String {
+pub(super) fn codex_timeout_message(step: &str, timeout_ms: u64) -> String {
     format!("codex {step} timed out after {}s", timeout_ms / 1000)
 }
 
-fn unique_validation_home(codex_validate_dir: &Path) -> Result<PathBuf, ServiceRouteError> {
+pub(super) fn unique_validation_home(
+    codex_validate_dir: &Path,
+) -> Result<PathBuf, ServiceRouteError> {
     stdfs::create_dir_all(codex_validate_dir).map_err(|error| {
         ServiceRouteError::from_message(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
     })?;
@@ -1216,7 +1241,7 @@ fn unique_validation_home(codex_validate_dir: &Path) -> Result<PathBuf, ServiceR
     Ok(path)
 }
 
-async fn validate_codex_config_route(
+pub(super) async fn validate_codex_config_route(
     configs_dir: &Path,
     codex_validate_dir: &Path,
     project_path: &Path,
@@ -1350,7 +1375,10 @@ async fn validate_codex_config_route(
     validation_result
 }
 
-fn delete_codex_config_route(configs_dir: &Path, id: &str) -> Result<Value, ServiceRouteError> {
+pub(super) fn delete_codex_config_route(
+    configs_dir: &Path,
+    id: &str,
+) -> Result<Value, ServiceRouteError> {
     let sanitized_id = sanitize_profile_id(id);
     if sanitized_id.is_empty() {
         return Err(ServiceRouteError::from_message(
@@ -1368,15 +1396,15 @@ fn delete_codex_config_route(configs_dir: &Path, id: &str) -> Result<Value, Serv
 }
 
 #[derive(Clone)]
-struct CcSwitchProviderRow {
-    id: String,
-    app_type: String,
-    name: String,
-    settings_config: String,
-    is_current: bool,
+pub(super) struct CcSwitchProviderRow {
+    pub(super) id: String,
+    pub(super) app_type: String,
+    pub(super) name: String,
+    pub(super) settings_config: String,
+    pub(super) is_current: bool,
 }
 
-fn ensure_cc_switch_kind(kind: &str) -> Result<(), ServiceRouteError> {
+pub(super) fn ensure_cc_switch_kind(kind: &str) -> Result<(), ServiceRouteError> {
     if kind == "claude" || kind == "codex" {
         Ok(())
     } else {
@@ -1387,12 +1415,12 @@ fn ensure_cc_switch_kind(kind: &str) -> Result<(), ServiceRouteError> {
     }
 }
 
-fn resolve_cc_switch_db_path() -> Option<PathBuf> {
+pub(super) fn resolve_cc_switch_db_path() -> Option<PathBuf> {
     let home_dir = env::var("HOME").ok()?;
     Some(Path::new(&home_dir).join(".cc-switch").join("cc-switch.db"))
 }
 
-fn open_cc_switch_db() -> Result<Option<Connection>, ServiceRouteError> {
+pub(super) fn open_cc_switch_db() -> Result<Option<Connection>, ServiceRouteError> {
     let Some(db_path) = resolve_cc_switch_db_path() else {
         return Ok(None);
     };
@@ -1404,7 +1432,7 @@ fn open_cc_switch_db() -> Result<Option<Connection>, ServiceRouteError> {
     })
 }
 
-fn load_cc_switch_provider_rows(
+pub(super) fn load_cc_switch_provider_rows(
     connection: &Connection,
     kind: &str,
 ) -> Result<Vec<CcSwitchProviderRow>, ServiceRouteError> {
@@ -1439,7 +1467,7 @@ fn load_cc_switch_provider_rows(
     })
 }
 
-fn load_cc_switch_provider_row(
+pub(super) fn load_cc_switch_provider_row(
     connection: &Connection,
     kind: &str,
     provider_id: &str,
@@ -1498,7 +1526,10 @@ fn load_cc_switch_provider_row(
     }
 }
 
-fn existing_profile_match(existing_profiles: &[Value], provider_id: &str) -> Option<String> {
+pub(super) fn existing_profile_match(
+    existing_profiles: &[Value],
+    provider_id: &str,
+) -> Option<String> {
     existing_profiles
         .iter()
         .find(|profile| {
@@ -1515,7 +1546,7 @@ fn existing_profile_match(existing_profiles: &[Value], provider_id: &str) -> Opt
         })
 }
 
-fn resolve_cc_switch_target_profile_id(
+pub(super) fn resolve_cc_switch_target_profile_id(
     existing_profiles: &[Value],
     provider_id: &str,
     provider_name: &str,
@@ -1559,7 +1590,7 @@ fn resolve_cc_switch_target_profile_id(
     next_id
 }
 
-fn summarize_claude_provider(row: &CcSwitchProviderRow) -> (String, String, String) {
+pub(super) fn summarize_claude_provider(row: &CcSwitchProviderRow) -> (String, String, String) {
     let settings = parse_json_object_from_str(&row.settings_config).unwrap_or_default();
     let env_payload = settings
         .get("env")
@@ -1585,7 +1616,7 @@ fn summarize_claude_provider(row: &CcSwitchProviderRow) -> (String, String, Stri
     (model, base_url, auth_mode)
 }
 
-fn summarize_codex_provider(row: &CcSwitchProviderRow) -> (String, String, String) {
+pub(super) fn summarize_codex_provider(row: &CcSwitchProviderRow) -> (String, String, String) {
     let settings = parse_json_object_from_str(&row.settings_config).unwrap_or_default();
     let auth_payload = settings
         .get("auth")
@@ -1623,7 +1654,7 @@ fn summarize_codex_provider(row: &CcSwitchProviderRow) -> (String, String, Strin
     )
 }
 
-fn import_cc_switch_provider_value(row: &CcSwitchProviderRow) -> Value {
+pub(super) fn import_cc_switch_provider_value(row: &CcSwitchProviderRow) -> Value {
     let settings = parse_json_object_from_str(&row.settings_config).unwrap_or_default();
     let env_payload = settings
         .get("env")
@@ -1695,7 +1726,7 @@ fn import_cc_switch_provider_value(row: &CcSwitchProviderRow) -> Value {
     Value::Object(imported)
 }
 
-fn list_cc_switch_providers_route(
+pub(super) fn list_cc_switch_providers_route(
     configs_dir: &Path,
     codex_configs_dir: &Path,
     kind: &str,
@@ -1743,7 +1774,7 @@ fn list_cc_switch_providers_route(
     Ok(Value::Array(providers))
 }
 
-fn import_cc_switch_provider_route(
+pub(super) fn import_cc_switch_provider_route(
     configs_dir: &Path,
     codex_configs_dir: &Path,
     kind: &str,
@@ -1792,7 +1823,11 @@ fn import_cc_switch_provider_route(
     }
 }
 
-async fn static_fallback(State(state): State<Arc<AppState>>, method: Method, uri: Uri) -> Response {
+pub(super) async fn static_fallback(
+    State(state): State<Arc<AppState>>,
+    method: Method,
+    uri: Uri,
+) -> Response {
     if uri.path().starts_with("/api/") {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -1812,25 +1847,25 @@ async fn static_fallback(State(state): State<Arc<AppState>>, method: Method, uri
     serve_index(&state).await
 }
 
-struct UploadMultipartPayload {
-    session_name: Option<String>,
-    original_name: Option<String>,
-    file: Option<UploadMultipartFile>,
+pub(super) struct UploadMultipartPayload {
+    pub(super) session_name: Option<String>,
+    pub(super) original_name: Option<String>,
+    pub(super) file: Option<UploadMultipartFile>,
 }
 
-struct UploadMultipartFile {
-    original_name: String,
-    bytes: Vec<u8>,
-    size: usize,
+pub(super) struct UploadMultipartFile {
+    pub(super) original_name: String,
+    pub(super) bytes: Vec<u8>,
+    pub(super) size: usize,
 }
 
-struct ServiceRouteError {
-    status_code: StatusCode,
-    body: Value,
+pub(super) struct ServiceRouteError {
+    pub(super) status_code: StatusCode,
+    pub(super) body: Value,
 }
 
 impl ServiceRouteError {
-    fn from_message(status_code: StatusCode, message: &str) -> Self {
+    pub(super) fn from_message(status_code: StatusCode, message: &str) -> Self {
         Self {
             status_code,
             body: json!({ "error": message }),
@@ -1838,7 +1873,7 @@ impl ServiceRouteError {
     }
 }
 
-async fn current_version_payload(project_root: &Path) -> Value {
+pub(super) async fn current_version_payload(project_root: &Path) -> Value {
     let describe_output = Command::new("git")
         .args(["describe", "--tags", "--abbrev=0"])
         .current_dir(project_root)
@@ -1868,4 +1903,3 @@ async fn current_version_payload(project_root: &Path) -> Value {
         "clean": String::from_utf8_lossy(&status_output.stdout).trim().is_empty(),
     })
 }
-

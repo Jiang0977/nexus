@@ -227,7 +227,11 @@ fn nexus_tmux_script_keeps_codex_wrapper_ahead_of_real_cli() {
         .env("HOME", &home)
         .env(
             "PATH",
-            format!("{}:{}:/usr/bin:/bin", local_bin.display(), bin_dir.display()),
+            format!(
+                "{}:{}:/usr/bin:/bin",
+                local_bin.display(),
+                bin_dir.display()
+            ),
         )
         .output()
         .unwrap();

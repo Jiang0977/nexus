@@ -431,8 +431,14 @@ fn start_script_keeps_codex_wrapper_ahead_of_real_cli() {
         .env("HOME", &home)
         .env("PATH", format!("{}:/usr/bin:/bin", local_bin.display()))
         .env("NEXUS_SERVER_EXECUTABLE", bin_dir.join("nexus-server"))
-        .env("NEXUS_TASK_RUNNER_RUST_EXECUTABLE", bin_dir.join("nexus-task-runtime"))
-        .env("NEXUS_PTY_BROKER_RUST_EXECUTABLE", bin_dir.join("nexus-pty-runtime"))
+        .env(
+            "NEXUS_TASK_RUNNER_RUST_EXECUTABLE",
+            bin_dir.join("nexus-task-runtime"),
+        )
+        .env(
+            "NEXUS_PTY_BROKER_RUST_EXECUTABLE",
+            bin_dir.join("nexus-pty-runtime"),
+        )
         .env(
             "NEXUS_WINDOW_LAUNCH_RUST_EXECUTABLE",
             bin_dir.join("nexus-window-launch-runtime"),
@@ -461,9 +467,11 @@ fn start_script_keeps_codex_wrapper_ahead_of_real_cli() {
         which_output.lines().next().unwrap_or_default(),
         local_bin.join("codex").display().to_string()
     );
-    assert!(which_output
-        .lines()
-        .any(|line| line == nvm_bin.join("codex").display().to_string()));
+    assert!(
+        which_output
+            .lines()
+            .any(|line| line == nvm_bin.join("codex").display().to_string())
+    );
 
     let version_output = fs::read_to_string(&version_log).unwrap();
     assert_eq!(version_output.trim(), "codex-cli test");

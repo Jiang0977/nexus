@@ -49,8 +49,9 @@ export default function NewWindowDialog({ token, projectPath = '', onClose, onCo
         setProfiles(data)
         setSelectedProfile((current) => pickProfileForShell(shellType, data, current))
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (cancelled) return
+        console.error('[NewWindowDialog] Failed to load shell profiles', error)
         setProfiles([])
       })
 
@@ -68,7 +69,12 @@ export default function NewWindowDialog({ token, projectPath = '', onClose, onCo
           setSelectedProfile('')
         }
       })
-      .catch(() => {})
+      .catch((error: unknown) => {
+        console.error('[NewWindowDialog] Failed to load project shell defaults', {
+          error,
+          path: projectPath,
+        })
+      })
   }, [token, projectPath])
 
   function handleConfirm() {

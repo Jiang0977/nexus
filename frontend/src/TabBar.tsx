@@ -50,8 +50,20 @@ export default function TabBar({ windows, activeIndex, onSwitch, onClose, onAdd,
       for (const win of windows) {
         try {
           const r = await fetch(`/api/sessions/${win.index}/output`, { headers: { Authorization: `Bearer ${token}` } })
-          if (r.ok) outputs[win.index] = await r.json()
-        } catch {}
+          if (r.ok) {
+            outputs[win.index] = await r.json()
+            continue
+          }
+          console.error('[TabBar] Failed to load window output preview', {
+            sessionIndex: win.index,
+            status: r.status,
+          })
+        } catch (error: unknown) {
+          console.error('[TabBar] Failed to load window output preview', {
+            error,
+            sessionIndex: win.index,
+          })
+        }
       }
       setLocalWindowOutputs(outputs)
     }

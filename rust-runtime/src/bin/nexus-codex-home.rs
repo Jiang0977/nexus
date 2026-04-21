@@ -421,13 +421,11 @@ fn disable_runtime_codex_features(config_toml_text: &str) -> String {
             continue;
         }
 
-        if inside_features {
-            if let Some((key, _)) = trimmed_line.split_once('=') {
-                let key = key.trim();
-                if pending_features.remove(key) {
-                    output_lines.push(format!("{key} = false"));
-                    continue;
-                }
+        if inside_features && let Some((key, _)) = trimmed_line.split_once('=') {
+            let key = key.trim();
+            if pending_features.remove(key) {
+                output_lines.push(format!("{key} = false"));
+                continue;
             }
         }
 

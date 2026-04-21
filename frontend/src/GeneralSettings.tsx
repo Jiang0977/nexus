@@ -30,9 +30,14 @@ export default function GeneralSettings({ token, themeMode, onToggleTheme, onClo
 
   useEffect(() => {
     fetch('/api/version', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then(data => { if (data?.current) setCurrentVersion(data.current) })
-      .catch(() => {})
+      .catch((error: unknown) => {
+        console.error('[GeneralSettings] Failed to load current version', error)
+      })
   }, [token])
 
   async function handleCheckUpdate() {
@@ -56,15 +61,20 @@ export default function GeneralSettings({ token, themeMode, onToggleTheme, onClo
       } else {
         setUpdateStatus('available')
       }
-    } catch {
+    } catch (error: unknown) {
+      console.error('[GeneralSettings] Failed to check updates', error)
       setUpdateStatus('error')
     }
   }
 
-  function handleCopyCmd() {
-    navigator.clipboard.writeText(UPDATE_CMD)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  async function handleCopyCmd() {
+    try {
+      await navigator.clipboard.writeText(UPDATE_CMD)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (error: unknown) {
+      console.error('[GeneralSettings] Failed to copy update command', error)
+    }
   }
 
   function handleLanguageChange(e: React.ChangeEvent<HTMLSelectElement>) {
