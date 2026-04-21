@@ -6,13 +6,9 @@
 
 ## Current Priorities (2026-04)
 
-只记录当前仍开的 backlog。已落地能力不要继续挂在这里重复计账。
+当前没有新的 open backlog。
 
-| Priority | Item | Notes |
-|---|---|---|
-| P1 | Codex 历史浏览器级回归 | 用浏览器 smoke 覆盖桌面入口、移动入口、`warning / empty / error / resume` 主路径；细节见 `TODOS.md` |
-| P1 | Codex 历史可访问性收口 | 收口 `CodexSessionsPanel` 的键盘路径、ARIA/读屏语义和最小验证证据；细节见 `TODOS.md` |
-| P2 | `nexus` 启动 `left-over process` 运维债 | 收口 `systemd` 重启时的残留进程告警，不破坏 tmux 持久化语义 |
+权威状态以 [TODOS.md](../TODOS.md) 和 [CURRENT-ROADMAP.md](CURRENT-ROADMAP.md) 为准；这里不再重复计账已关闭事项。
 
 ## Later Backlog
 
@@ -27,7 +23,7 @@
 - `F-20 Unified session manager`
 - `Codex history sessions tab`
 
-这些能力已经落地或至少已进入“已上线、待补验证”的阶段，不再按“待实现功能”管理。
+这些能力已经落地，不再按“待实现功能”管理。
 
 ## Notes
 

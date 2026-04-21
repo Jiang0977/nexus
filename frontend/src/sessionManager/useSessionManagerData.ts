@@ -38,15 +38,20 @@ export function useSessionManagerData({ currentProject, t, token }: UseSessionMa
     if (!opts?.silent) setLoadingChannels(true)
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(projectName)}/channels`, { headers })
+      if (!response.ok) {
+        setChannels([])
+        setError(await parseApiError(response, t('sessionMgr.loadFailed')))
+        return
+      }
       const data = await response.json() as { channels?: Channel[] }
       setChannels(data.channels || [])
     } catch (fetchError: unknown) {
-      console.error('Load channels failed:', fetchError)
       setChannels([])
+      setError(parseNetworkError(fetchError))
     } finally {
       if (!opts?.silent) setLoadingChannels(false)
     }
-  }, [headers])
+  }, [headers, t])
 
   useEffect(() => {
     void fetchProjects()

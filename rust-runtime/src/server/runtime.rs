@@ -1,45 +1,47 @@
-const DEFAULT_INTERACTIVE_SHELL: &str = "unset HOST; exec zsh -i";
-const TOKEN_TTL_SECONDS: u64 = 30 * 24 * 60 * 60;
-const DEFAULT_TASK_HISTORY_LIMIT: usize = 50;
-const DEFAULT_MAX_TASKS: usize = 200;
-const MAX_TASK_OUTPUT_LENGTH: usize = 10_000;
-const MAX_TASK_ERROR_LENGTH: usize = 1_000;
-const MAX_TASK_PROMPT_LENGTH: usize = 1_000;
-const OUTPUT_SNAPSHOT_FALLBACK_LINES: u32 = 200;
-const OUTPUT_SNAPSHOT_FALLBACK_IDLE_MS: u64 = 4_000;
-const TASK_INTERRUPT_MESSAGE: &str = "(服务重启，任务中断)";
-const CODEX_LOGIN_STATUS_TIMEOUT_MS: u64 = 15_000;
-const CODEX_EXEC_VALIDATE_TIMEOUT_MS: u64 = 120_000;
-const CC_SWITCH_SYNC_SOURCE: &str = "cc-switch";
-const TELEGRAM_RUNNING_INTERVAL_MS: u64 = 5_000;
-const TELEGRAM_START_MESSAGE: &str = "👋 *Nexus Bot* 已就绪\n\n发送任意文字，我会用 `claude -p` 在你的服务器上执行并回复结果。\n\n发送图片或文件，我会保存到当前 session 目录。\n\n`/sessions` — 查看 tmux 窗口列表\n`/switch <编号>` — 切换目标窗口";
+use super::*;
+
+pub(super) const DEFAULT_INTERACTIVE_SHELL: &str = "unset HOST; exec zsh -i";
+pub(super) const TOKEN_TTL_SECONDS: u64 = 30 * 24 * 60 * 60;
+pub(super) const DEFAULT_TASK_HISTORY_LIMIT: usize = 50;
+pub(super) const DEFAULT_MAX_TASKS: usize = 200;
+pub(super) const MAX_TASK_OUTPUT_LENGTH: usize = 10_000;
+pub(super) const MAX_TASK_ERROR_LENGTH: usize = 1_000;
+pub(super) const MAX_TASK_PROMPT_LENGTH: usize = 1_000;
+pub(super) const OUTPUT_SNAPSHOT_FALLBACK_LINES: u32 = 200;
+pub(super) const OUTPUT_SNAPSHOT_FALLBACK_IDLE_MS: u64 = 4_000;
+pub(super) const TASK_INTERRUPT_MESSAGE: &str = "(服务重启，任务中断)";
+pub(super) const CODEX_LOGIN_STATUS_TIMEOUT_MS: u64 = 15_000;
+pub(super) const CODEX_EXEC_VALIDATE_TIMEOUT_MS: u64 = 120_000;
+pub(super) const CC_SWITCH_SYNC_SOURCE: &str = "cc-switch";
+pub(super) const TELEGRAM_RUNNING_INTERVAL_MS: u64 = 5_000;
+pub(super) const TELEGRAM_START_MESSAGE: &str = "👋 *Nexus Bot* 已就绪\n\n发送任意文字，我会用 `claude -p` 在你的服务器上执行并回复结果。\n\n发送图片或文件，我会保存到当前 session 目录。\n\n`/sessions` — 查看 tmux 窗口列表\n`/switch <编号>` — 切换目标窗口";
 
 #[derive(Clone)]
-struct AppState {
-    jwt_secret: Arc<String>,
-    password_hash: Arc<String>,
-    default_tmux_session: Arc<String>,
-    codex_history_enabled: bool,
-    ws_connection_counter: Arc<AtomicUsize>,
-    github_repo: Arc<String>,
-    project_root: Arc<PathBuf>,
-    workspace_root: Arc<String>,
-    configs_dir: Arc<PathBuf>,
-    codex_configs_dir: Arc<PathBuf>,
-    codex_validate_dir: Arc<PathBuf>,
-    project_defaults_file: Arc<PathBuf>,
-    toolbar_config_file: Arc<PathBuf>,
-    uploads_dir: Arc<PathBuf>,
-    proxy_vars: Arc<Vec<(String, String)>>,
-    public_dir: Arc<PathBuf>,
-    frontend_dist_dir: Arc<PathBuf>,
-    runtime_manager: Arc<RuntimeManager>,
-    task_manager: Arc<TaskManager>,
-    telegram_bridge: Arc<TelegramBridge>,
+pub(super) struct AppState {
+    pub(super) jwt_secret: Arc<String>,
+    pub(super) password_hash: Arc<String>,
+    pub(super) default_tmux_session: Arc<String>,
+    pub(super) codex_history_enabled: bool,
+    pub(super) ws_connection_counter: Arc<AtomicUsize>,
+    pub(super) github_repo: Arc<String>,
+    pub(super) project_root: Arc<PathBuf>,
+    pub(super) workspace_root: Arc<String>,
+    pub(super) configs_dir: Arc<PathBuf>,
+    pub(super) codex_configs_dir: Arc<PathBuf>,
+    pub(super) codex_validate_dir: Arc<PathBuf>,
+    pub(super) project_defaults_file: Arc<PathBuf>,
+    pub(super) toolbar_config_file: Arc<PathBuf>,
+    pub(super) uploads_dir: Arc<PathBuf>,
+    pub(super) proxy_vars: Arc<Vec<(String, String)>>,
+    pub(super) public_dir: Arc<PathBuf>,
+    pub(super) frontend_dist_dir: Arc<PathBuf>,
+    pub(super) runtime_manager: Arc<RuntimeManager>,
+    pub(super) task_manager: Arc<TaskManager>,
+    pub(super) telegram_bridge: Arc<TelegramBridge>,
 }
 
 impl AppState {
-    fn find_static_file(&self, request_path: &str) -> Option<PathBuf> {
+    pub(super) fn find_static_file(&self, request_path: &str) -> Option<PathBuf> {
         let safe_path = sanitize_request_path(request_path)?;
         if safe_path.as_os_str().is_empty() {
             return None;
@@ -55,20 +57,20 @@ impl AppState {
         None
     }
 
-    fn index_path(&self) -> PathBuf {
+    pub(super) fn index_path(&self) -> PathBuf {
         self.frontend_dist_dir.join("index.html")
     }
 }
 
-struct RuntimeManager {
-    task_runner: Arc<ManagedRuntime>,
-    pty_broker: Arc<ManagedRuntime>,
-    window_launch: Arc<ManagedRuntime>,
-    session_management: Arc<ManagedRuntime>,
+pub(super) struct RuntimeManager {
+    pub(super) task_runner: Arc<ManagedRuntime>,
+    pub(super) pty_broker: Arc<ManagedRuntime>,
+    pub(super) window_launch: Arc<ManagedRuntime>,
+    pub(super) session_management: Arc<ManagedRuntime>,
 }
 
 impl RuntimeManager {
-    async fn new(configs: RuntimeConfigs) -> Self {
+    pub(super) async fn new(configs: RuntimeConfigs) -> Self {
         Self {
             task_runner: ManagedRuntime::boot(configs.task_runner).await,
             pty_broker: ManagedRuntime::boot(configs.pty_broker).await,
@@ -77,7 +79,7 @@ impl RuntimeManager {
         }
     }
 
-    async fn runtime_status_payload(&self) -> Value {
+    pub(super) async fn runtime_status_payload(&self) -> Value {
         json!({
             "server": {
                 "mode": "rust",
@@ -91,14 +93,14 @@ impl RuntimeManager {
         })
     }
 
-    async fn shutdown_all(&self) {
+    pub(super) async fn shutdown_all(&self) {
         self.task_runner.shutdown().await;
         self.pty_broker.shutdown().await;
         self.window_launch.shutdown().await;
         self.session_management.shutdown().await;
     }
 
-    async fn session_management_request(
+    pub(super) async fn session_management_request(
         &self,
         method: &str,
         params: Value,
@@ -106,38 +108,50 @@ impl RuntimeManager {
         self.session_management.request(method, params).await
     }
 
-    async fn window_launch_request(&self, method: &str, params: Value) -> Result<Value, String> {
+    pub(super) async fn window_launch_request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
         self.window_launch.request(method, params).await
     }
 
-    async fn pty_broker_request(&self, method: &str, params: Value) -> Result<Value, String> {
+    pub(super) async fn pty_broker_request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
         self.pty_broker.request(method, params).await
     }
 
-    async fn pty_broker_notify(&self, method: &str, params: Value) -> Result<(), String> {
+    pub(super) async fn pty_broker_notify(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<(), String> {
         self.pty_broker.notify(method, params).await
     }
 
-    async fn pty_broker_subscribe_events(
+    pub(super) async fn pty_broker_subscribe_events(
         &self,
     ) -> Option<broadcast::Receiver<RuntimeEventEnvelope>> {
         self.pty_broker.subscribe_events().await
     }
 }
 
-struct ManagedRuntime {
-    display_name: &'static str,
-    inner: Mutex<ManagedRuntimeState>,
+pub(super) struct ManagedRuntime {
+    pub(super) display_name: &'static str,
+    pub(super) inner: Mutex<ManagedRuntimeState>,
 }
 
-struct ManagedRuntimeState {
-    ready_timeout: Duration,
-    process: Option<RuntimeProcess>,
-    status: Value,
+pub(super) struct ManagedRuntimeState {
+    pub(super) ready_timeout: Duration,
+    pub(super) process: Option<RuntimeProcess>,
+    pub(super) status: Value,
 }
 
 impl ManagedRuntime {
-    async fn boot(config: RuntimeServiceConfig) -> Arc<Self> {
+    pub(super) async fn boot(config: RuntimeServiceConfig) -> Arc<Self> {
         let runtime = Arc::new(Self {
             display_name: config.display_name,
             inner: Mutex::new(ManagedRuntimeState {
@@ -158,7 +172,7 @@ impl ManagedRuntime {
         runtime
     }
 
-    async fn boot_process(
+    pub(super) async fn boot_process(
         &self,
         executable: PathBuf,
         args: Vec<String>,
@@ -184,7 +198,7 @@ impl ManagedRuntime {
         }
     }
 
-    async fn runtime_status(&self) -> Value {
+    pub(super) async fn runtime_status(&self) -> Value {
         let mut guard = self.inner.lock().await;
         let ready_timeout = guard.ready_timeout;
 
@@ -217,7 +231,7 @@ impl ManagedRuntime {
         }
     }
 
-    async fn shutdown(&self) {
+    pub(super) async fn shutdown(&self) {
         let mut guard = self.inner.lock().await;
         if let Some(mut process) = guard.process.take() {
             let _ = process.shutdown(guard.ready_timeout).await;
@@ -227,7 +241,7 @@ impl ManagedRuntime {
         }
     }
 
-    async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+    pub(super) async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
         let mut guard = self.inner.lock().await;
         let ready_timeout = guard.ready_timeout;
 
@@ -241,7 +255,7 @@ impl ManagedRuntime {
         process.request(method, params, ready_timeout).await
     }
 
-    async fn notify(&self, method: &str, params: Value) -> Result<(), String> {
+    pub(super) async fn notify(&self, method: &str, params: Value) -> Result<(), String> {
         let mut guard = self.inner.lock().await;
 
         let Some(process) = guard.process.as_mut() else {
@@ -254,7 +268,9 @@ impl ManagedRuntime {
         process.notify(method, params).await
     }
 
-    async fn subscribe_events(&self) -> Option<broadcast::Receiver<RuntimeEventEnvelope>> {
+    pub(super) async fn subscribe_events(
+        &self,
+    ) -> Option<broadcast::Receiver<RuntimeEventEnvelope>> {
         let guard = self.inner.lock().await;
         guard.process.as_ref().map(RuntimeProcess::subscribe_events)
     }
@@ -263,24 +279,24 @@ impl ManagedRuntime {
 type PendingRuntimeRequests = Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>>;
 
 #[derive(Clone, Debug)]
-struct RuntimeEventEnvelope {
-    event: String,
-    params: Value,
+pub(super) struct RuntimeEventEnvelope {
+    pub(super) event: String,
+    pub(super) params: Value,
 }
 
-struct RuntimeProcess {
-    display_name: &'static str,
-    child: Child,
-    stdin: ChildStdin,
-    request_counter: u64,
-    pending_requests: PendingRuntimeRequests,
-    event_tx: broadcast::Sender<RuntimeEventEnvelope>,
-    closed_error: Arc<Mutex<Option<String>>>,
-    closing: Arc<AtomicBool>,
+pub(super) struct RuntimeProcess {
+    pub(super) display_name: &'static str,
+    pub(super) child: Child,
+    pub(super) stdin: ChildStdin,
+    pub(super) request_counter: u64,
+    pub(super) pending_requests: PendingRuntimeRequests,
+    pub(super) event_tx: broadcast::Sender<RuntimeEventEnvelope>,
+    pub(super) closed_error: Arc<Mutex<Option<String>>>,
+    pub(super) closing: Arc<AtomicBool>,
 }
 
 impl RuntimeProcess {
-    async fn spawn(
+    pub(super) async fn spawn(
         display_name: &'static str,
         executable: &Path,
         args: &[String],
@@ -340,7 +356,7 @@ impl RuntimeProcess {
         })
     }
 
-    async fn request(
+    pub(super) async fn request(
         &mut self,
         method: &str,
         params: Value,
@@ -422,7 +438,7 @@ impl RuntimeProcess {
         }
     }
 
-    async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
+    pub(super) async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
         if let Some(exit_status) = self.child.try_wait().map_err(|error| {
             format!(
                 "{} runtime wait failed before notify: {}",
@@ -466,17 +482,17 @@ impl RuntimeProcess {
             .map_err(|error| format!("failed to flush {} notify: {}", self.display_name, error))
     }
 
-    fn subscribe_events(&self) -> broadcast::Receiver<RuntimeEventEnvelope> {
+    pub(super) fn subscribe_events(&self) -> broadcast::Receiver<RuntimeEventEnvelope> {
         self.event_tx.subscribe()
     }
 
-    async fn shutdown(&mut self, request_timeout: Duration) -> Result<(), String> {
+    pub(super) async fn shutdown(&mut self, request_timeout: Duration) -> Result<(), String> {
         self.closing.store(true, Ordering::SeqCst);
         let _ = self.request("shutdown", json!({}), request_timeout).await;
         self.terminate().await
     }
 
-    async fn terminate(&mut self) -> Result<(), String> {
+    pub(super) async fn terminate(&mut self) -> Result<(), String> {
         self.closing.store(true, Ordering::SeqCst);
         if self
             .child
@@ -498,7 +514,7 @@ impl RuntimeProcess {
     }
 }
 
-fn spawn_runtime_stdout_dispatcher(
+pub(super) fn spawn_runtime_stdout_dispatcher(
     display_name: &'static str,
     stdout: ChildStdout,
     pending_requests: PendingRuntimeRequests,
@@ -598,7 +614,7 @@ fn spawn_runtime_stdout_dispatcher(
     });
 }
 
-async fn handle_runtime_dispatch_failure(
+pub(super) async fn handle_runtime_dispatch_failure(
     pending_requests: &PendingRuntimeRequests,
     event_tx: &broadcast::Sender<RuntimeEventEnvelope>,
     closed_error: &Arc<Mutex<Option<String>>>,
@@ -632,161 +648,165 @@ async fn handle_runtime_dispatch_failure(
 }
 
 #[derive(Deserialize)]
-struct RuntimeWireMessage {
-    kind: String,
-    id: Option<String>,
-    ok: Option<bool>,
-    result: Option<Value>,
-    event: Option<String>,
-    params: Option<Value>,
-    error: Option<RuntimeWireError>,
+pub(super) struct RuntimeWireMessage {
+    pub(super) kind: String,
+    pub(super) id: Option<String>,
+    pub(super) ok: Option<bool>,
+    pub(super) result: Option<Value>,
+    pub(super) event: Option<String>,
+    pub(super) params: Option<Value>,
+    pub(super) error: Option<RuntimeWireError>,
 }
 
 #[derive(Deserialize)]
-struct RuntimeWireError {
-    message: Option<String>,
+pub(super) struct RuntimeWireError {
+    pub(super) message: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct LoginRequest {
-    password: Option<String>,
+pub(super) struct LoginRequest {
+    pub(super) password: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct AuthClaims {
-    exp: u64,
+pub(super) struct AuthClaims {
+    pub(super) exp: u64,
 }
 
 #[derive(Deserialize, Default)]
-struct SessionQuery {
-    session: Option<String>,
+pub(super) struct SessionQuery {
+    pub(super) session: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct ScrollbackQuery {
-    session: Option<String>,
-    lines: Option<String>,
+pub(super) struct ScrollbackQuery {
+    pub(super) session: Option<String>,
+    pub(super) lines: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct WsQuery {
-    token: Option<String>,
-    session: Option<String>,
-    window: Option<String>,
+pub(super) struct WsQuery {
+    pub(super) token: Option<String>,
+    pub(super) session: Option<String>,
+    pub(super) window: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct OverwriteQuery {
-    overwrite: Option<String>,
+pub(super) struct OverwriteQuery {
+    pub(super) overwrite: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct PathQuery {
-    path: Option<String>,
+pub(super) struct PathQuery {
+    pub(super) path: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct WorkspaceServeQuery {
-    path: Option<String>,
-    token: Option<String>,
-    dl: Option<String>,
+pub(super) struct WorkspaceServeQuery {
+    pub(super) path: Option<String>,
+    pub(super) token: Option<String>,
+    pub(super) dl: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct KindQuery {
-    kind: Option<String>,
+pub(super) struct KindQuery {
+    pub(super) kind: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct CodexSessionsQuery {
-    project: Option<String>,
-    limit: Option<String>,
-    cursor: Option<String>,
+pub(super) struct CodexSessionsQuery {
+    pub(super) project: Option<String>,
+    pub(super) limit: Option<String>,
+    pub(super) cursor: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct ProjectQuery {
-    project: Option<String>,
+pub(super) struct ProjectQuery {
+    pub(super) project: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct ProjectBody {
-    project: Option<String>,
+pub(super) struct ProjectBody {
+    pub(super) project: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct NameBody {
-    name: Option<String>,
+pub(super) struct NameBody {
+    pub(super) name: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct WorkspaceCreateEntryBody {
-    path: Option<String>,
-    name: Option<String>,
-    content: Option<String>,
+pub(super) struct WorkspaceCreateEntryBody {
+    pub(super) path: Option<String>,
+    pub(super) name: Option<String>,
+    pub(super) content: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct WorkspaceWriteFileBody {
-    path: Option<String>,
-    content: Option<String>,
+pub(super) struct WorkspaceWriteFileBody {
+    pub(super) path: Option<String>,
+    pub(super) content: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct WorkspaceDeleteBody {
-    path: Option<String>,
+pub(super) struct WorkspaceDeleteBody {
+    pub(super) path: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct WorkspaceRenameBody {
-    path: Option<String>,
+pub(super) struct WorkspaceRenameBody {
+    pub(super) path: Option<String>,
     #[serde(default, alias = "newName")]
-    new_name: Option<String>,
+    pub(super) new_name: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct WorkspaceTransferBody {
+pub(super) struct WorkspaceTransferBody {
     #[serde(default, alias = "sourcePath")]
-    source_path: Option<String>,
+    pub(super) source_path: Option<String>,
     #[serde(default, alias = "targetPath")]
-    target_path: Option<String>,
+    pub(super) target_path: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct IdBody {
-    id: Option<String>,
+pub(super) struct IdBody {
+    pub(super) id: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct CreateProjectBody {
-    path: Option<String>,
-    profile: Option<String>,
+pub(super) struct CreateProjectBody {
+    pub(super) path: Option<String>,
+    pub(super) profile: Option<String>,
     #[serde(default, alias = "shellType")]
-    shell_type: Option<String>,
+    pub(super) shell_type: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct WindowLaunchBody {
+pub(super) struct WindowLaunchBody {
     #[serde(default, alias = "relPath")]
-    rel_path: Option<String>,
-    profile: Option<String>,
+    pub(super) rel_path: Option<String>,
+    pub(super) profile: Option<String>,
     #[serde(default, alias = "shellType")]
-    shell_type: Option<String>,
+    pub(super) shell_type: Option<String>,
     #[serde(default, alias = "sessionName")]
-    session: Option<String>,
+    pub(super) session: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
-struct TaskBody {
+pub(super) struct TaskBody {
     #[serde(default, alias = "sessionName")]
-    session_name: Option<String>,
-    prompt: Option<String>,
-    profile: Option<String>,
+    pub(super) session_name: Option<String>,
+    pub(super) prompt: Option<String>,
+    pub(super) profile: Option<String>,
     #[serde(default, alias = "tmuxSession")]
-    tmux_session: Option<String>,
+    pub(super) tmux_session: Option<String>,
 }
 
-async fn send_websocket_close(socket: &mut WebSocket, code: u16, reason: &str) -> Result<(), ()> {
+pub(super) async fn send_websocket_close(
+    socket: &mut WebSocket,
+    code: u16,
+    reason: &str,
+) -> Result<(), ()> {
     socket
         .send(Message::Close(Some(CloseFrame {
             code,
@@ -796,7 +816,7 @@ async fn send_websocket_close(socket: &mut WebSocket, code: u16, reason: &str) -
         .map_err(|_| ())
 }
 
-fn authorize(headers: &HeaderMap, state: &AppState) -> Result<(), ()> {
+pub(super) fn authorize(headers: &HeaderMap, state: &AppState) -> Result<(), ()> {
     let Some(auth_header) = headers
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -813,13 +833,13 @@ fn authorize(headers: &HeaderMap, state: &AppState) -> Result<(), ()> {
         .ok_or(())
 }
 
-fn require_auth(headers: &HeaderMap, state: &AppState) -> Option<Response> {
+pub(super) fn require_auth(headers: &HeaderMap, state: &AppState) -> Option<Response> {
     authorize(headers, state)
         .err()
         .map(|_| json_error(StatusCode::UNAUTHORIZED, "unauthorized"))
 }
 
-async fn serve_index(state: &AppState) -> Response {
+pub(super) async fn serve_index(state: &AppState) -> Response {
     let index_path = state.index_path();
     if !index_path.is_file() {
         return (
@@ -832,7 +852,7 @@ async fn serve_index(state: &AppState) -> Response {
     serve_file(index_path).await
 }
 
-async fn serve_file(path: PathBuf) -> Response {
+pub(super) async fn serve_file(path: PathBuf) -> Response {
     match fs::read(&path).await {
         Ok(bytes) => {
             let mime = from_path(&path).first_or_octet_stream();
@@ -849,7 +869,7 @@ async fn serve_file(path: PathBuf) -> Response {
     }
 }
 
-fn normalize_runtime_status(value: Value) -> Value {
+pub(super) fn normalize_runtime_status(value: Value) -> Value {
     let mut object = match value {
         Value::Object(object) => object,
         _ => {
@@ -864,14 +884,14 @@ fn normalize_runtime_status(value: Value) -> Value {
     Value::Object(object)
 }
 
-fn runtime_request_response(result: Result<Value, String>) -> Response {
+pub(super) fn runtime_request_response(result: Result<Value, String>) -> Response {
     match result {
         Ok(payload) => Json(payload).into_response(),
         Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
     }
 }
 
-async fn resolve_session_output_snapshot(
+pub(super) async fn resolve_session_output_snapshot(
     runtime_result: Result<Value, String>,
     session: &str,
     window_index: u32,
@@ -915,7 +935,7 @@ async fn resolve_session_output_snapshot(
     Ok(Value::Object(snapshot))
 }
 
-fn runtime_unconfigured_status() -> Value {
+pub(super) fn runtime_unconfigured_status() -> Value {
     json!({
         "mode": "unconfigured",
         "ready": false,
@@ -924,7 +944,7 @@ fn runtime_unconfigured_status() -> Value {
     })
 }
 
-fn runtime_error_status(source: &str, error: &str) -> Value {
+pub(super) fn runtime_error_status(source: &str, error: &str) -> Value {
     json!({
         "mode": "rust",
         "ready": false,
@@ -933,7 +953,7 @@ fn runtime_error_status(source: &str, error: &str) -> Value {
     })
 }
 
-fn log_runtime_ready(display_name: &str, status: &Value) {
+pub(super) fn log_runtime_ready(display_name: &str, status: &Value) {
     let source = status
         .get("source")
         .and_then(Value::as_str)
@@ -945,13 +965,16 @@ fn log_runtime_ready(display_name: &str, status: &Value) {
     println!("{display_name} runtime ready: {source}@{version}");
 }
 
-fn project_from_sources(body: Option<Json<ProjectBody>>, query_project: Option<String>) -> String {
+pub(super) fn project_from_sources(
+    body: Option<Json<ProjectBody>>,
+    query_project: Option<String>,
+) -> String {
     body.and_then(|Json(payload)| payload.project)
         .or(query_project)
         .unwrap_or_default()
 }
 
-async fn launch_window_via_runtime(
+pub(super) async fn launch_window_via_runtime(
     state: &AppState,
     session_name: String,
     cwd: String,
@@ -1014,7 +1037,7 @@ async fn launch_window_via_runtime(
     .into_response()
 }
 
-fn proxy_vars_json(state: &AppState) -> Value {
+pub(super) fn proxy_vars_json(state: &AppState) -> Value {
     Value::Object(
         state
             .proxy_vars
@@ -1024,7 +1047,7 @@ fn proxy_vars_json(state: &AppState) -> Value {
     )
 }
 
-async fn list_all_session_names_from_runtime(state: &AppState) -> Vec<String> {
+pub(super) async fn list_all_session_names_from_runtime(state: &AppState) -> Vec<String> {
     match state
         .runtime_manager
         .session_management_request("listAllSessionNames", json!({}))
@@ -1038,7 +1061,10 @@ async fn list_all_session_names_from_runtime(state: &AppState) -> Vec<String> {
     }
 }
 
-async fn list_channel_names_from_runtime(state: &AppState, project_name: &str) -> Vec<String> {
+pub(super) async fn list_channel_names_from_runtime(
+    state: &AppState,
+    project_name: &str,
+) -> Vec<String> {
     match state
         .runtime_manager
         .session_management_request(
@@ -1066,7 +1092,10 @@ async fn list_channel_names_from_runtime(state: &AppState, project_name: &str) -
     }
 }
 
-async fn resolve_session_cwd_from_runtime(state: &AppState, session_name: &str) -> String {
+pub(super) async fn resolve_session_cwd_from_runtime(
+    state: &AppState,
+    session_name: &str,
+) -> String {
     match state
         .runtime_manager
         .session_management_request("getSessionCwd", json!({ "sessionName": session_name }))
@@ -1082,7 +1111,7 @@ async fn resolve_session_cwd_from_runtime(state: &AppState, session_name: &str) 
     }
 }
 
-async fn resolve_task_cwd_from_runtime(
+pub(super) async fn resolve_task_cwd_from_runtime(
     state: &AppState,
     tmux_session: &str,
     session_name: &str,
@@ -1120,7 +1149,7 @@ async fn resolve_task_cwd_from_runtime(
     }
 }
 
-async fn capture_tmux_scrollback(
+pub(super) async fn capture_tmux_scrollback(
     session: &str,
     window_index: u32,
     lines: u32,
@@ -1155,14 +1184,17 @@ async fn capture_tmux_scrollback(
     Ok(content)
 }
 
-async fn read_toolbar_config_file(file_path: &Path) -> Value {
+pub(super) async fn read_toolbar_config_file(file_path: &Path) -> Value {
     match fs::read_to_string(file_path).await {
         Ok(raw) => serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null),
         Err(_) => Value::Null,
     }
 }
 
-async fn write_toolbar_config_file(file_path: &Path, payload: &Value) -> Result<(), String> {
+pub(super) async fn write_toolbar_config_file(
+    file_path: &Path,
+    payload: &Value,
+) -> Result<(), String> {
     if let Some(parent) = file_path.parent() {
         fs::create_dir_all(parent)
             .await
@@ -1174,7 +1206,7 @@ async fn write_toolbar_config_file(file_path: &Path, payload: &Value) -> Result<
         .map_err(|error| error.to_string())
 }
 
-fn header_string(headers: &HeaderMap, key: &str) -> Option<String> {
+pub(super) fn header_string(headers: &HeaderMap, key: &str) -> Option<String> {
     headers
         .get(key)
         .and_then(|value| value.to_str().ok())
@@ -1182,12 +1214,12 @@ fn header_string(headers: &HeaderMap, key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn forwarded_header_value(headers: &HeaderMap, key: &str) -> Option<String> {
+pub(super) fn forwarded_header_value(headers: &HeaderMap, key: &str) -> Option<String> {
     header_string(headers, key)
         .map(|value| value.split(',').next().unwrap_or("").trim().to_string())
 }
 
-fn json_value_to_string(value: Option<&Value>) -> Option<String> {
+pub(super) fn json_value_to_string(value: Option<&Value>) -> Option<String> {
     match value {
         Some(Value::String(text)) => Some(text.clone()),
         Some(Value::Number(number)) => Some(number.to_string()),
@@ -1195,19 +1227,23 @@ fn json_value_to_string(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn telegram_progress_message(session_name: &str, preview: Option<&str>) -> String {
+pub(super) fn telegram_progress_message(session_name: &str, preview: Option<&str>) -> String {
     match preview.map(str::trim).filter(|value| !value.is_empty()) {
         Some(preview) => format!("⏳ *执行中*（session: `{session_name}`）\n```\n{preview}\n```"),
         None => format!("⏳ *执行中*（session: `{session_name}`）\n\n_等待输出..._"),
     }
 }
 
-fn telegram_done_message(session_name: &str, exit_code: Option<i32>, result: &str) -> String {
+pub(super) fn telegram_done_message(
+    session_name: &str,
+    exit_code: Option<i32>,
+    result: &str,
+) -> String {
     let status = if exit_code == Some(0) { "✅" } else { "❌" };
     format!("{status} *执行完成*（session: `{session_name}`）\n```\n{result}\n```")
 }
 
-fn telegram_file_target(message: &TelegramMessage) -> Result<(String, String), String> {
+pub(super) fn telegram_file_target(message: &TelegramMessage) -> Result<(String, String), String> {
     if let Some(photos) = message.photo.as_ref().filter(|photos| !photos.is_empty()) {
         let Some(photo) = photos.last() else {
             return Err("telegram photo missing".to_string());
@@ -1236,7 +1272,7 @@ fn telegram_file_target(message: &TelegramMessage) -> Result<(String, String), S
     Err("telegram file missing".to_string())
 }
 
-fn require_workspace_auth(
+pub(super) fn require_workspace_auth(
     headers: &HeaderMap,
     query_token: Option<&str>,
     state: &AppState,
@@ -1253,7 +1289,7 @@ fn require_workspace_auth(
         .map(|_| (StatusCode::UNAUTHORIZED, "unauthorized").into_response())
 }
 
-fn resolve_workspace_input_path(
+pub(super) fn resolve_workspace_input_path(
     workspace_root: &str,
     input_path: Option<&str>,
     allow_empty: bool,
@@ -1284,7 +1320,7 @@ fn resolve_workspace_input_path(
     Ok(normalized)
 }
 
-async fn resolve_workspace_serve_file_path(
+pub(super) async fn resolve_workspace_serve_file_path(
     workspace_root: &str,
     query_path: Option<&str>,
     request_path: &str,
@@ -1322,7 +1358,7 @@ async fn resolve_workspace_serve_file_path(
     Ok(full_path)
 }
 
-fn spawn_stderr_logger(display_name: &'static str, stderr: ChildStderr) {
+pub(super) fn spawn_stderr_logger(display_name: &'static str, stderr: ChildStderr) {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
@@ -1334,24 +1370,24 @@ fn spawn_stderr_logger(display_name: &'static str, stderr: ChildStderr) {
     });
 }
 
-fn to_sse_event(frame: TaskSseFrame) -> SseEvent {
+pub(super) fn to_sse_event(frame: TaskSseFrame) -> SseEvent {
     let payload = serde_json::to_string(&frame.payload).unwrap_or_else(|_| "{}".to_string());
     SseEvent::default().event(frame.event).data(payload)
 }
 
-fn iso_timestamp_now() -> String {
+pub(super) fn iso_timestamp_now() -> String {
     Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-fn json_error(status: StatusCode, message: &str) -> Response {
+pub(super) fn json_error(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "error": message }))).into_response()
 }
 
-fn json_response(status: StatusCode, body: Value) -> Response {
+pub(super) fn json_response(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
 }
 
-async fn shutdown_signal() {
+pub(super) async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };

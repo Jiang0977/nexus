@@ -114,10 +114,11 @@ function runStartScript(fixture, envOverrides = {}) {
   })
 }
 
-test('package.json keeps only rust startup scripts in the default runtime path', () => {
+test('package.json keeps rust startup scripts and declares browser regression tooling explicitly', () => {
   const packageJson = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
   assert.equal(packageJson.scripts.start, 'bash ./start.sh')
   assert.equal(packageJson.scripts.test, 'npm run test:rust && npm run test:node')
+  assert.equal(packageJson.scripts['test:browser'], 'node --test tests/browserTerminalRegression.test.js')
   assert.equal(packageJson.scripts['test:rust'], 'cargo test --manifest-path rust-runtime/Cargo.toml')
   assert.equal(packageJson.scripts['test:node'], 'node --test tests/*.test.js')
   assert.equal(packageJson.scripts['typecheck:frontend'], 'npm --prefix frontend run typecheck')
@@ -136,8 +137,8 @@ test('package.json keeps only rust startup scripts in the default runtime path',
   assert.equal('build:server' in packageJson.scripts, false)
   assert.equal('typecheck:server' in packageJson.scripts, false)
   assert.equal('dependencies' in packageJson, false)
-  assert.equal('playwright' in packageJson.devDependencies, false)
-  assert.deepEqual(Object.keys(packageJson.devDependencies).sort(), ['@types/node', 'bcrypt', 'typescript', 'ws'])
+  assert.equal(packageJson.devDependencies.playwright, '^1.58.2')
+  assert.deepEqual(Object.keys(packageJson.devDependencies).sort(), ['@types/node', 'bcrypt', 'playwright', 'typescript', 'ws'])
 })
 
 test('frontend package exposes explicit typecheck and build guardrails', () => {
@@ -152,6 +153,7 @@ test('repository exposes CI and frontend dist drift guardrails', () => {
   const envExample = readFileSync(join(ROOT, '.env.example'), 'utf8')
 
   assert.match(workflow, /npm ci/)
+  assert.match(workflow, /playwright install --with-deps chromium/)
   assert.match(workflow, /npm --prefix frontend ci/)
   assert.match(workflow, /npm run check/)
   assert.match(checkScript, /frontend\/dist is out of sync/)

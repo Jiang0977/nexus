@@ -1,4 +1,10 @@
-async fn handle_pty_websocket(mut socket: WebSocket, state: Arc<AppState>, query: WsQuery) {
+use super::*;
+
+pub(super) async fn handle_pty_websocket(
+    mut socket: WebSocket,
+    state: Arc<AppState>,
+    query: WsQuery,
+) {
     let token = query.token.unwrap_or_default();
     if token.is_empty() || !validate_auth_token::<AuthClaims>(&token, state.jwt_secret.as_ref()) {
         let _ = send_websocket_close(&mut socket, 4001, "unauthorized").await;

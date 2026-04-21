@@ -2,7 +2,7 @@
 
 Status: Implemented / deployed / verified
 Date: 2026-04-15
-Branch: master
+Branch: main
 
 Reviewed by:
 - `/plan-eng-review` (2026-04-14)

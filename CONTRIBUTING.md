@@ -32,7 +32,7 @@ npm run build
 ## Before You Submit
 
 1. Read [NORTH-STAR.md](NORTH-STAR.md).
-2. Run the relevant checks, at minimum `cargo test --manifest-path rust-runtime/Cargo.toml`.
+2. Run the relevant checks, at minimum `npm run check`.
 3. Manually verify the affected browser flow when UI or startup behavior changes.
 4. Keep scope to one logical change.
 

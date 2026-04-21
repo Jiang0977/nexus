@@ -369,7 +369,7 @@ fn current_workspace_root() -> String {
 }
 
 fn read_tmux_env_value(session: &str, key: &str) -> String {
-    match run_tmux_capture(&vec![
+    match run_tmux_capture(&[
         "show-environment".to_string(),
         "-t".to_string(),
         session.to_string(),
@@ -392,7 +392,7 @@ fn read_session_discovery_path(session: &str, windows_count: usize) -> String {
     if windows_count == 0 {
         return String::new();
     }
-    match run_tmux_capture(&vec![
+    match run_tmux_capture(&[
         "list-windows".to_string(),
         "-t".to_string(),
         session.to_string(),
@@ -411,16 +411,15 @@ fn resolve_project_path(session_name: &str) -> String {
         return env_cwd;
     }
 
-    if let Ok(pane_path) = run_tmux_capture(&vec![
+    if let Ok(pane_path) = run_tmux_capture(&[
         "display-message".to_string(),
         "-t".to_string(),
         session_name.to_string(),
         "-p".to_string(),
         "#{pane_current_path}".to_string(),
-    ]) {
-        if !pane_path.is_empty() {
-            return pane_path;
-        }
+    ]) && !pane_path.is_empty()
+    {
+        return pane_path;
     }
 
     workspace_root
@@ -501,8 +500,7 @@ fn fallback_title(session_id: &str, cwd: &str) -> String {
     let normalized_cwd = normalize_path(cwd);
     if let Some(last_segment) = normalized_cwd
         .split('/')
-        .filter(|segment| !segment.is_empty())
-        .last()
+        .rfind(|segment| !segment.is_empty())
     {
         return last_segment.to_string();
     }
@@ -971,18 +969,14 @@ fn remove_session_index_entry(codex_home: &str, session_id: &str) -> Result<(), 
             continue;
         }
 
-        match serde_json::from_str::<Value>(line) {
-            Ok(parsed) => {
-                if parsed
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(|value| value == session_id)
-                    .unwrap_or(false)
-                {
-                    continue;
-                }
-            }
-            Err(_) => {}
+        if let Ok(parsed) = serde_json::from_str::<Value>(line)
+            && parsed
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|value| value == session_id)
+                .unwrap_or(false)
+        {
+            continue;
         }
 
         remaining_lines.push(line.to_string());
@@ -1051,7 +1045,7 @@ fn mark_tmux_window_as_codex_resume_session(
         return Ok(());
     }
 
-    run_tmux(&vec![
+    run_tmux(&[
         "set-option".to_string(),
         "-w".to_string(),
         "-t".to_string(),
@@ -1089,7 +1083,7 @@ fn close_tmux_windows_for_codex_session(
         return Ok(vec![]);
     }
 
-    let output = run_tmux_capture(&vec![
+    let output = run_tmux_capture(&[
         "list-windows".to_string(),
         "-t".to_string(),
         session_name.to_string(),
@@ -1112,7 +1106,7 @@ fn close_tmux_windows_for_codex_session(
         .count()
         <= matched_windows.len()
     {
-        run_tmux(&vec![
+        run_tmux(&[
             "new-window".to_string(),
             "-t".to_string(),
             session_name.to_string(),
@@ -1123,7 +1117,7 @@ fn close_tmux_windows_for_codex_session(
     }
 
     for window in &matched_windows {
-        run_tmux(&vec![
+        run_tmux(&[
             "kill-window".to_string(),
             "-t".to_string(),
             window.window_id.clone(),
@@ -1169,7 +1163,7 @@ fn list_discoverable_sessions() -> Vec<DiscoverableSession> {
     let tmux_session = current_tmux_session();
     let workspace_root = current_workspace_root();
 
-    match run_tmux_capture(&vec![
+    match run_tmux_capture(&[
         "list-sessions".to_string(),
         "-F".to_string(),
         "#{session_name}|#{session_windows}|#{session_attached}".to_string(),
@@ -1229,7 +1223,7 @@ fn list_tmux_sessions() -> Result<Value, String> {
 }
 
 fn list_all_session_names() -> Result<Value, String> {
-    let sessions = run_tmux_capture(&vec![
+    let sessions = run_tmux_capture(&[
         "list-sessions".to_string(),
         "-F".to_string(),
         "#{session_name}".to_string(),
@@ -1279,16 +1273,15 @@ fn get_session_cwd(params: GetSessionCwdParams) -> Result<Value, String> {
     let env_cwd = read_tmux_env_value(&session_name, "NEXUS_CWD");
     if !env_cwd.is_empty() {
         cwd = env_cwd;
-    } else if let Ok(pane_path) = run_tmux_capture(&vec![
+    } else if let Ok(pane_path) = run_tmux_capture(&[
         "display-message".to_string(),
         "-t".to_string(),
         session_name.clone(),
         "-p".to_string(),
         "#{pane_current_path}".to_string(),
-    ]) {
-        if !pane_path.is_empty() {
-            cwd = pane_path;
-        }
+    ]) && !pane_path.is_empty()
+    {
+        cwd = pane_path;
     }
 
     let relative = if !workspace_root.is_empty() && cwd.starts_with(&workspace_root) {
@@ -1307,7 +1300,7 @@ fn get_session_cwd(params: GetSessionCwdParams) -> Result<Value, String> {
 
 fn list_project_channels(params: ListProjectChannelsParams) -> Result<Value, String> {
     let project_name = params.project_name.trim().to_string();
-    let stdout = run_tmux_capture(&vec![
+    let stdout = run_tmux_capture(&[
         "list-windows".to_string(),
         "-t".to_string(),
         project_name.clone(),
@@ -1358,7 +1351,7 @@ fn list_session_windows(params: ListSessionWindowsParams) -> Result<Value, Strin
         session_name
     };
 
-    let stdout = run_tmux_capture(&vec![
+    let stdout = run_tmux_capture(&[
         "list-windows".to_string(),
         "-t".to_string(),
         session_name.clone(),
@@ -1404,7 +1397,7 @@ fn activate_project(params: ActivateProjectParams) -> Result<Value, String> {
         .ok();
 
     if let Some(candidate) = last_channel {
-        match run_tmux_capture(&vec![
+        match run_tmux_capture(&[
             "list-windows".to_string(),
             "-t".to_string(),
             project_name.clone(),
@@ -1439,7 +1432,7 @@ fn ensure_tmux_session(session: &str, default_shell_cmd: &str) -> Result<(), Str
         return Ok(());
     }
 
-    run_tmux(&vec![
+    run_tmux(&[
         "new-session".to_string(),
         "-d".to_string(),
         "-s".to_string(),
@@ -1451,7 +1444,7 @@ fn ensure_tmux_session(session: &str, default_shell_cmd: &str) -> Result<(), Str
 }
 
 fn set_tmux_env(session: &str, key: &str, value: &str) -> Result<(), String> {
-    run_tmux(&vec![
+    run_tmux(&[
         "set-environment".to_string(),
         "-t".to_string(),
         session.to_string(),
@@ -1480,7 +1473,7 @@ fn session_window_target(session: &str, index: &WindowIndex) -> String {
 }
 
 fn get_tmux_window_id(session: &str, index: &WindowIndex) -> String {
-    run_tmux_capture(&vec![
+    run_tmux_capture(&[
         "display-message".to_string(),
         "-t".to_string(),
         session_window_target(session, index),
@@ -1491,7 +1484,7 @@ fn get_tmux_window_id(session: &str, index: &WindowIndex) -> String {
 }
 
 fn list_tmux_window_ids(session: &str) -> Vec<String> {
-    run_tmux_capture(&vec![
+    run_tmux_capture(&[
         "list-windows".to_string(),
         "-t".to_string(),
         session.to_string(),
@@ -1509,7 +1502,7 @@ fn list_tmux_window_ids(session: &str) -> Vec<String> {
 }
 
 fn count_tmux_windows(session: &str) -> Result<usize, String> {
-    run_tmux_capture(&vec![
+    run_tmux_capture(&[
         "list-windows".to_string(),
         "-t".to_string(),
         session.to_string(),
@@ -1532,7 +1525,7 @@ fn cleanup_codex_runtime(window_id: &str) {
 }
 
 fn create_project(state: &SharedState, params: CreateProjectParams) -> Result<Value, String> {
-    run_tmux(&vec![
+    run_tmux(&[
         "new-session".to_string(),
         "-d".to_string(),
         "-s".to_string(),
@@ -1558,7 +1551,7 @@ fn create_project_channel(
 ) -> Result<Value, String> {
     ensure_tmux_session(&params.session_name, &params.default_shell_cmd)?;
     apply_proxy_vars(&params.session_name, params.proxy_vars)?;
-    run_tmux(&vec![
+    run_tmux(&[
         "new-window".to_string(),
         "-t".to_string(),
         params.session_name.clone(),
@@ -1580,7 +1573,7 @@ fn create_resume_window(
 ) -> Result<Value, String> {
     ensure_tmux_session(&params.session_name, &params.default_shell_cmd)?;
     apply_proxy_vars(&params.session_name, params.proxy_vars)?;
-    let output = run_tmux_capture(&vec![
+    let output = run_tmux_capture(&[
         "new-window".to_string(),
         "-P".to_string(),
         "-F".to_string(),
@@ -1624,7 +1617,7 @@ fn resume_codex_session(
     }
 
     apply_proxy_vars(&project_name, params.proxy_vars)?;
-    let output = run_tmux_capture(&vec![
+    let output = run_tmux_capture(&[
         "new-window".to_string(),
         "-P".to_string(),
         "-F".to_string(),
@@ -1652,7 +1645,7 @@ fn resume_codex_session(
     };
 
     mark_tmux_window_as_codex_resume_session(&window_target, &params.session_id)?;
-    let _ = run_tmux(&vec![
+    let _ = run_tmux(&[
         "select-window".to_string(),
         "-t".to_string(),
         format!("{}:{}", project_name, index),
@@ -1670,7 +1663,7 @@ fn resume_codex_session(
 }
 
 fn rename_project(params: RenameProjectParams) -> Result<Value, String> {
-    run_tmux(&vec![
+    run_tmux(&[
         "rename-session".to_string(),
         "-t".to_string(),
         params.old_name.clone(),
@@ -1687,7 +1680,7 @@ fn rename_project(params: RenameProjectParams) -> Result<Value, String> {
 
 fn delete_project(params: DeleteProjectParams) -> Result<Value, String> {
     let window_ids = list_tmux_window_ids(&params.session_name);
-    run_tmux(&vec![
+    run_tmux(&[
         "kill-session".to_string(),
         "-t".to_string(),
         params.session_name,
@@ -1703,7 +1696,7 @@ fn delete_project(params: DeleteProjectParams) -> Result<Value, String> {
 fn attach_session_window(params: AttachSessionWindowParams) -> Result<Value, String> {
     let index = params.index.as_string();
     let target = session_window_target(&params.session_name, &params.index);
-    run_tmux(&vec!["select-window".to_string(), "-t".to_string(), target])?;
+    run_tmux(&["select-window".to_string(), "-t".to_string(), target])?;
     set_tmux_env(&params.session_name, "NEXUS_LAST_CHANNEL", &index)?;
 
     Ok(serde_json::json!({ "ok": true }))
@@ -1711,7 +1704,7 @@ fn attach_session_window(params: AttachSessionWindowParams) -> Result<Value, Str
 
 fn rename_session_window(params: RenameSessionWindowParams) -> Result<Value, String> {
     let target = session_window_target(&params.session_name, &params.index);
-    run_tmux(&vec![
+    run_tmux(&[
         "rename-window".to_string(),
         "-t".to_string(),
         target,
@@ -1730,7 +1723,7 @@ fn delete_session_window(params: DeleteSessionWindowParams) -> Result<Value, Str
         params.create_fallback_shell || count_tmux_windows(&params.session_name)? <= 1;
 
     if create_fallback_shell && !params.default_shell_cmd.trim().is_empty() {
-        run_tmux(&vec![
+        run_tmux(&[
             "new-window".to_string(),
             "-t".to_string(),
             params.session_name.clone(),
@@ -1741,7 +1734,7 @@ fn delete_session_window(params: DeleteSessionWindowParams) -> Result<Value, Str
     }
 
     let target = session_window_target(&params.session_name, &params.index);
-    run_tmux(&vec!["kill-window".to_string(), "-t".to_string(), target])?;
+    run_tmux(&["kill-window".to_string(), "-t".to_string(), target])?;
     cleanup_codex_runtime(&window_id);
 
     Ok(serde_json::json!({ "ok": true }))
@@ -1791,6 +1784,7 @@ fn main() {
             }
         };
 
+        #[allow(clippy::single_match)]
         match message.kind.as_str() {
             "request" => {
                 let id = message.id.unwrap_or_default();

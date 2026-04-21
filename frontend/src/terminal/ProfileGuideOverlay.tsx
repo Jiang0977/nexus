@@ -1,4 +1,5 @@
 import { Icon } from '../icons'
+import { detectAnyProfiles } from './profileGuideApi'
 
 interface ProfileGuideOverlayProps {
   onDetected: () => void
@@ -46,19 +47,18 @@ EOF`}
         <div className="flex flex-col gap-3">
           <button
             onClick={() => {
-              Promise.all([
-                fetch('/api/configs', { headers: { Authorization: `Bearer ${token}` } }).then((response) => response.ok ? response.json() : []),
-                fetch('/api/codex-configs', { headers: { Authorization: `Bearer ${token}` } }).then((response) => response.ok ? response.json() : []),
-              ]).then(([claudeConfigs, codexConfigs]) => {
-                const hasAny =
-                  (Array.isArray(claudeConfigs) && claudeConfigs.length > 0) ||
-                  (Array.isArray(codexConfigs) && codexConfigs.length > 0)
-                if (hasAny) {
-                  onDetected()
-                  return
-                }
-                alert('仍未检测到可用的会话 Profile，请先在设置中创建，或执行上方命令写入配置')
-              })
+              detectAnyProfiles(token)
+                .then((hasAnyProfiles) => {
+                  if (hasAnyProfiles) {
+                    onDetected()
+                    return
+                  }
+                  alert('仍未检测到可用的会话 Profile，请先在设置中创建，或执行上方命令写入配置')
+                })
+                .catch((error: unknown) => {
+                  console.error('[ProfileGuideOverlay] Failed to re-check profiles', error)
+                  alert('重新检测失败，请稍后重试或检查服务日志')
+                })
             }}
             className="w-full rounded-lg border-none bg-nexus-accent py-3 text-base font-semibold text-white transition-colors hover:bg-nexus-accent/90"
           >
@@ -75,7 +75,7 @@ EOF`}
         <p className="mt-4 text-center text-xs text-nexus-muted">
           详细说明请参考{' '}
           <a
-            href="https://github.com/Jiang0977/nexus/blob/master/docs/QUICKSTART.md"
+            href="https://github.com/Jiang0977/nexus/blob/main/docs/QUICKSTART.md"
             target="_blank"
             rel="noopener noreferrer"
             className="text-nexus-accent hover:underline"

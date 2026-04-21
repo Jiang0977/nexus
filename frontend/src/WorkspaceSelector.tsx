@@ -99,8 +99,9 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
         setProfiles(data)
         setSelectedProfile((current) => pickProfileForShell(shellType, data, current))
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (cancelled) return
+        console.error('[WorkspaceSelector] Failed to load shell profiles', error)
         setProfiles([])
       })
 
@@ -120,7 +121,12 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
             setSelectedProfile('')
           }
         })
-        .catch(() => {})
+        .catch((error: unknown) => {
+          console.error('[WorkspaceSelector] Failed to load project shell defaults', {
+            error,
+            path: trimmedPath,
+          })
+        })
     }, 200)
 
     return () => window.clearTimeout(timer)

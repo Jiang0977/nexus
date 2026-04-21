@@ -1,19 +1,3 @@
-use axum::Router;
-use axum::body::Body;
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Json, Multipart, Path as AxumPath, Query, State};
-use axum::http::header::{
-    AUTHORIZATION, CACHE_CONTROL, CONNECTION, CONTENT_DISPOSITION, CONTENT_TYPE,
-};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
-use axum::response::sse::{Event as SseEvent, Sse};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{any, delete, get, post, put};
-use bcrypt::verify;
-use chrono::Utc;
-use futures_core::Stream;
-use jsonwebtoken::{EncodingKey, Header, encode};
-use mime_guess::from_path;
 use crate::auth::validate_auth_token;
 use crate::path_utils::{
     copy_path_recursive_sync, normalize_path_lexically, path_contains_parent_marker,
@@ -31,6 +15,22 @@ use crate::shell::{
     build_interactive_shell_command, build_window_name, derive_initial_window_name,
     derive_project_session_name, next_available_name, normalize_shell_type,
 };
+use axum::Router;
+use axum::body::Body;
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{Json, Multipart, Path as AxumPath, Query, State};
+use axum::http::header::{
+    AUTHORIZATION, CACHE_CONTROL, CONNECTION, CONTENT_DISPOSITION, CONTENT_TYPE,
+};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
+use axum::response::sse::{Event as SseEvent, Sse};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{any, delete, get, post, put};
+use bcrypt::verify;
+use chrono::Utc;
+use futures_core::Stream;
+use jsonwebtoken::{EncodingKey, Header, encode};
+use mime_guess::from_path;
 use reqwest::Client;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -54,13 +54,21 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
 use tokio::time::{Duration, timeout};
 
-include!("runtime.rs");
-include!("tasks.rs");
-include!("telegram.rs");
-include!("config.rs");
-include!("workspace.rs");
-include!("version.rs");
-include!("session_ws.rs");
+mod config;
+mod runtime;
+mod session_ws;
+mod tasks;
+mod telegram;
+mod version;
+mod workspace;
+
+use self::config::*;
+use self::runtime::*;
+use self::session_ws::*;
+use self::tasks::*;
+use self::telegram::*;
+use self::version::*;
+use self::workspace::*;
 
 pub async fn run() -> Result<(), Box<dyn Error>> {
     let config = match AppConfig::load() {
@@ -233,7 +241,6 @@ async fn api_ws(
 ) -> Response {
     ws.on_upgrade(move |socket| handle_pty_websocket(socket, state, query))
 }
-
 
 async fn api_session_output(
     State(state): State<Arc<AppState>>,
@@ -481,19 +488,16 @@ async fn api_codex_session_resume(
         state.workspace_root.as_ref(),
         Some(&cwd),
     );
-    let response_profile = if default_payload
-        .get("shell_type")
-        .and_then(Value::as_str)
-        == Some("codex")
-    {
-        default_payload
-            .get("profile")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-    } else {
-        None
-    };
+    let response_profile =
+        if default_payload.get("shell_type").and_then(Value::as_str) == Some("codex") {
+            default_payload
+                .get("profile")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+        } else {
+            None
+        };
     let shell_cmd = build_interactive_shell_command(
         state.project_root.as_ref(),
         state.proxy_vars.as_ref(),

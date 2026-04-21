@@ -103,8 +103,7 @@ pub fn derive_initial_window_name(cwd: &str, profile: Option<&str>) -> String {
     let dir_name = cwd
         .trim_matches('/')
         .split('/')
-        .filter(|segment| !segment.is_empty())
-        .next_back()
+        .rfind(|segment| !segment.is_empty())
         .unwrap_or("~");
 
     match profile.filter(|value| !value.is_empty()) {

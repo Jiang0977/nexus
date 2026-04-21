@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches:
+      - main
       - master
       - 'codex/**'
   pull_request:
@@ -27,8 +28,17 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Install frontend dependencies
         run: npm --prefix frontend ci
 
       - name: Run repository checks
         run: npm run check
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path rust-runtime/Cargo.toml --check
+
+      - name: Run Rust clippy
+        run: cargo clippy --manifest-path rust-runtime/Cargo.toml --all-targets --all-features -- -D warnings

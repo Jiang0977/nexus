@@ -1,62 +1,64 @@
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TaskRuntimeChunkEvent {
-    task_id: String,
-    chunk: String,
-    is_err: bool,
-}
+use super::*;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TaskRuntimeDoneEvent {
-    task_id: String,
-    exit_code: Option<i32>,
-    error_message: Option<String>,
+pub(super) struct TaskRuntimeChunkEvent {
+    pub(super) task_id: String,
+    pub(super) chunk: String,
+    pub(super) is_err: bool,
 }
 
-struct TaskRunOptions {
-    session_name: String,
-    source: String,
-    tmux_session: String,
-    profile: Option<String>,
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct TaskRuntimeDoneEvent {
+    pub(super) task_id: String,
+    pub(super) exit_code: Option<i32>,
+    pub(super) error_message: Option<String>,
 }
 
-struct TaskRunHandle {
-    task_id: String,
-    created_at: String,
-    receiver: mpsc::UnboundedReceiver<TaskSseFrame>,
+pub(super) struct TaskRunOptions {
+    pub(super) session_name: String,
+    pub(super) source: String,
+    pub(super) tmux_session: String,
+    pub(super) profile: Option<String>,
 }
 
-struct RunningTaskState {
-    output: String,
-    error_output: String,
-    sender: mpsc::UnboundedSender<TaskSseFrame>,
+pub(super) struct TaskRunHandle {
+    pub(super) task_id: String,
+    pub(super) created_at: String,
+    pub(super) receiver: mpsc::UnboundedReceiver<TaskSseFrame>,
 }
 
-struct TaskManager {
-    tasks_file: Arc<PathBuf>,
-    store_lock: Mutex<()>,
-    runtime: Arc<ManagedRuntime>,
-    running_tasks: Mutex<HashMap<String, RunningTaskState>>,
-    next_task_counter: AtomicUsize,
+pub(super) struct RunningTaskState {
+    pub(super) output: String,
+    pub(super) error_output: String,
+    pub(super) sender: mpsc::UnboundedSender<TaskSseFrame>,
+}
+
+pub(super) struct TaskManager {
+    pub(super) tasks_file: Arc<PathBuf>,
+    pub(super) store_lock: Mutex<()>,
+    pub(super) runtime: Arc<ManagedRuntime>,
+    pub(super) running_tasks: Mutex<HashMap<String, RunningTaskState>>,
+    pub(super) next_task_counter: AtomicUsize,
 }
 
 #[derive(Clone)]
-struct TaskSseFrame {
-    event: String,
-    payload: Value,
+pub(super) struct TaskSseFrame {
+    pub(super) event: String,
+    pub(super) payload: Value,
 }
 
-struct TaskEventStream {
-    task_manager: Arc<TaskManager>,
-    task_id: String,
-    start_frame: Option<TaskSseFrame>,
-    receiver: mpsc::UnboundedReceiver<TaskSseFrame>,
-    completed: bool,
+pub(super) struct TaskEventStream {
+    pub(super) task_manager: Arc<TaskManager>,
+    pub(super) task_id: String,
+    pub(super) start_frame: Option<TaskSseFrame>,
+    pub(super) receiver: mpsc::UnboundedReceiver<TaskSseFrame>,
+    pub(super) completed: bool,
 }
 
 impl TaskManager {
-    async fn new(tasks_file: PathBuf, runtime: Arc<ManagedRuntime>) -> Arc<Self> {
+    pub(super) async fn new(tasks_file: PathBuf, runtime: Arc<ManagedRuntime>) -> Arc<Self> {
         let manager = Arc::new(Self {
             tasks_file: Arc::new(tasks_file),
             store_lock: Mutex::new(()),
@@ -76,7 +78,10 @@ impl TaskManager {
         manager
     }
 
-    fn spawn_event_loop(self: &Arc<Self>, mut receiver: broadcast::Receiver<RuntimeEventEnvelope>) {
+    pub(super) fn spawn_event_loop(
+        self: &Arc<Self>,
+        mut receiver: broadcast::Receiver<RuntimeEventEnvelope>,
+    ) {
         let manager = Arc::clone(self);
         tokio::spawn(async move {
             loop {
@@ -89,7 +94,7 @@ impl TaskManager {
         });
     }
 
-    async fn run_task(
+    pub(super) async fn run_task(
         self: &Arc<Self>,
         prompt: String,
         cwd: String,
@@ -156,18 +161,18 @@ impl TaskManager {
         })
     }
 
-    async fn kill_task(&self, task_id: &str) -> Result<(), String> {
+    pub(super) async fn kill_task(&self, task_id: &str) -> Result<(), String> {
         self.runtime
             .notify("killTask", json!({ "taskId": task_id }))
             .await
     }
 
-    async fn list_recent(&self, limit: usize) -> Result<Vec<Value>, String> {
+    pub(super) async fn list_recent(&self, limit: usize) -> Result<Vec<Value>, String> {
         let tasks = self.load_tasks().await?;
         Ok(tasks.into_iter().rev().take(limit).collect())
     }
 
-    async fn delete_task(&self, id: &str) -> Result<(), String> {
+    pub(super) async fn delete_task(&self, id: &str) -> Result<(), String> {
         let _guard = self.store_lock.lock().await;
         let tasks = self.load_tasks_locked().await?;
         let filtered = tasks
@@ -177,14 +182,14 @@ impl TaskManager {
         self.save_tasks_locked(filtered).await
     }
 
-    async fn append_task(&self, task: Value) -> Result<(), String> {
+    pub(super) async fn append_task(&self, task: Value) -> Result<(), String> {
         let _guard = self.store_lock.lock().await;
         let mut tasks = self.load_tasks_locked().await?;
         tasks.push(task);
         self.save_tasks_locked(tasks).await
     }
 
-    async fn update_task(&self, id: &str, updates: Value) -> Result<(), String> {
+    pub(super) async fn update_task(&self, id: &str, updates: Value) -> Result<(), String> {
         let _guard = self.store_lock.lock().await;
         let mut tasks = self.load_tasks_locked().await?;
         for task in &mut tasks {
@@ -203,7 +208,7 @@ impl TaskManager {
         self.save_tasks_locked(tasks).await
     }
 
-    async fn mark_running_tasks_interrupted(&self, message: &str) -> Result<(), String> {
+    pub(super) async fn mark_running_tasks_interrupted(&self, message: &str) -> Result<(), String> {
         let _guard = self.store_lock.lock().await;
         let mut tasks = self.load_tasks_locked().await?;
         let mut changed = false;
@@ -228,7 +233,7 @@ impl TaskManager {
         Ok(())
     }
 
-    async fn handle_runtime_event(self: &Arc<Self>, event: RuntimeEventEnvelope) {
+    pub(super) async fn handle_runtime_event(self: &Arc<Self>, event: RuntimeEventEnvelope) {
         match event.event.as_str() {
             "chunk" => {
                 if let Ok(chunk) = serde_json::from_value::<TaskRuntimeChunkEvent>(event.params) {
@@ -266,7 +271,7 @@ impl TaskManager {
         }
     }
 
-    async fn finalize_task(
+    pub(super) async fn finalize_task(
         &self,
         task_id: &str,
         exit_code: Option<i32>,
@@ -313,7 +318,7 @@ impl TaskManager {
         });
     }
 
-    async fn fail_all_running_tasks(&self, message: &str) {
+    pub(super) async fn fail_all_running_tasks(&self, message: &str) {
         let task_ids = self
             .running_tasks
             .lock()
@@ -327,7 +332,7 @@ impl TaskManager {
         }
     }
 
-    fn next_task_id(&self) -> String {
+    pub(super) fn next_task_id(&self) -> String {
         let millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_millis())
@@ -336,12 +341,12 @@ impl TaskManager {
         format!("task_{millis}_{counter}")
     }
 
-    async fn load_tasks(&self) -> Result<Vec<Value>, String> {
+    pub(super) async fn load_tasks(&self) -> Result<Vec<Value>, String> {
         let _guard = self.store_lock.lock().await;
         self.load_tasks_locked().await
     }
 
-    async fn load_tasks_locked(&self) -> Result<Vec<Value>, String> {
+    pub(super) async fn load_tasks_locked(&self) -> Result<Vec<Value>, String> {
         match fs::read_to_string(self.tasks_file.as_ref()).await {
             Ok(raw) => serde_json::from_str::<Vec<Value>>(&raw)
                 .map_err(|error| format!("failed to parse task store: {error}")),
@@ -350,7 +355,7 @@ impl TaskManager {
         }
     }
 
-    async fn save_tasks_locked(&self, mut tasks: Vec<Value>) -> Result<(), String> {
+    pub(super) async fn save_tasks_locked(&self, mut tasks: Vec<Value>) -> Result<(), String> {
         if tasks.len() > DEFAULT_MAX_TASKS {
             tasks = tasks.split_off(tasks.len() - DEFAULT_MAX_TASKS);
         }
@@ -368,7 +373,7 @@ impl TaskManager {
 }
 
 impl TaskEventStream {
-    fn new(
+    pub(super) fn new(
         task_manager: Arc<TaskManager>,
         session_name: String,
         prompt: String,
@@ -429,7 +434,7 @@ impl Drop for TaskEventStream {
     }
 }
 
-async fn api_tasks(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+pub(super) async fn api_tasks(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
@@ -444,7 +449,7 @@ async fn api_tasks(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
     }
 }
 
-async fn api_delete_task(
+pub(super) async fn api_delete_task(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
@@ -459,7 +464,7 @@ async fn api_delete_task(
     }
 }
 
-async fn api_create_task(
+pub(super) async fn api_create_task(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<TaskBody>,

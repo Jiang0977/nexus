@@ -122,6 +122,10 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
 
   const existsUserDefault = !!localStorage.getItem(USER_DEFAULT_KEY)
 
+  function reportToolbarError(message: string, error: unknown, extra?: Record<string, unknown>) {
+    console.error(`[Toolbar] ${message}`, { error, ...extra })
+  }
+
   // 检测 PC/移动端
   useEffect(() => {
     const checkWidth = () => {
@@ -135,14 +139,19 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
   // 启动时从服务端拉取配置，覆盖 localStorage 缓存
   useEffect(() => {
     fetch('/api/toolbar-config', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then(data => {
         if (data && data.pinned && data.expanded) {
           setConfig(data)
           localStorage.setItem(CONFIG_KEY, JSON.stringify(data))
         }
       })
-      .catch(() => {})
+      .catch((error: unknown) => {
+        reportToolbarError('Failed to load toolbar config', error)
+      })
   }, [token])
 
   // 根元素：阻止 touchstart 默认行为，防止键盘弹出。
@@ -189,7 +198,13 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(c),
-    }).catch(() => {})
+    }).then((response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+    }).catch((error: unknown) => {
+      reportToolbarError('Failed to save toolbar config', error, { config: c })
+    })
   }
 
   function updateConfig(next: ToolbarConfig) { setConfig(next); saveConfig(next) }
@@ -211,12 +226,16 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
               handled = true; break
             }
           }
-        } catch {}
+        } catch (error: unknown) {
+          reportToolbarError('Failed to read clipboard items', error)
+        }
         if (!handled) {
           try {
             const text = await navigator.clipboard.readText()
             if (text) { sendToWs(text); handled = true }
-          } catch {}
+          } catch (error: unknown) {
+            reportToolbarError('Failed to read clipboard text', error)
+          }
         }
         if (handled) return
       }
@@ -236,8 +255,8 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
         }
         const text = lines.join('\n')
         await navigator.clipboard.writeText(text)
-      } catch {
-        // ignore
+      } catch (error: unknown) {
+        reportToolbarError('Failed to copy terminal content', error)
       }
     } else {
       sendToWs(key.seq)

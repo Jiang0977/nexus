@@ -1,6 +1,6 @@
 # Nexus Architecture
 
-最后更新：2026-04-20
+最后更新：2026-04-21
 
 目标：给维护者一个当前真实可运行的结构图，不保留已经删除的 Node/npm/PM2 叙事。
 
@@ -66,8 +66,8 @@ bash start.sh
 
 | 路径 | 作用 |
 |---|---|
-| `rust-runtime/src/server/mod.rs` | server 装配、router 构建、跨模块共享 handler |
-| `rust-runtime/src/server/runtime.rs` | child runtime 可执行路径与进程编排 |
+| `rust-runtime/src/server/mod.rs` | server 入口、router 装配、服务启动与 graceful shutdown |
+| `rust-runtime/src/server/runtime.rs` | server 共享核心：`AppState`、managed runtimes、请求 DTO 与通用 helper |
 | `rust-runtime/src/server/tasks.rs` | task runtime 相关 HTTP / SSE 行为 |
 | `rust-runtime/src/server/telegram.rs` | Telegram setup 与桥接入口 |
 | `rust-runtime/src/server/config.rs` | 配置读取、profile / feature config 入口 |
@@ -120,6 +120,17 @@ bash start.sh
 - 构建命令由 `frontend/package.json` 提供
 - 构建输出仍落到 `frontend/dist/`
 - Rust server 不关心源码层，只关心 `frontend/dist/`
+
+当前前端主入口已从“单大组件”继续收口为“入口编排 + hook / 子视图”结构：
+
+| 路径 | 作用 |
+|---|---|
+| `frontend/src/Terminal.tsx` | 顶层编排：overlay、drawer、sidebar、toolbar、lazy 面板装配 |
+| `frontend/src/terminal/useTerminalRuntime.ts` | xterm、WebSocket、resize、输入代理与移动端键盘行为 |
+| `frontend/src/terminal/useTerminalSessions.ts` | tmux session/window 列表、切换、创建、轮询状态 |
+| `frontend/src/terminal/useTerminalArtifacts.ts` | scrollback、上传、通知、文件冲突处理 |
+| `frontend/src/terminal/DesktopSidebar.tsx` | 桌面端 session/sidebar 壳层 |
+| `frontend/src/terminal/MobileSessionDrawer.tsx` | 移动端 session drawer 壳层 |
 
 ## 数据落点
 

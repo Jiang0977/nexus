@@ -151,20 +151,19 @@ impl SharedState {
     }
 
     fn remove_task(&self, task_id: &str) {
-        if let Ok(mut children) = self.children.lock() {
-            if children.remove(task_id).is_some() {
-                self.running_tasks.fetch_sub(1, Ordering::SeqCst);
-            }
+        if let Ok(mut children) = self.children.lock()
+            && children.remove(task_id).is_some()
+        {
+            self.running_tasks.fetch_sub(1, Ordering::SeqCst);
         }
     }
 
     fn kill_task(&self, task_id: &str) {
-        if let Ok(children) = self.children.lock() {
-            if let Some(child) = children.get(task_id) {
-                if let Ok(mut guard) = child.lock() {
-                    let _ = guard.kill();
-                }
-            }
+        if let Ok(children) = self.children.lock()
+            && let Some(child) = children.get(task_id)
+            && let Ok(mut guard) = child.lock()
+        {
+            let _ = guard.kill();
         }
     }
 
@@ -205,10 +204,10 @@ fn spawn_task(state: &SharedState, params: StartTaskParams) -> Result<(), String
         .arg("-p")
         .arg(&params.prompt)
         .arg("--dangerously-skip-permissions");
-    if let Some(profile) = params.profile.as_ref() {
-        if !profile.is_empty() {
-            command.arg("--profile").arg(profile);
-        }
+    if let Some(profile) = params.profile.as_ref()
+        && !profile.is_empty()
+    {
+        command.arg("--profile").arg(profile);
     }
 
     command.current_dir(&params.cwd);
@@ -217,12 +216,12 @@ fn spawn_task(state: &SharedState, params: StartTaskParams) -> Result<(), String
     command.stderr(Stdio::piped());
     command.env_remove("HOST");
 
-    if let Ok(proxy) = env::var("CLAUDE_PROXY") {
-        if !proxy.is_empty() {
-            command.env("ALL_PROXY", &proxy);
-            command.env("HTTPS_PROXY", &proxy);
-            command.env("HTTP_PROXY", &proxy);
-        }
+    if let Ok(proxy) = env::var("CLAUDE_PROXY")
+        && !proxy.is_empty()
+    {
+        command.env("ALL_PROXY", &proxy);
+        command.env("HTTPS_PROXY", &proxy);
+        command.env("HTTP_PROXY", &proxy);
     }
 
     let mut child = command.spawn().map_err(|error| error.to_string())?;
@@ -394,10 +393,10 @@ fn main() {
             }
             "notify" => {
                 let method = message.method.unwrap_or_default();
-                if method == "killTask" {
-                    if let Ok(params) = serde_json::from_value::<KillTaskParams>(message.params) {
-                        state.kill_task(&params.task_id);
-                    }
+                if method == "killTask"
+                    && let Ok(params) = serde_json::from_value::<KillTaskParams>(message.params)
+                {
+                    state.kill_task(&params.task_id);
                 }
             }
             _ => {}

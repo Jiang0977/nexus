@@ -1,0 +1,296 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import bcrypt from 'bcrypt'
+import { once } from 'node:events'
+import { spawn, spawnSync } from 'node:child_process'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
+import { fileURLToPath } from 'node:url'
+import { createServer } from 'node:net'
+import { chromium } from 'playwright'
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const PTY_FIXTURE = join(ROOT, 'tests', 'fixtures', 'fakePtyRustRuntime.js')
+const SESSION_MANAGEMENT_FIXTURE = join(ROOT, 'tests', 'fixtures', 'fakeSessionManagementRustRuntime.js')
+const RUST_SERVER_BINARY = join(
+  ROOT,
+  'rust-runtime',
+  'target',
+  'debug',
+  process.platform === 'win32' ? 'nexus-server.exe' : 'nexus-server',
+)
+
+let buildChecked = false
+
+function ensureRustServerBuilt() {
+  if (buildChecked) return
+
+  const build = spawnSync(
+    'cargo',
+    ['build', '--manifest-path', 'rust-runtime/Cargo.toml', '--bin', 'nexus-server'],
+    {
+      cwd: ROOT,
+      encoding: 'utf8',
+    },
+  )
+
+  assert.equal(build.status, 0, build.stderr || build.stdout)
+  buildChecked = true
+}
+
+async function getFreePort() {
+  const server = createServer()
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const address = server.address()
+  const port = typeof address === 'object' && address ? address.port : 0
+  server.close()
+  await once(server, 'close')
+  return port
+}
+
+async function stopChild(child) {
+  if (!child || child.exitCode !== null) return
+  child.kill('SIGTERM')
+  const exitPromise = once(child, 'exit')
+  const timeoutPromise = delay(5000).then(() => {
+    if (child.exitCode === null) child.kill('SIGKILL')
+  })
+  await Promise.race([exitPromise, timeoutPromise])
+}
+
+async function waitForHealthyHttp(port, child) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (child.exitCode !== null) {
+      throw new Error(`rust nexus-server exited early with code ${child.exitCode}`)
+    }
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/health`)
+      if (response.ok) return
+    } catch {}
+
+    await delay(250)
+  }
+
+  throw new Error(`rust nexus-server did not become healthy on port ${port}`)
+}
+
+function spawnRustServer(envOverrides = {}) {
+  let logs = ''
+  const child = spawn(RUST_SERVER_BINARY, {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      ...envOverrides,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  child.stdout.on('data', (chunk) => {
+    logs += chunk.toString()
+  })
+  child.stderr.on('data', (chunk) => {
+    logs += chunk.toString()
+  })
+
+  return { child, getLogs: () => logs }
+}
+
+function createBrowserProjectFixture() {
+  const projectRoot = mkdtempSync(join(tmpdir(), 'nexus-browser-regression-'))
+  const frontendDist = join(ROOT, 'frontend', 'dist')
+  assert.equal(existsSync(join(frontendDist, 'index.html')), true, 'vendored frontend/dist is missing')
+
+  mkdirSync(join(projectRoot, 'frontend'), { recursive: true })
+  cpSync(frontendDist, join(projectRoot, 'frontend', 'dist'), { recursive: true })
+
+  const publicDir = join(ROOT, 'public')
+  if (existsSync(publicDir)) {
+    cpSync(publicDir, join(projectRoot, 'public'), { recursive: true })
+  }
+
+  const dataDir = join(projectRoot, 'data')
+  mkdirSync(join(dataDir, 'configs'), { recursive: true })
+  writeFileSync(
+    join(dataDir, 'configs', 'browser-fixture.json'),
+    `${JSON.stringify({
+      label: 'Browser Fixture Claude',
+      BASE_URL: '',
+      AUTH_TOKEN: '',
+      API_KEY: '',
+      DEFAULT_MODEL: 'claude-sonnet-4-6',
+      THINK_MODEL: 'claude-opus-4-6',
+      LONG_CONTEXT_MODEL: 'claude-opus-4-6',
+      DEFAULT_HAIKU_MODEL: 'claude-haiku-4-5-20251001',
+      API_TIMEOUT_MS: '3000000',
+    }, null, 2)}\n`,
+    'utf8',
+  )
+
+  return { dataDir, projectRoot }
+}
+
+async function launchBrowserApp(t, { mobile = false } = {}) {
+  ensureRustServerBuilt()
+
+  const { dataDir, projectRoot } = createBrowserProjectFixture()
+  const port = await getFreePort()
+  const password = 'browser-regression-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child, getLogs } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    NEXUS_DATA_DIR: dataDir,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'browser-regression-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+    TMUX_SESSION: 'nexus-preview-rust',
+    WORKSPACE_ROOT: '/workspace',
+    NEXUS_PTY_BROKER_RUST_EXECUTABLE: process.execPath,
+    NEXUS_PTY_BROKER_RUST_ARGS: JSON.stringify([PTY_FIXTURE]),
+    NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
+    NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
+    FAKE_PTY_RUNTIME_SNAPSHOT_JSON: JSON.stringify({
+      'nexus-preview-rust:0': {
+        output: 'preview shell ready\n',
+        clients: 1,
+      },
+      'nexus-preview-rust:1': {
+        output: 'notes ready\n',
+        clients: 0,
+      },
+    }),
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const browser = await chromium.launch({ headless: true })
+  t.after(async () => {
+    await browser.close()
+  })
+
+  const context = await browser.newContext({
+    viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 900 },
+    isMobile: mobile,
+    hasTouch: mobile,
+    serviceWorkers: 'block',
+  })
+  t.after(async () => {
+    await context.close()
+  })
+
+  await context.addInitScript(() => {
+    localStorage.setItem('i18nextLng', 'en')
+    localStorage.setItem('nexus_guide_seen', 'true')
+    localStorage.removeItem('nexus_token')
+    localStorage.removeItem('nexus_session')
+    localStorage.removeItem('nexus_session_source')
+    localStorage.removeItem('nexus_sidebar_collapsed')
+    localStorage.removeItem('nexus_toolbar_collapsed')
+    localStorage.removeItem('nexus_codex_history_fab_pos')
+    localStorage.removeItem('nexus_fab_pos')
+  })
+
+  const page = await context.newPage()
+  const pageErrors = []
+  page.on('pageerror', (error) => {
+    pageErrors.push(error)
+  })
+
+  return {
+    getLogs,
+    page,
+    pageErrors,
+    password,
+    port,
+  }
+}
+
+async function loginAndWaitForTerminal(page, port, password) {
+  await page.goto(`http://127.0.0.1:${port}/`)
+  await page.getByPlaceholder('Enter password').fill(password)
+  await page.getByRole('button', { name: 'Login' }).click()
+  await page.getByRole('button', { name: 'Select text' }).waitFor()
+}
+
+test('browser regression: desktop login opens the terminal shell and session manager modal', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  await page.getByTitle('Workspaces & Windows').click()
+  await page.getByText('Workspaces & Windows').waitFor()
+  await page.getByText('nexus-preview-rust').waitFor()
+  await page.getByText('demo-project').waitFor()
+  await page.getByText('New Workspace').waitFor()
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: desktop terminal viewport fills the available height', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const metrics = await page.getByRole('button', { name: 'Select text' }).evaluate((button) => {
+    const viewportRoot = button.parentElement
+    const rightWrapper = viewportRoot?.parentElement
+    return {
+      viewportHeight: viewportRoot?.getBoundingClientRect().height ?? 0,
+      wrapperHeight: rightWrapper?.getBoundingClientRect().height ?? 0,
+      windowHeight: window.innerHeight,
+    }
+  })
+
+  assert.ok(metrics.wrapperHeight > 0, `expected terminal wrapper height to be measurable, got ${JSON.stringify(metrics)}`)
+  assert.ok(
+    Math.abs(metrics.viewportHeight - metrics.wrapperHeight) <= 1,
+    `expected terminal viewport to fill wrapper height, got ${JSON.stringify(metrics)}`,
+  )
+  assert.ok(
+    Math.abs(metrics.viewportHeight - metrics.windowHeight) <= 1,
+    `expected desktop terminal viewport to fill the screen height, got ${JSON.stringify(metrics)}`,
+  )
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: mobile codex history modal opens and restores focus to the trigger', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const codexHistoryTrigger = page.getByRole('button', { name: 'Codex History' })
+  await codexHistoryTrigger.waitFor()
+  await codexHistoryTrigger.click()
+
+  await page.getByRole('button', { name: 'Back to Session' }).waitFor()
+  await page.getByText('Codex History · nexus-preview-rust').waitFor()
+  await page.getByText('Fix bug').waitFor()
+
+  await page.getByRole('button', { name: 'Back to Session' }).click()
+  await page.getByRole('button', { name: 'Back to Session' }).waitFor({ state: 'hidden' })
+
+  const focusRestored = await codexHistoryTrigger.evaluate((element) => document.activeElement === element)
+  assert.equal(focusRestored, true, 'focus should return to the Codex History trigger after closing the modal')
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})

@@ -82,7 +82,9 @@ export async function fetchProfilesForShell(
   const response = await fetch(endpoint, {
     headers: { Authorization: `Bearer ${token}` },
   })
-  if (!response.ok) return []
+  if (!response.ok) {
+    throw new Error(`Failed to load shell profiles: HTTP ${response.status}`)
+  }
   const data = await response.json()
   return Array.isArray(data) ? data : []
 }
@@ -96,7 +98,9 @@ export async function fetchProjectShellDefault(
   const response = await fetch(`/api/project-defaults?path=${encodeURIComponent(trimmed)}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
-  if (!response.ok) return null
+  if (!response.ok) {
+    throw new Error(`Failed to load project shell defaults: HTTP ${response.status}`)
+  }
   const data = await response.json()
   return data?.shell_type ? data as ProjectShellDefault : null
 }

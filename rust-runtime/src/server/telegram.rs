@@ -1,57 +1,59 @@
-struct TelegramBridge {
-    client: Client,
-    bot_token: Arc<String>,
-    webhook_secret: Arc<String>,
-    default_session: Arc<String>,
-    api_base_url: Arc<String>,
+use super::*;
+
+pub(super) struct TelegramBridge {
+    pub(super) client: Client,
+    pub(super) bot_token: Arc<String>,
+    pub(super) webhook_secret: Arc<String>,
+    pub(super) default_session: Arc<String>,
+    pub(super) api_base_url: Arc<String>,
 }
 
 #[derive(Clone)]
-struct TelegramWindow {
-    index: String,
-    name: String,
-    cwd: String,
-    active: bool,
+pub(super) struct TelegramWindow {
+    pub(super) index: String,
+    pub(super) name: String,
+    pub(super) cwd: String,
+    pub(super) active: bool,
 }
 
-struct TelegramRouteError {
-    status: StatusCode,
-    message: String,
-}
-
-#[derive(Clone, Deserialize)]
-struct TelegramUpdate {
-    message: Option<TelegramMessage>,
-    edited_message: Option<TelegramMessage>,
+pub(super) struct TelegramRouteError {
+    pub(super) status: StatusCode,
+    pub(super) message: String,
 }
 
 #[derive(Clone, Deserialize)]
-struct TelegramMessage {
-    chat: Option<TelegramChat>,
-    text: Option<String>,
-    caption: Option<String>,
-    photo: Option<Vec<TelegramPhoto>>,
-    document: Option<TelegramDocument>,
+pub(super) struct TelegramUpdate {
+    pub(super) message: Option<TelegramMessage>,
+    pub(super) edited_message: Option<TelegramMessage>,
 }
 
 #[derive(Clone, Deserialize)]
-struct TelegramChat {
-    id: i64,
+pub(super) struct TelegramMessage {
+    pub(super) chat: Option<TelegramChat>,
+    pub(super) text: Option<String>,
+    pub(super) caption: Option<String>,
+    pub(super) photo: Option<Vec<TelegramPhoto>>,
+    pub(super) document: Option<TelegramDocument>,
 }
 
 #[derive(Clone, Deserialize)]
-struct TelegramPhoto {
-    file_id: String,
+pub(super) struct TelegramChat {
+    pub(super) id: i64,
 }
 
 #[derive(Clone, Deserialize)]
-struct TelegramDocument {
-    file_id: String,
-    file_name: Option<String>,
+pub(super) struct TelegramPhoto {
+    pub(super) file_id: String,
+}
+
+#[derive(Clone, Deserialize)]
+pub(super) struct TelegramDocument {
+    pub(super) file_id: String,
+    pub(super) file_name: Option<String>,
 }
 
 impl TelegramRouteError {
-    fn new(status: StatusCode, message: impl Into<String>) -> Self {
+    pub(super) fn new(status: StatusCode, message: impl Into<String>) -> Self {
         Self {
             status,
             message: message.into(),
@@ -60,7 +62,7 @@ impl TelegramRouteError {
 }
 
 impl TelegramBridge {
-    fn new(
+    pub(super) fn new(
         bot_token: String,
         webhook_secret: String,
         default_session: String,
@@ -75,7 +77,7 @@ impl TelegramBridge {
         }
     }
 
-    fn ensure_configured(&self, message: &str) -> Result<(), TelegramRouteError> {
+    pub(super) fn ensure_configured(&self, message: &str) -> Result<(), TelegramRouteError> {
         if self.bot_token.trim().is_empty() {
             return Err(TelegramRouteError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -85,7 +87,10 @@ impl TelegramBridge {
         Ok(())
     }
 
-    fn verify_webhook_request(&self, headers: &HeaderMap) -> Result<(), TelegramRouteError> {
+    pub(super) fn verify_webhook_request(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<(), TelegramRouteError> {
         if !self.webhook_secret.is_empty() {
             let secret = header_string(headers, "x-telegram-bot-api-secret-token");
             if secret.as_deref() != Some(self.webhook_secret.as_str()) {
@@ -95,7 +100,11 @@ impl TelegramBridge {
         self.ensure_configured("Telegram not configured")
     }
 
-    async fn setup_webhook(&self, protocol: &str, host: &str) -> Result<Value, TelegramRouteError> {
+    pub(super) async fn setup_webhook(
+        &self,
+        protocol: &str,
+        host: &str,
+    ) -> Result<Value, TelegramRouteError> {
         self.ensure_configured("TELEGRAM_BOT_TOKEN not set")?;
         let webhook_url = format!("{protocol}://{host}/api/webhooks/telegram");
         let request = self
@@ -120,7 +129,7 @@ impl TelegramBridge {
                 TelegramRouteError::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
             })?;
 
-        let response = serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| Value::String(raw));
+        let response = serde_json::from_str::<Value>(&raw).unwrap_or(Value::String(raw));
         Ok(match response {
             Value::String(raw) => json!({
                 "webhookUrl": webhook_url,
@@ -133,7 +142,7 @@ impl TelegramBridge {
         })
     }
 
-    async fn handle_update(
+    pub(super) async fn handle_update(
         &self,
         state: Arc<AppState>,
         update: TelegramUpdate,
@@ -182,7 +191,7 @@ impl TelegramBridge {
         Ok(())
     }
 
-    async fn handle_sessions_command(&self, state: &AppState, chat_id: i64) {
+    pub(super) async fn handle_sessions_command(&self, state: &AppState, chat_id: i64) {
         match self.list_windows(state).await {
             Ok(windows) => {
                 let mut sorted = windows;
@@ -191,9 +200,10 @@ impl TelegramBridge {
                     .into_iter()
                     .map(|window| {
                         format!(
-                            "{} `{}`",
+                            "{} `{}: {}`",
                             if window.active { "▶" } else { "  " },
-                            format!("{}: {}", window.index, window.name)
+                            window.index,
+                            window.name
                         )
                     })
                     .collect::<Vec<_>>();
@@ -211,7 +221,7 @@ impl TelegramBridge {
         }
     }
 
-    async fn handle_switch_command(&self, state: &AppState, chat_id: i64, text: &str) {
+    pub(super) async fn handle_switch_command(&self, state: &AppState, chat_id: i64, text: &str) {
         let target = sanitize_telegram_switch_target(text);
         if target.is_empty() {
             let _ = self
@@ -247,7 +257,7 @@ impl TelegramBridge {
         }
     }
 
-    async fn handle_file_upload(
+    pub(super) async fn handle_file_upload(
         &self,
         state: Arc<AppState>,
         chat_id: i64,
@@ -296,15 +306,13 @@ impl TelegramBridge {
         }
     }
 
-    async fn resolve_prompt_target(&self, state: &AppState) -> (String, Option<String>) {
+    pub(super) async fn resolve_prompt_target(&self, state: &AppState) -> (String, Option<String>) {
         let mut cwd = state.workspace_root.as_ref().clone();
-        let mut session_name = self
-            .default_session
-            .as_ref()
-            .trim()
-            .is_empty()
-            .then(|| None)
-            .unwrap_or_else(|| Some(self.default_session.as_ref().clone()));
+        let mut session_name = if self.default_session.as_ref().trim().is_empty() {
+            None
+        } else {
+            Some(self.default_session.as_ref().clone())
+        };
 
         if let Ok(windows) = self.list_windows(state).await {
             if let Some(default_name) = session_name.as_deref() {
@@ -327,7 +335,7 @@ impl TelegramBridge {
         (cwd, session_name)
     }
 
-    async fn resolve_upload_directory(&self, state: &AppState) -> String {
+    pub(super) async fn resolve_upload_directory(&self, state: &AppState) -> String {
         match self.list_windows(state).await {
             Ok(windows) => windows
                 .into_iter()
@@ -339,7 +347,7 @@ impl TelegramBridge {
         }
     }
 
-    async fn run_prompt(
+    pub(super) async fn run_prompt(
         &self,
         state: Arc<AppState>,
         chat_id: i64,
@@ -471,7 +479,10 @@ impl TelegramBridge {
         }
     }
 
-    async fn list_windows(&self, state: &AppState) -> Result<Vec<TelegramWindow>, String> {
+    pub(super) async fn list_windows(
+        &self,
+        state: &AppState,
+    ) -> Result<Vec<TelegramWindow>, String> {
         let payload = state
             .runtime_manager
             .session_management_request(
@@ -508,7 +519,7 @@ impl TelegramBridge {
             .collect())
     }
 
-    async fn send_message(&self, chat_id: i64, text: &str) -> Option<i64> {
+    pub(super) async fn send_message(&self, chat_id: i64, text: &str) -> Option<i64> {
         self.send_telegram_message(
             "sendMessage",
             json!({
@@ -526,7 +537,7 @@ impl TelegramBridge {
         })
     }
 
-    async fn edit_message(&self, chat_id: i64, message_id: i64, text: &str) {
+    pub(super) async fn edit_message(&self, chat_id: i64, message_id: i64, text: &str) {
         let _ = self
             .send_telegram_message(
                 "editMessageText",
@@ -540,7 +551,11 @@ impl TelegramBridge {
             .await;
     }
 
-    async fn send_telegram_message(&self, method: &str, payload: Value) -> Option<Value> {
+    pub(super) async fn send_telegram_message(
+        &self,
+        method: &str,
+        payload: Value,
+    ) -> Option<Value> {
         if self.bot_token.is_empty() {
             return None;
         }
@@ -558,7 +573,7 @@ impl TelegramBridge {
         serde_json::from_str::<Value>(&text).ok()
     }
 
-    async fn download_file(
+    pub(super) async fn download_file(
         &self,
         file_id: &str,
         dest_dir: &str,
@@ -614,11 +629,11 @@ impl TelegramBridge {
         })
     }
 
-    fn telegram_api_url(&self, method: &str) -> String {
+    pub(super) fn telegram_api_url(&self, method: &str) -> String {
         format!("{}/bot{}/{}", self.api_base_url, self.bot_token, method)
     }
 
-    fn telegram_file_url(&self, file_path: &str) -> String {
+    pub(super) fn telegram_file_url(&self, file_path: &str) -> String {
         format!(
             "{}/file/bot{}/{}",
             self.api_base_url,
@@ -628,7 +643,7 @@ impl TelegramBridge {
     }
 }
 
-struct TelegramDownloadedFile {
-    path: String,
-    size: usize,
+pub(super) struct TelegramDownloadedFile {
+    pub(super) path: String,
+    pub(super) size: usize,
 }

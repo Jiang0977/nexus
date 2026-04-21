@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { detectAnyProfiles } from './profileGuideApi'
 
 interface UseProfileGuideArgs {
   token: string
@@ -10,20 +11,15 @@ export function useProfileGuide({ token }: UseProfileGuideArgs) {
 
   useEffect(() => {
     if (hasProfiles !== null) return
-    Promise.all([
-      fetch('/api/configs', { headers: { Authorization: `Bearer ${token}` } }).then((response) => response.ok ? response.json() : []),
-      fetch('/api/codex-configs', { headers: { Authorization: `Bearer ${token}` } }).then((response) => response.ok ? response.json() : []),
-    ])
-      .then(([claudeConfigs, codexConfigs]) => {
-        const hasAny =
-          (Array.isArray(claudeConfigs) && claudeConfigs.length > 0) ||
-          (Array.isArray(codexConfigs) && codexConfigs.length > 0)
-        setHasProfiles(hasAny)
-        if (!hasAny) {
+    detectAnyProfiles(token)
+      .then((hasAnyProfiles) => {
+        setHasProfiles(hasAnyProfiles)
+        if (!hasAnyProfiles) {
           setShowProfileGuide(true)
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        console.error('[useProfileGuide] Failed to detect available profiles', error)
         setHasProfiles(true)
       })
   }, [hasProfiles, token])

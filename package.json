@@ -7,6 +7,7 @@
     "start:rust-server": "bash ./start.sh",
     "dev": "cargo build --manifest-path rust-runtime/Cargo.toml --bin nexus-server && NEXUS_SERVER_EXECUTABLE=./rust-runtime/target/debug/nexus-server bash ./start.sh",
     "test": "npm run test:rust && npm run test:node",
+    "test:browser": "node --test tests/browserTerminalRegression.test.js",
     "test:rust": "cargo test --manifest-path rust-runtime/Cargo.toml",
     "test:node": "node --test tests/*.test.js",
     "typecheck:frontend": "npm --prefix frontend run typecheck",
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@types/node": "^22.19.17",
     "bcrypt": "^5.1.1",
+    "playwright": "^1.58.2",
     "typescript": "^6.0.2",
     "ws": "^8.18.0"
   }
