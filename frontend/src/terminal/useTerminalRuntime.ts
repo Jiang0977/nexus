@@ -9,6 +9,10 @@ import type { TmuxWindow } from './useTerminalSessions'
 
 const FONT_SIZE_KEY = 'nexus_font_size'
 const TAP_THRESHOLD = 8
+const SCROLLBACK_SWIPE_THRESHOLD = 48
+const CHANNEL_SWIPE_THRESHOLD = 60
+const SWIPE_DIRECTION_LOCK_THRESHOLD = 18
+const SWIPE_DIRECTION_GAP = 12
 
 interface UseTerminalRuntimeArgs {
   activeTmuxSession: string
@@ -349,11 +353,43 @@ export function useTerminalRuntime({
 
     let touchStartX = 0
     let touchStartY = 0
-    let touchLastY = 0
     let isPinching = false
     let pinchStartDist = 0
     let pinchStartFontSize = fontSize
     let swipeAxis: 'vertical' | 'horizontal' | null = null
+    let scrollbackSwipeTriggered = false
+    let channelSwipeTriggered = false
+
+    function switchChannelBySwipe(deltaX: number) {
+      const wins = [...windowsRef.current].sort((a, b) => a.index - b.index)
+      const pos = wins.findIndex((window) => window.index === activeWindowIndexRef.current)
+      if (pos < 0) return false
+
+      if (deltaX < 0 && pos < wins.length - 1) {
+        attachWindowFnRef.current(wins[pos + 1].index)
+        return true
+      }
+
+      if (deltaX > 0 && pos > 0) {
+        attachWindowFnRef.current(wins[pos - 1].index)
+        return true
+      }
+
+      return false
+    }
+
+    function resolveSwipeAxis(totalDeltaX: number, totalDeltaY: number): 'vertical' | 'horizontal' | null {
+      const absX = Math.abs(totalDeltaX)
+      const absY = Math.abs(totalDeltaY)
+
+      if (absX < SWIPE_DIRECTION_LOCK_THRESHOLD && absY < SWIPE_DIRECTION_LOCK_THRESHOLD) {
+        return null
+      }
+
+      if (absX - absY >= SWIPE_DIRECTION_GAP) return 'horizontal'
+      if (absY - absX >= SWIPE_DIRECTION_GAP) return 'vertical'
+      return null
+    }
 
     function getTouchDist(event: TouchEvent): number {
       const dx = event.touches[0].clientX - event.touches[1].clientX
@@ -372,8 +408,9 @@ export function useTerminalRuntime({
       isPinching = false
       touchStartX = event.touches[0].clientX
       touchStartY = event.touches[0].clientY
-      touchLastY = event.touches[0].clientY
       swipeAxis = null
+      scrollbackSwipeTriggered = false
+      channelSwipeTriggered = false
     }
 
     function onTouchMove(event: TouchEvent) {
@@ -390,21 +427,23 @@ export function useTerminalRuntime({
         return
       }
 
-      if (!swipeAxis) {
-        const dx = Math.abs(event.touches[0].clientX - touchStartX)
-        const dy = Math.abs(event.touches[0].clientY - touchStartY)
-        if (dx > 8 || dy > 8) swipeAxis = dx > dy ? 'horizontal' : 'vertical'
+      const totalDeltaX = event.touches[0].clientX - touchStartX
+      const totalDeltaY = event.touches[0].clientY - touchStartY
+      if (!swipeAxis) swipeAxis = resolveSwipeAxis(totalDeltaX, totalDeltaY)
+
+      if (swipeAxis === 'horizontal') {
+        if (!channelSwipeTriggered) {
+          if (Math.abs(totalDeltaX) >= CHANNEL_SWIPE_THRESHOLD) {
+            channelSwipeTriggered = switchChannelBySwipe(totalDeltaX)
+          }
+        }
+        return
       }
 
-      if (swipeAxis === 'horizontal') return
-      if (swipeAxis === 'vertical' && !showScrollbackRef.current) {
-        const y = event.touches[0].clientY
-        const deltaY = touchLastY - y
-        touchLastY = y
-        if (deltaY < 0) {
-          if (Math.abs(deltaY) > 40) {
-            triggerScrollbackRef.current()
-          }
+      if (swipeAxis === 'vertical' && !showScrollbackRef.current && !scrollbackSwipeTriggered) {
+        if (totalDeltaY >= SCROLLBACK_SWIPE_THRESHOLD) {
+          scrollbackSwipeTriggered = true
+          triggerScrollbackRef.current()
         }
       }
     }
@@ -417,23 +456,22 @@ export function useTerminalRuntime({
 
       const endX = event.changedTouches[0].clientX
       const endY = event.changedTouches[0].clientY
-      const rect = containerEl.getBoundingClientRect()
-      if (endX < rect.left || endX > rect.right || endY < rect.top || endY > rect.bottom) return
-
       const dx = endX - touchStartX
       const dy = endY - touchStartY
-      if (swipeAxis === 'horizontal' && Math.abs(dx) > 60) {
-        const wins = [...windowsRef.current].sort((a, b) => a.index - b.index)
-        const pos = wins.findIndex((window) => window.index === activeWindowIndexRef.current)
-        if (dx < 0 && pos < wins.length - 1) {
-          attachWindowFnRef.current(wins[pos + 1].index)
-        } else if (dx > 0 && pos > 0) {
-          attachWindowFnRef.current(wins[pos - 1].index)
-        }
+      const finalSwipeAxis = swipeAxis ?? resolveSwipeAxis(dx, dy)
+      if (finalSwipeAxis === 'horizontal' && channelSwipeTriggered) {
+        return
+      }
+
+      if (finalSwipeAxis === 'horizontal' && Math.abs(dx) >= CHANNEL_SWIPE_THRESHOLD) {
+        switchChannelBySwipe(dx)
         return
       }
 
       if (Math.abs(dy) >= TAP_THRESHOLD || Math.abs(dx) >= TAP_THRESHOLD) return
+
+      const rect = containerEl.getBoundingClientRect()
+      if (endX < rect.left || endX > rect.right || endY < rect.top || endY > rect.bottom) return
 
       const xtermTa = termRef.current?.textarea
       if (toolbarCollapsedRef.current === false) {

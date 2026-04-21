@@ -221,6 +221,27 @@ async function loginAndWaitForTerminal(page, port, password) {
   await page.getByRole('button', { name: 'Select text' }).waitFor()
 }
 
+async function dispatchMobileSwipe(page, points) {
+  const session = await page.context().newCDPSession(page)
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: points[0][0], y: points[0][1], radiusX: 2, radiusY: 2, force: 1, id: 1 }],
+  })
+
+  for (const [x, y] of points.slice(1)) {
+    await session.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x, y, radiusX: 2, radiusY: 2, force: 1, id: 1 }],
+    })
+    await delay(30)
+  }
+
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [],
+  })
+}
+
 test('browser regression: desktop login opens the terminal shell and session manager modal', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
 
@@ -288,6 +309,48 @@ test('browser regression: mobile codex history modal opens and restores focus to
 
   const focusRestored = await codexHistoryTrigger.evaluate((element) => document.activeElement === element)
   assert.equal(focusRestored, true, 'focus should return to the Codex History trigger after closing the modal')
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: mobile diagonal-horizontal swipe switches channel even if the finger leaves terminal bounds', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const rect = await page.getByRole('button', { name: 'Select text' }).evaluate((button) => {
+    const container = button.parentElement?.firstElementChild
+    const bounds = container?.getBoundingClientRect()
+    return bounds ? {
+      left: bounds.left,
+      top: bounds.top,
+      width: bounds.width,
+      height: bounds.height,
+    } : null
+  })
+
+  assert.ok(rect, 'expected terminal container bounds to exist')
+
+  const startX = rect.left + rect.width - 40
+  const startY = rect.top + rect.height / 2
+  const attachRequest = page.waitForRequest((request) => (
+    request.method() === 'POST' && request.url().includes('/api/sessions/1/attach?session=nexus-preview-rust')
+  ), { timeout: 3000 })
+
+  await dispatchMobileSwipe(page, [
+    [startX, startY],
+    [startX - 10, startY + 13],
+    [startX - 90, startY + 24],
+    [startX - 170, startY + 33],
+    [rect.left - 20, startY + 40],
+  ])
+
+  await attachRequest
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('notes ready'))
+
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),
     [],
