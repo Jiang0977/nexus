@@ -100,8 +100,10 @@ echo ""
 
 # ── 主循环：退出后提示续接 ──
 while true; do
-    # kimi 不支持 claude -c 的 conversation resume，直接启动（历史通过左侧 Sessions 面板访问）
-    claude --dangerously-skip-permissions || true
+    # Profile windows must not inherit user-level ~/.claude/settings.json env.
+    # Claude Code 2.1.x gives settings env higher priority than process env,
+    # which can mix the selected Nexus profile with the globally active provider.
+    claude --dangerously-skip-permissions --setting-sources project,local || true
     echo ""
     echo "[Nexus] Claude exited.  r=restart  b=bash shell  q=quit window"
     read -r REPLY
