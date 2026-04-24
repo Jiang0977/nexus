@@ -389,6 +389,120 @@ test('browser regression: mobile codex history continue opens codex profile pick
   )
 })
 
+test('browser regression: mobile codex history continue prefers the current cc-switch codex profile over stale local storage', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
+
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_last_profile_codex', 'daily')
+  })
+  const ccSwitchProviderRequests = []
+  await page.route('**/api/project-defaults**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: 'null',
+    })
+  })
+  await page.route('**/api/cc-switch/providers?**', async (route) => {
+    ccSwitchProviderRequests.push(route.request().url())
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([{
+        provider_id: 'provider-openai',
+        kind: 'codex',
+        name: 'OpenAI Official',
+        is_current: true,
+        existing_profile_id: 'focus',
+        target_profile_id: 'cc-switch-openai-official',
+      }]),
+    })
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+  await page.getByRole('button', { name: 'Codex History' }).click()
+  const ccSwitchResponsePromise = page.waitForResponse((response) => (
+    response.url().includes('/api/cc-switch/providers?kind=codex')
+      && response.request().method() === 'GET'
+  ))
+  await page.getByRole('button', { name: 'Continue: Fix bug' }).click()
+  await ccSwitchResponsePromise
+  await page.waitForFunction(() => document.querySelector('select') instanceof HTMLSelectElement)
+  await page.waitForFunction(() => document.body.textContent?.includes('Continue Session'))
+
+  const profileSelect = page.locator('select')
+  await profileSelect.waitFor()
+  await page.waitForFunction(() => {
+    const select = document.querySelector('select')
+    return select instanceof HTMLSelectElement && select.value === 'focus'
+  })
+  assert.equal(await profileSelect.inputValue(), 'focus')
+  assert.equal(ccSwitchProviderRequests.length > 0, true)
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: fatal codex attach failure stops connecting and shows the close reason', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  await page.evaluate(() => {
+    const NativeWebSocket = window.WebSocket
+    const closeCode = 1006
+
+    function FailingSocket(url) {
+      this.url = String(url)
+      this.readyState = NativeWebSocket.CONNECTING
+      window.setTimeout(() => {
+        this.readyState = NativeWebSocket.CLOSED
+        const event = { code: closeCode, reason: '', wasClean: false }
+        this.onclose?.(event)
+      }, 50)
+    }
+
+    FailingSocket.prototype.send = () => {}
+    FailingSocket.prototype.close = function close() {
+      this.readyState = NativeWebSocket.CLOSED
+    }
+
+    function PatchedWebSocket(url, protocols) {
+      if (String(url).includes('window=7')) {
+        return new FailingSocket(url)
+      }
+      return protocols === undefined
+        ? new NativeWebSocket(url)
+        : new NativeWebSocket(url, protocols)
+    }
+
+    Object.assign(PatchedWebSocket, NativeWebSocket)
+    Object.defineProperty(window, 'WebSocket', {
+      configurable: true,
+      writable: true,
+      value: PatchedWebSocket,
+    })
+  })
+
+  await page.getByRole('button', { name: 'Codex History' }).click()
+  await page.getByRole('button', { name: 'Continue: Fix bug' }).click()
+  await page.getByRole('button', { name: 'Continue Session' }).click()
+
+  await page.waitForFunction(() => document.body.textContent?.includes('连接失败，请重试'))
+  await page.waitForFunction(() => !document.body.textContent?.includes('Connecting...'))
+
+  assert.equal(await page.getByText('Connecting...').count(), 0)
+  assert.match(await page.locator('body').innerText(), /连接失败，请重试/)
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
 test('browser regression: settings home syncs codex desktop history from cc-switch', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
   await page.addInitScript(() => {

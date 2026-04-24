@@ -12,9 +12,9 @@ import {
   type ShellType,
 } from './shellType'
 import {
+  fetchCurrentCcSwitchProfileForShell,
   fetchProfilesForShell,
   fetchProjectShellDefault,
-  getStoredProfileForShell,
   getStoredShellType,
   pickProfileForShell,
   storeProfileForShell,
@@ -52,11 +52,13 @@ export default function NewWindowDialog({
   const initialShellType = lockedShellType || getStoredShellType() || DEFAULT_SHELL_TYPE
   const [shellType, setShellType] = useState<ShellType>(initialShellType)
   const [profiles, setProfiles] = useState<ShellProfileOption[]>([])
-  const [selectedProfile, setSelectedProfile] = useState<string>(() => getStoredProfileForShell(initialShellType))
+  const [preferredProfile, setPreferredProfile] = useState('')
+  const [selectedProfile, setSelectedProfile] = useState('')
 
   useEffect(() => {
     if (!lockedShellType) return
     setShellType(lockedShellType)
+    setPreferredProfile('')
   }, [lockedShellType])
 
   useEffect(() => {
@@ -67,11 +69,22 @@ export default function NewWindowDialog({
     }
 
     let cancelled = false
-    fetchProfilesForShell(token, shellType)
-      .then((data) => {
+    Promise.all([
+      fetchProfilesForShell(token, shellType),
+      fetchCurrentCcSwitchProfileForShell(token, shellType).catch((error: unknown) => {
+        console.error('[NewWindowDialog] Failed to load current cc-switch profile', error)
+        return ''
+      }),
+    ])
+      .then(([data, currentCcSwitchProfile]) => {
         if (cancelled) return
         setProfiles(data)
-        setSelectedProfile((current) => pickProfileForShell(shellType, data, current))
+        setSelectedProfile((current) => pickProfileForShell(
+          shellType,
+          data,
+          preferredProfile || current,
+          [currentCcSwitchProfile],
+        ))
       })
       .catch((error: unknown) => {
         if (cancelled) return
@@ -80,7 +93,7 @@ export default function NewWindowDialog({
       })
 
     return () => { cancelled = true }
-  }, [token, shellType])
+  }, [preferredProfile, token, shellType])
 
   useEffect(() => {
     fetchProjectShellDefault(token, projectPath)
@@ -88,11 +101,12 @@ export default function NewWindowDialog({
         const nextShellType = lockedShellType || defaults?.shell_type || getStoredShellType()
         setShellType(nextShellType)
         if (usesShellProfile(nextShellType)) {
-          const preferredProfile = defaults?.shell_type === nextShellType
-            ? (defaults?.profile || getStoredProfileForShell(nextShellType))
-            : getStoredProfileForShell(nextShellType)
-          setSelectedProfile(preferredProfile)
+          const nextPreferredProfile = defaults?.shell_type === nextShellType
+            ? (defaults?.profile || '')
+            : ''
+          setPreferredProfile(nextPreferredProfile)
         } else {
+          setPreferredProfile('')
           setSelectedProfile('')
         }
       })
@@ -121,14 +135,16 @@ export default function NewWindowDialog({
   function handleShellChange(nextShellType: ShellType) {
     setShellType(nextShellType)
     storeShellType(nextShellType)
+    setPreferredProfile('')
     if (usesShellProfile(nextShellType)) {
-      setSelectedProfile(getStoredProfileForShell(nextShellType))
+      setSelectedProfile('')
     } else {
       setSelectedProfile('')
     }
   }
 
   function handleProfileChange(id: string) {
+    setPreferredProfile(id)
     setSelectedProfile(id)
     if (id) storeProfileForShell(shellType, id)
   }

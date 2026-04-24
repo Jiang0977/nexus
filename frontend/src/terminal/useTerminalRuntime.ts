@@ -62,7 +62,6 @@ export function useTerminalRuntime({
   const wsRef = useRef<WebSocket | null>(null)
   const userScrolledRef = useRef(false)
   const lastContainerSizeRef = useRef({ w: 0, h: 0 })
-  const hasConnectedRef = useRef(false)
   const keyboardVisibleRef = useRef(false)
   const isComposingRef = useRef(false)
   const overlayOpenRef = useRef(overlayOpen)
@@ -592,20 +591,27 @@ export function useTerminalRuntime({
     setIsScrolledUp(false)
     const hasSavedScroll = (scrollPositionsRef.current[activeWindowIndex] ?? 0) > 0
     userScrolledRef.current = hasSavedScroll
-    hasConnectedRef.current = false
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     let intentionalClose = false
+    let hasOpenedCurrentConnection = false
     let reconnectAttempts = 0
     let reconnectTimer: number | null = null
     const maxReconnectAttempts = 8
     const reconnectDelay = () => Math.min(1000 * Math.pow(2, reconnectAttempts), 15000)
     const loadingTimer = window.setTimeout(() => {
-      if (!hasConnectedRef.current) setIsConnecting(true)
+      if (!hasOpenedCurrentConnection) setIsConnecting(true)
     }, 300)
 
     function writeTerm(data: string) {
       termRef.current?.write(data)
+    }
+
+    function stopConnecting(message: string) {
+      window.clearTimeout(loadingTimer)
+      hasOpenedCurrentConnection = true
+      setIsConnecting(false)
+      writeTerm(`\r\n\x1b[31m[Nexus: ${message}]\x1b[0m\r\n`)
     }
 
     function createWs(isReconnect = false) {
@@ -623,7 +629,7 @@ export function useTerminalRuntime({
         }
 
         reconnectAttempts = 0
-        hasConnectedRef.current = true
+        hasOpenedCurrentConnection = true
         setIsConnecting(false)
         fitAddonRef.current?.fit()
         const term = termRef.current
@@ -646,11 +652,21 @@ export function useTerminalRuntime({
       nextWs.onclose = (event) => {
         if (intentionalClose) return
         if (event.code === 4001) {
-          writeTerm('\r\n\x1b[31m[Nexus: 认证失败，请刷新重新登录]\x1b[0m\r\n')
+          stopConnecting('认证失败，请刷新重新登录')
+          return
+        }
+        if (event.code >= 4000 && event.code < 5000) {
+          const reason = event.reason.trim()
+          stopConnecting(reason ? `连接失败：${reason}` : '连接失败，请刷新页面')
+          return
+        }
+        if (!hasOpenedCurrentConnection && reconnectAttempts >= 1) {
+          const reason = event.reason.trim()
+          stopConnecting(reason ? `连接失败：${reason}` : '连接失败，请重试')
           return
         }
         if (reconnectAttempts >= maxReconnectAttempts) {
-          writeTerm('\r\n\x1b[31m[Nexus: 重连失败，请刷新页面]\x1b[0m\r\n')
+          stopConnecting('重连失败，请刷新页面')
           return
         }
 

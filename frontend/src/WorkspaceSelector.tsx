@@ -12,9 +12,9 @@ import {
   type ShellType,
 } from './shellType'
 import {
+  fetchCurrentCcSwitchProfileForShell,
   fetchProfilesForShell,
   fetchProjectShellDefault,
-  getStoredProfileForShell,
   getStoredShellType,
   pickProfileForShell,
   storeProfileForShell,
@@ -52,7 +52,8 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
   const [inputPath, setInputPath] = useState(() => localStorage.getItem('nexus_last_path') || '/workspace')
   const [shellType, setShellType] = useState<ShellType>(() => getStoredShellType() || DEFAULT_SHELL_TYPE)
   const [profiles, setProfiles] = useState<ShellProfileOption[]>([])
-  const [selectedProfile, setSelectedProfile] = useState<string>(() => getStoredProfileForShell(getStoredShellType()))
+  const [preferredProfile, setPreferredProfile] = useState('')
+  const [selectedProfile, setSelectedProfile] = useState('')
 
   // 文件浏览器状态
   const [browsePath, setBrowsePath] = useState<string | null>(null)
@@ -93,11 +94,22 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
     }
 
     let cancelled = false
-    fetchProfilesForShell(token, shellType)
-      .then((data) => {
+    Promise.all([
+      fetchProfilesForShell(token, shellType),
+      fetchCurrentCcSwitchProfileForShell(token, shellType).catch((error: unknown) => {
+        console.error('[WorkspaceSelector] Failed to load current cc-switch profile', error)
+        return ''
+      }),
+    ])
+      .then(([data, currentCcSwitchProfile]) => {
         if (cancelled) return
         setProfiles(data)
-        setSelectedProfile((current) => pickProfileForShell(shellType, data, current))
+        setSelectedProfile((current) => pickProfileForShell(
+          shellType,
+          data,
+          preferredProfile || current,
+          [currentCcSwitchProfile],
+        ))
       })
       .catch((error: unknown) => {
         if (cancelled) return
@@ -106,7 +118,7 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
       })
 
     return () => { cancelled = true }
-  }, [token, shellType])
+  }, [preferredProfile, token, shellType])
 
   useEffect(() => {
     const trimmedPath = inputPath.trim()
@@ -116,8 +128,9 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
           const nextShellType = defaults?.shell_type || getStoredShellType()
           setShellType(nextShellType)
           if (usesShellProfile(nextShellType)) {
-            setSelectedProfile(defaults?.profile || getStoredProfileForShell(nextShellType))
+            setPreferredProfile(defaults?.profile || '')
           } else {
+            setPreferredProfile('')
             setSelectedProfile('')
           }
         })
@@ -145,14 +158,16 @@ export default function WorkspaceSelector({ token, onClose, onConfirm }: Props) 
   function handleShellChange(nextShellType: ShellType) {
     setShellType(nextShellType)
     storeShellType(nextShellType)
+    setPreferredProfile('')
     if (usesShellProfile(nextShellType)) {
-      setSelectedProfile(getStoredProfileForShell(nextShellType))
+      setSelectedProfile('')
     } else {
       setSelectedProfile('')
     }
   }
 
   function handleProfileChange(id: string) {
+    setPreferredProfile(id)
     setSelectedProfile(id)
     if (id) storeProfileForShell(shellType, id)
   }
