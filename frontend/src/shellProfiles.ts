@@ -13,6 +13,15 @@ export interface ShellProfileOption {
   label: string
 }
 
+export interface CcSwitchProviderOption {
+  provider_id: string
+  kind: 'claude' | 'codex'
+  name: string
+  is_current: boolean
+  existing_profile_id?: string | null
+  target_profile_id: string
+}
+
 export interface ProjectShellDefault {
   path: string
   shell_type: ShellType
@@ -61,14 +70,18 @@ export function pickProfileForShell(
   shellType: ShellType,
   profiles: ShellProfileOption[],
   preferredProfile = '',
+  fallbackProfiles: string[] = [],
 ): string {
   if (!profiles.length) return ''
-  if (preferredProfile && profiles.some(profile => profile.id === preferredProfile)) {
-    return preferredProfile
-  }
-  const storedProfile = getStoredProfileForShell(shellType)
-  if (storedProfile && profiles.some(profile => profile.id === storedProfile)) {
-    return storedProfile
+  const candidates = [
+    preferredProfile,
+    ...fallbackProfiles,
+    getStoredProfileForShell(shellType),
+  ]
+  for (const candidate of candidates) {
+    if (candidate && profiles.some(profile => profile.id === candidate)) {
+      return candidate
+    }
   }
   return profiles[0]?.id || ''
 }
@@ -87,6 +100,29 @@ export async function fetchProfilesForShell(
   }
   const data = await response.json()
   return Array.isArray(data) ? data : []
+}
+
+export async function fetchCurrentCcSwitchProfileForShell(
+  token: string,
+  shellType: ShellType,
+): Promise<string> {
+  const kind = usesCodexProfile(shellType)
+    ? 'codex'
+    : usesClaudeProfile(shellType)
+      ? 'claude'
+      : null
+  if (!kind) return ''
+
+  const response = await fetch(`/api/cc-switch/providers?kind=${kind}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    throw new Error(`Failed to load cc-switch providers: HTTP ${response.status}`)
+  }
+  const data = await response.json()
+  if (!Array.isArray(data)) return ''
+  const currentProvider = (data as CcSwitchProviderOption[]).find(provider => provider?.is_current)
+  return currentProvider?.existing_profile_id || currentProvider?.target_profile_id || ''
 }
 
 export async function fetchProjectShellDefault(
