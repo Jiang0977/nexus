@@ -2636,13 +2636,51 @@ test('rust nexus-server resumes codex history sessions through the real rust ses
   await waitForHealthyHttp(port, child)
 
   const { token } = await login(port, password)
-  const response = await fetch(`http://127.0.0.1:${port}/api/codex-sessions/session-1/resume?project=demo-project`, {
+  const legacyResponse = await fetch(`http://127.0.0.1:${port}/api/codex-sessions/session-1/resume?project=demo-project`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   })
+  const systemDefaultResponse = await fetch(`http://127.0.0.1:${port}/api/codex-sessions/session-1/resume?project=demo-project`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      project: 'demo-project',
+      profile: '',
+    }),
+  })
+  const explicitProfileResponse = await fetch(`http://127.0.0.1:${port}/api/codex-sessions/session-1/resume?project=demo-project`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      project: 'demo-project',
+      profile: 'focus',
+    }),
+  })
 
-  assert.equal(response.status, 200)
-  assert.deepEqual(await response.json(), {
+  assert.equal(legacyResponse.status, 200)
+  assert.deepEqual(await legacyResponse.json(), {
+    ok: true,
+    project: 'demo-project',
+    channelIndex: 7,
+    channelName: 'codex-history',
+    sessionId: 'session-1',
+  })
+  assert.equal(systemDefaultResponse.status, 200)
+  assert.deepEqual(await systemDefaultResponse.json(), {
+    ok: true,
+    project: 'demo-project',
+    channelIndex: 7,
+    channelName: 'codex-history',
+    sessionId: 'session-1',
+  })
+  assert.equal(explicitProfileResponse.status, 200)
+  assert.deepEqual(await explicitProfileResponse.json(), {
     ok: true,
     project: 'demo-project',
     channelIndex: 7,
@@ -2656,6 +2694,14 @@ test('rust nexus-server resumes codex history sessions through the real rust ses
   assert.match(
     log,
     /new-window\|-P -F #\{window_id\}\|#\{window_index\}\|#\{window_name\} -t demo-project -c \/workspace\/demo -n codex-history unset HOST; bash ".*\/nexus-run-codex\.sh" "daily" "\/workspace\/demo" "session-1"/,
+  )
+  assert.match(
+    log,
+    /new-window\|-P -F #\{window_id\}\|#\{window_index\}\|#\{window_name\} -t demo-project -c \/workspace\/demo -n codex-history unset HOST; bash ".*\/nexus-run-codex\.sh" "" "\/workspace\/demo" "session-1"/,
+  )
+  assert.match(
+    log,
+    /new-window\|-P -F #\{window_id\}\|#\{window_index\}\|#\{window_name\} -t demo-project -c \/workspace\/demo -n codex-history unset HOST; bash ".*\/nexus-run-codex\.sh" "focus" "\/workspace\/demo" "session-1"/,
   )
   assert.match(log, /set-option\|-w -t @9 @nexus_codex_resume_session_id session-1/)
   assert.match(log, /select-window\|-t demo-project:7/)

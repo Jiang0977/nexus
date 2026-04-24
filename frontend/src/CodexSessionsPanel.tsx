@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import GhostShield from './GhostShield'
 import { buildCodexSessionDetailFields } from './codexSessionDetailFields'
 import { Icon } from './icons'
+import NewWindowDialog from './NewWindowDialog'
+import { CODEX_SHELL_TYPE, type ShellType } from './shellType'
 
 interface CodexSessionItem {
   id: string
@@ -149,6 +151,7 @@ export default function CodexSessionsPanel({
   const [detailCache, setDetailCache] = useState<Record<string, CodexSessionDetail>>({})
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({})
   const [loadingDetailId, setLoadingDetailId] = useState<string | null>(null)
+  const [resumeDialogItem, setResumeDialogItem] = useState<CodexSessionItem | null>(null)
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token])
 
@@ -214,6 +217,7 @@ export default function CodexSessionsPanel({
     setDetailCache({})
     setDetailErrors({})
     setLoadingDetailId(null)
+    setResumeDialogItem(null)
     loadSessions()
   }, [loadSessions])
 
@@ -246,7 +250,14 @@ export default function CodexSessionsPanel({
     }
   }, [focusReturnTarget, layout, onClose])
 
-  const handleResume = useCallback(async (sessionId: string) => {
+  const handleResumeIntent = useCallback((item: CodexSessionItem) => {
+    setActionError(null)
+    setResumeDialogItem(item)
+  }, [])
+
+  const handleResumeConfirm = useCallback(async (_shellType: ShellType, profile?: string) => {
+    if (!resumeDialogItem) return
+    const sessionId = resumeDialogItem.id
     setActionError(null)
     setResumingId(sessionId)
     try {
@@ -256,7 +267,7 @@ export default function CodexSessionsPanel({
           ...headers,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ project: projectName }),
+        body: JSON.stringify({ project: projectName, profile }),
       })
       if (!response.ok) {
         setActionError(t('codexSessions.resumeFailed'))
@@ -264,6 +275,7 @@ export default function CodexSessionsPanel({
       }
 
       const data = await response.json() as { channelIndex?: number }
+      setResumeDialogItem(null)
       if (typeof data.channelIndex === 'number') {
         onResumeSuccess?.(data.channelIndex)
       }
@@ -273,7 +285,7 @@ export default function CodexSessionsPanel({
     } finally {
       setResumingId(null)
     }
-  }, [headers, layout, onClose, onResumeSuccess, projectName, t])
+  }, [headers, layout, onClose, onResumeSuccess, projectName, resumeDialogItem, t])
 
   const handleDelete = useCallback(async (sessionId: string, title: string) => {
     setActionError(null)
@@ -597,7 +609,7 @@ export default function CodexSessionsPanel({
                       </button>
                       <button
                         className="flex-1 min-h-[44px] bg-transparent border border-nexus-border rounded-lg text-nexus-text text-sm font-medium px-3 py-2 cursor-pointer hover:bg-nexus-tab-active transition-colors disabled:opacity-60 disabled:cursor-default"
-                        onClick={() => handleResume(item.id)}
+                        onClick={() => handleResumeIntent(item)}
                         disabled={resumingId === item.id || deletingId === item.id}
                         type="button"
                         aria-label={`${t('codexSessions.resume')}: ${item.title || basename(item.cwd)}`}
@@ -726,7 +738,7 @@ export default function CodexSessionsPanel({
               </button>
               <button
                 className="inline-flex h-7 items-center justify-center rounded-md bg-transparent px-2.5 text-xs font-medium text-nexus-text cursor-pointer transition-colors hover:bg-nexus-bg hover:text-white disabled:opacity-60 disabled:cursor-default"
-                onClick={() => handleResume(item.id)}
+                onClick={() => handleResumeIntent(item)}
                 disabled={resumingId === item.id || deletingId === item.id}
                 type="button"
                 aria-label={`${t('codexSessions.resume')}: ${item.title || basename(item.cwd)}`}
@@ -741,12 +753,37 @@ export default function CodexSessionsPanel({
     </div>
   )
 
+  const resumeDialog = resumeDialogItem ? (
+    <NewWindowDialog
+      token={token}
+      projectPath={resumeDialogItem.cwd}
+      lockedShellType={CODEX_SHELL_TYPE}
+      title={t('codexSessions.resumeDialogTitle')}
+      description={t('codexSessions.resumeDialogDescription')}
+      confirmLabel={t('codexSessions.resumeDialogConfirm')}
+      preserveEmptyProfile
+      zIndexClassName={layout === 'modal' ? 'z-[420]' : 'z-[120]'}
+      onClose={() => setResumeDialogItem(null)}
+      onConfirm={handleResumeConfirm}
+    />
+  ) : null
+
   if (isCompact) {
-    return compactPanelBody
+    return (
+      <>
+        {compactPanelBody}
+        {resumeDialog}
+      </>
+    )
   }
 
   if (layout === 'sidebar') {
-    return panelBody
+    return (
+      <>
+        {panelBody}
+        {resumeDialog}
+      </>
+    )
   }
 
   return (
@@ -756,6 +793,7 @@ export default function CodexSessionsPanel({
       <div className="fixed inset-x-0 bottom-0 z-[411] bg-nexus-menu-bg rounded-t-2xl border border-nexus-border border-b-0 max-h-[76vh] flex flex-col shadow-[0_-10px_32px_rgba(0,0,0,0.38)]">
         {panelBody}
       </div>
+      {resumeDialog}
     </>
   )
 }

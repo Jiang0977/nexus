@@ -242,7 +242,9 @@
     "importedNotice": "已导入 Codex Profile：{{id}}",
     "syncedNotice": "已同步当前系统配置到：{{id}}",
     "ccSwitchImportedNotice": "已从 cc-switch 导入：{{id}}",
-    "ccSwitchImportedAllNotice": "已从 cc-switch 导入 {{count}} 个配置"
+    "ccSwitchImportedAllNotice": "已从 cc-switch 导入 {{count}} 个配置",
+    "ccSwitchSyncHistoryNotice": "已把 Codex 历史同步到当前 provider",
+    "ccSwitchSyncHistoryFailed": "从 cc-switch 同步 Codex 历史失败"
   },
   "sessionMgr": {
     "title": "工作区与窗口",
@@ -289,6 +291,9 @@
     "projectNotFound": "当前工作区不存在，无法读取对应的 Codex 历史会话。",
     "loadFailed": "这次读取失败，不代表当前 project 没有历史会话。",
     "resumeFailed": "继续失败，请稍后重试。",
+    "resumeDialogTitle": "继续 Codex 会话",
+    "resumeDialogDescription": "选择这次继续历史会话要使用的 Codex 配置。",
+    "resumeDialogConfirm": "继续会话",
     "deleteConfirm": "确定要删除这个 Codex 历史会话吗？\n\n{{title}}\n\n此操作不可恢复。",
     "deleteFailed": "删除失败，请稍后重试。",
     "errorTitle": "当前无法加载 Codex 历史会话",
