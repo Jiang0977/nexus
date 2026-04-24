@@ -32,9 +32,10 @@ name = "nexus-setup"
 path = "src/bin/nexus-setup.rs"
 
 [dependencies]
+anyhow = "1"
 axum = { version = "0.8", features = ["json", "http1", "multipart", "ws"] }
 bcrypt = "0.16"
-chrono = { version = "0.4", default-features = true, features = ["clock"] }
+chrono = { version = "0.4", default-features = true, features = ["clock", "serde"] }
 futures-core = "0.3"
 jsonwebtoken = "9"
 mime_guess = "2"

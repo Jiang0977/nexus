@@ -202,6 +202,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -838,6 +839,7 @@ dependencies = [
 name = "nexus-rust-runtime"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "bcrypt",
  "chrono",

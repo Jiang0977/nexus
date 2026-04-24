@@ -1680,6 +1680,178 @@ exit 1
   assert.deepEqual(await deleteCodexResponse.json(), { ok: true })
 })
 
+test('rust nexus-server syncs codex history from cc-switch into the global codex home', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const dataDir = mkdtempSync(join(tmpdir(), 'nexus-rust-server-codex-sync-data-'))
+  const homeDir = join(dataDir, 'home')
+  const codexHomeDir = join(homeDir, '.codex')
+  const ccSwitchDir = join(homeDir, '.cc-switch')
+  const activationJournal = join(homeDir, '.local', 'state', 'cc-switch', 'activation-journal.jsonl')
+  mkdirSync(codexHomeDir, { recursive: true })
+  mkdirSync(ccSwitchDir, { recursive: true })
+  mkdirSync(dirname(activationJournal), { recursive: true })
+
+  const sessionId = '11111111-2222-3333-4444-555555555555'
+  writeJsonl(join(codexHomeDir, 'sessions', '2026', '04', '14', `rollout-2026-04-14-${sessionId}.jsonl`), [
+    JSON.stringify({
+      timestamp: '2026-04-14T12:00:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: sessionId,
+        timestamp: '2026-04-14T12:00:00.000Z',
+        cwd: '/workspace/demo',
+        source: 'exec',
+        model_provider: 'openai',
+        cli_version: '0.117.0',
+        dynamic_tools: [
+          {
+            name: 'shell_exec',
+            description: 'execute shell command',
+            input_schema: { type: 'object' },
+            defer_loading: false,
+          },
+        ],
+      },
+    }),
+    JSON.stringify({
+      timestamp: '2026-04-14T12:00:01.000Z',
+      type: 'turn_context',
+      payload: {
+        model: 'gpt-5.4',
+        approval_policy: 'never',
+        sandbox_policy: { mode: 'danger-full-access' },
+      },
+    }),
+    JSON.stringify({
+      timestamp: '2026-04-14T12:00:02.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'Fix replay sync' }],
+      },
+    }),
+  ])
+  writeJsonl(activationJournal, [
+    JSON.stringify({
+      type: 'activation',
+      timestamp: '2026-04-14T11:59:00.000Z',
+      providerId: 'codex',
+      accountId: 'provider-xmapi',
+      previousAccountId: 'provider-old',
+      reason: 'manual',
+      automatic: false,
+      forced: false,
+      protectedByManualGrace: false,
+    }),
+  ])
+  writeFileSync(
+    join(ccSwitchDir, 'settings.json'),
+    `${JSON.stringify({ currentProviderCodex: 'provider-xmapi' }, null, 2)}\n`,
+    'utf8',
+  )
+
+  const db = new DatabaseSync(join(ccSwitchDir, 'cc-switch.db'))
+  db.exec(`
+    CREATE TABLE providers (
+      id TEXT NOT NULL,
+      app_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      website_url TEXT,
+      category TEXT,
+      settings_config TEXT NOT NULL,
+      meta TEXT NOT NULL DEFAULT '{}',
+      is_current BOOLEAN NOT NULL DEFAULT 0,
+      PRIMARY KEY (id, app_type)
+    );
+  `)
+  db.prepare(`
+    INSERT INTO providers (id, app_type, name, website_url, category, settings_config, is_current)
+    VALUES (?, 'codex', ?, ?, ?, ?, ?)
+  `).run(
+    'provider-xmapi',
+    'xmapi',
+    'https://example.com',
+    'custom',
+    JSON.stringify({
+      config: 'model_provider = "custom"\nmodel = "gpt-5.4"\n\n[model_providers.custom]\nbase_url = "https://example.com/v1"\n',
+    }),
+    1,
+  )
+  db.close()
+
+  const port = await getFreePort()
+  const password = 'codex-sync-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    NEXUS_DATA_DIR: dataDir,
+    HOME: homeDir,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+    rmSync(dataDir, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const { token } = await login(port, password)
+  const response = await fetch(`http://127.0.0.1:${port}/api/cc-switch/codex/sync-history`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+  assert.equal(response.status, 200)
+  const payload = await response.json()
+  assert.equal(payload.ok, true)
+  assert.equal(payload.currentProviderCodex, 'provider-xmapi')
+  assert.equal(payload.targetAccountId, 'provider-xmapi')
+  assert.equal(payload.indexProjection.writtenEntries, 1)
+  assert.equal(payload.stateProjection.writtenThreads, 1)
+  assert.equal(payload.stateProjection.targetModelProvider, 'custom')
+
+  const sessionIndex = readFileSync(join(codexHomeDir, 'session_index.jsonl'), 'utf8')
+  assert.match(sessionIndex, /Fix replay sync/)
+  assert.match(sessionIndex, new RegExp(sessionId))
+
+  const stateDb = new DatabaseSync(join(codexHomeDir, 'state_5.sqlite'))
+  const projectedThread = stateDb.prepare(`
+    SELECT id, model_provider, source, title
+    FROM threads
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).get()
+  const projectedTool = stateDb.prepare(`
+    SELECT name, description
+    FROM thread_dynamic_tools
+    WHERE thread_id = ?
+    ORDER BY position ASC
+    LIMIT 1
+  `).get(sessionId)
+  stateDb.close()
+
+  assert.deepEqual({ ...projectedThread }, {
+    id: sessionId,
+    model_provider: 'custom',
+    source: 'cli',
+    title: 'Fix replay sync',
+  })
+  assert.deepEqual({ ...projectedTool }, {
+    name: 'shell_exec',
+    description: 'execute shell command',
+  })
+})
+
 test('rust nexus-server serves telegram setup and webhook routes', async (t) => {
   ensureRustServerBuilt()
 
