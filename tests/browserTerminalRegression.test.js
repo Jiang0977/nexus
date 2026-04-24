@@ -129,7 +129,6 @@ function createBrowserProjectFixture() {
     }, null, 2)}\n`,
     'utf8',
   )
-
   return { dataDir, projectRoot }
 }
 
@@ -309,6 +308,46 @@ test('browser regression: mobile codex history modal opens and restores focus to
 
   const focusRestored = await codexHistoryTrigger.evaluate((element) => document.activeElement === element)
   assert.equal(focusRestored, true, 'focus should return to the Codex History trigger after closing the modal')
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: settings home syncs codex desktop history from cc-switch', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const syncRequests = []
+  await page.route('**/api/cc-switch/codex/sync-history', async (route) => {
+    syncRequests.push(route.request().method())
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        currentProviderCodex: 'provider-xmapi',
+        targetAccountId: 'provider-xmapi',
+        indexProjection: { writtenEntries: 1 },
+        stateProjection: { writtenThreads: 1, targetModelProvider: 'custom' },
+      }),
+    })
+  })
+
+  await page.getByTitle('Settings').click()
+  await page.getByRole('button', { name: 'Sync Codex Desktop History' }).waitFor()
+
+  syncRequests.length = 0
+
+  await page.getByRole('button', { name: 'Sync Codex Desktop History' }).click()
+  await page.waitForFunction(() => document.body.textContent?.includes('Synced 1 Codex history entries to the current provider: provider-xmapi'))
+
+  assert.deepEqual(syncRequests, ['POST'])
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),
     [],

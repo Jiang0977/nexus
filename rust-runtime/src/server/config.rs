@@ -243,6 +243,20 @@ pub(super) async fn api_import_cc_switch_provider(
     ))
 }
 
+pub(super) async fn api_sync_cc_switch_codex_history(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(response) = require_auth(&headers, &state) {
+        return response;
+    }
+
+    match crate::codex_replay::sync_cc_switch_codex_history() {
+        Ok(payload) => Json(payload).into_response(),
+        Err(error) => json_error(error.status_code, &error.message),
+    }
+}
+
 pub(super) async fn api_project_defaults(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

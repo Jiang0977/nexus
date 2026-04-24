@@ -27,6 +27,9 @@ export default function GeneralSettings({ token, themeMode, onToggleTheme, onClo
   const [releaseUrl, setReleaseUrl] = useState<string>('')
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle')
   const [copied, setCopied] = useState(false)
+  const [syncingCodexHistory, setSyncingCodexHistory] = useState(false)
+  const [codexHistoryNotice, setCodexHistoryNotice] = useState<string | null>(null)
+  const [codexHistoryError, setCodexHistoryError] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/version', { headers: { Authorization: `Bearer ${token}` } })
@@ -74,6 +77,29 @@ export default function GeneralSettings({ token, themeMode, onToggleTheme, onClo
       setTimeout(() => setCopied(false), 2000)
     } catch (error: unknown) {
       console.error('[GeneralSettings] Failed to copy update command', error)
+    }
+  }
+
+  async function handleSyncCodexHistory() {
+    setSyncingCodexHistory(true)
+    setCodexHistoryNotice(null)
+    setCodexHistoryError(null)
+    try {
+      const response = await fetch('/api/cc-switch/codex/sync-history', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.error || `HTTP ${response.status}`)
+      }
+      const provider = String(data?.currentProviderCodex || data?.targetAccountId || 'current')
+      const count = Number(data?.stateProjection?.writtenThreads || data?.indexProjection?.writtenEntries || 0)
+      setCodexHistoryNotice(t('settings.codexHistorySyncSuccess', { provider, count }))
+    } catch (error: unknown) {
+      setCodexHistoryError(error instanceof Error ? error.message : t('settings.codexHistorySyncFailed'))
+    } finally {
+      setSyncingCodexHistory(false)
     }
   }
 
@@ -152,6 +178,29 @@ export default function GeneralSettings({ token, themeMode, onToggleTheme, onClo
               <span>{t('settings.manageProfiles')}</span>
               <Icon name="arrowRight" size={14} />
             </button>
+          </div>
+
+          <div className="border-t border-nexus-border pt-4">
+            <div className="text-[11px] text-nexus-text-2 tracking-wider uppercase mb-3">
+              {t('settings.codexHistorySync')}
+            </div>
+            <p className="text-sm text-nexus-text-2 mb-3">
+              {t('settings.codexHistorySyncDesc')}
+            </p>
+            <button
+              className="flex items-center gap-2 bg-transparent border border-nexus-border rounded-md text-nexus-text text-sm px-3 py-2 cursor-pointer disabled:opacity-50"
+              onPointerDown={syncingCodexHistory ? undefined : handleSyncCodexHistory}
+              disabled={syncingCodexHistory}
+            >
+              <Icon name="refresh" size={14} />
+              <span>{syncingCodexHistory ? t('settings.codexHistorySyncing') : t('settings.codexHistorySyncAction')}</span>
+            </button>
+            {codexHistoryNotice && (
+              <p className="text-sm text-nexus-accent mt-3">{codexHistoryNotice}</p>
+            )}
+            {codexHistoryError && (
+              <p className="text-sm text-red-400 mt-3">{codexHistoryError}</p>
+            )}
           </div>
 
           {/* About section */}

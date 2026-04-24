@@ -164,6 +164,10 @@ fn build_router(state: Arc<AppState>) -> Router {
             "/api/cc-switch/providers/{kind}/{provider_id}/import",
             post(api_import_cc_switch_provider),
         )
+        .route(
+            "/api/cc-switch/codex/sync-history",
+            post(api_sync_cc_switch_codex_history),
+        )
         .route("/api/project-defaults", get(api_project_defaults))
         .route("/api/toolbar-config", get(api_toolbar_config))
         .route("/api/toolbar-config", post(api_save_toolbar_config))

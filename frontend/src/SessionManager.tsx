@@ -279,6 +279,12 @@ export default function SessionManager({ token, onClose }: Props) {
     }
   }
 
+  async function refreshCcSwitchProviders(kind: ConfigKind) {
+    setCfgError(null)
+    setCfgNotice(null)
+    await fetchCcSwitchProviders(kind)
+  }
+
   async function syncCurrentConfig(kind: ConfigKind, id: string) {
     setCfgError(null)
     setCfgNotice(null)
@@ -571,7 +577,7 @@ export default function SessionManager({ token, onClose }: Props) {
                   <div className="flex items-center gap-2">
                     <button
                       className="bg-transparent border border-nexus-border rounded text-nexus-text-2 cursor-pointer text-[11px] px-2 py-0.5"
-                      onPointerDown={() => fetchCcSwitchProviders(activeKind)}
+                      onPointerDown={() => { void refreshCcSwitchProviders(activeKind) }}
                       disabled={activeCcSwitchLoading}
                     >
                       {t('apiConfig.refresh')}
