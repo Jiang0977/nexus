@@ -453,13 +453,23 @@ async fn api_codex_session_resume(
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
     Query(query): Query<ProjectQuery>,
-    body: Option<Json<ProjectBody>>,
+    body: Option<Json<CodexResumeBody>>,
 ) -> Response {
     if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
 
-    let project_name = project_from_sources(body, query.project);
+    let (project_name, requested_profile) = match body {
+        Some(Json(payload)) => (
+            payload
+                .project
+                .filter(|value| !value.is_empty())
+                .or(query.project)
+                .unwrap_or_default(),
+            payload.profile,
+        ),
+        None => (query.project.unwrap_or_default(), None),
+    };
     let detail = match state
         .runtime_manager
         .session_management_request(
@@ -492,7 +502,7 @@ async fn api_codex_session_resume(
         state.workspace_root.as_ref(),
         Some(&cwd),
     );
-    let response_profile =
+    let default_profile =
         if default_payload.get("shell_type").and_then(Value::as_str) == Some("codex") {
             default_payload
                 .get("profile")
@@ -502,6 +512,7 @@ async fn api_codex_session_resume(
         } else {
             None
         };
+    let response_profile = requested_profile.or(default_profile);
     let shell_cmd = build_interactive_shell_command(
         state.project_root.as_ref(),
         state.proxy_vars.as_ref(),

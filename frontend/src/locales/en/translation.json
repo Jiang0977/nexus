@@ -242,7 +242,9 @@
     "importedNotice": "Imported Codex profile: {{id}}",
     "syncedNotice": "Synced the current system config into: {{id}}",
     "ccSwitchImportedNotice": "Imported from cc-switch: {{id}}",
-    "ccSwitchImportedAllNotice": "Imported {{count}} configs from cc-switch"
+    "ccSwitchImportedAllNotice": "Imported {{count}} configs from cc-switch",
+    "ccSwitchSyncHistoryNotice": "Codex history synced to the current provider",
+    "ccSwitchSyncHistoryFailed": "Failed to sync Codex history from cc-switch"
   },
   "sessionMgr": {
     "title": "Workspaces & Windows",
@@ -289,6 +291,9 @@
     "projectNotFound": "The current workspace no longer exists, so Codex history cannot be loaded.",
     "loadFailed": "This read failed, but it does not mean the current project has no history.",
     "resumeFailed": "Failed to continue this session. Please retry.",
+    "resumeDialogTitle": "Continue Codex Session",
+    "resumeDialogDescription": "Choose the Codex profile for this resumed session.",
+    "resumeDialogConfirm": "Continue Session",
     "deleteConfirm": "Delete this Codex history session?\n\n{{title}}\n\nThis cannot be undone.",
     "deleteFailed": "Failed to delete this session. Please retry.",
     "errorTitle": "Codex history is unavailable right now",

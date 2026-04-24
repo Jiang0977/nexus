@@ -731,6 +731,12 @@ pub(super) struct ProjectBody {
 }
 
 #[derive(Deserialize, Default)]
+pub(super) struct CodexResumeBody {
+    pub(super) project: Option<String>,
+    pub(super) profile: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
 pub(super) struct NameBody {
     pub(super) name: Option<String>,
 }

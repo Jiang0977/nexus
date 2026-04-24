@@ -114,6 +114,7 @@ function createBrowserProjectFixture() {
 
   const dataDir = join(projectRoot, 'data')
   mkdirSync(join(dataDir, 'configs'), { recursive: true })
+  mkdirSync(join(dataDir, 'codex-configs'), { recursive: true })
   writeFileSync(
     join(dataDir, 'configs', 'browser-fixture.json'),
     `${JSON.stringify({
@@ -129,6 +130,38 @@ function createBrowserProjectFixture() {
     }, null, 2)}\n`,
     'utf8',
   )
+  writeFileSync(
+    join(dataDir, 'codex-configs', 'daily.json'),
+    `${JSON.stringify({
+      label: 'Daily Codex',
+      OPENAI_API_KEY: 'sk-daily',
+      model: 'gpt-5-codex',
+      reasoning_effort: 'medium',
+    }, null, 2)}\n`,
+    'utf8',
+  )
+  writeFileSync(
+    join(dataDir, 'codex-configs', 'focus.json'),
+    `${JSON.stringify({
+      label: 'Focus Codex',
+      OPENAI_API_KEY: 'sk-focus',
+      model: 'gpt-5-codex',
+      reasoning_effort: 'high',
+    }, null, 2)}\n`,
+    'utf8',
+  )
+  writeFileSync(
+    join(dataDir, 'project-shell-defaults.json'),
+    `${JSON.stringify({
+      '/workspace/demo': {
+        shell_type: 'codex',
+        profile: 'daily',
+        updated_at: '2026-04-24T00:00:00.000Z',
+      },
+    }, null, 2)}\n`,
+    'utf8',
+  )
+
   return { dataDir, projectRoot }
 }
 
@@ -308,6 +341,47 @@ test('browser regression: mobile codex history modal opens and restores focus to
 
   const focusRestored = await codexHistoryTrigger.evaluate((element) => document.activeElement === element)
   assert.equal(focusRestored, true, 'focus should return to the Codex History trigger after closing the modal')
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: mobile codex history continue opens codex profile picker before resume', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const resumeRequests = []
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/api/codex-sessions/session-1/resume')) {
+      resumeRequests.push(request)
+    }
+  })
+
+  await page.getByRole('button', { name: 'Codex History' }).click()
+  await page.getByRole('button', { name: 'Continue: Fix bug' }).click()
+
+  const profileSelect = page.locator('select')
+  await profileSelect.waitFor()
+  await page.waitForFunction(() => {
+    const select = document.querySelector('select')
+    return select instanceof HTMLSelectElement && select.value === 'daily'
+  })
+  assert.equal(await profileSelect.inputValue(), 'daily')
+  await page.getByRole('button', { name: 'Continue Session' }).waitFor()
+  assert.equal(resumeRequests.length, 0, 'resume request should not fire before the dialog is confirmed')
+
+  await profileSelect.selectOption('focus')
+  const resumeRequestPromise = page.waitForRequest((request) => (
+    request.method() === 'POST'
+      && request.url().includes('/api/codex-sessions/session-1/resume')
+      && request.postDataJSON()?.profile === 'focus'
+  ))
+  await page.getByRole('button', { name: 'Continue Session' }).click()
+  await resumeRequestPromise
+
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),
     [],
