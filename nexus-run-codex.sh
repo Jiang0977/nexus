@@ -7,6 +7,7 @@ set -euo pipefail
 PROFILE="${1:-}"
 PROJECT="${2:-}"
 RESUME_SESSION_ID="${3:-}"
+SOURCE_HOME="${HOME:-}"
 
 if [ -z "$PROJECT" ]; then
     echo "[Nexus] Usage: nexus-run-codex.sh <profile?> <project_path> <resume_session_id?>"
@@ -62,6 +63,13 @@ CODEX_BIN="$(which -a codex 2>/dev/null | tail -1)"
 if [ -z "$CODEX_BIN" ]; then
     CODEX_BIN="codex"
 fi
+
+export NEXUS_REPO_ROOT="${SCRIPT_DIR}"
+if [ -n "$SOURCE_HOME" ]; then
+    export NEXUS_CODEX_SOURCE_HOME="${SOURCE_HOME}/.codex"
+fi
+export NEXUS_REAL_CODEX_BIN="${CODEX_BIN}"
+export PATH="${SCRIPT_DIR}/scripts/runtime-bin:${PATH}"
 
 label="${PROFILE:-Manual login}"
 if [ -n "$CONFIG_FILE" ]; then

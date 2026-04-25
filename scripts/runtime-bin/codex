@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${NEXUS_REPO_ROOT:-$(cd -- "${SCRIPT_DIR}/../.." && pwd)}"
+PICKER_SCRIPT="${REPO_ROOT}/scripts/nexus-codex-resume-picker.py"
+PYTHON_BIN="${NEXUS_PYTHON_BIN:-python3}"
+
+resolve_real_codex() {
+  if [ -n "${NEXUS_REAL_CODEX_BIN:-}" ] && [ -x "${NEXUS_REAL_CODEX_BIN}" ]; then
+    printf '%s\n' "${NEXUS_REAL_CODEX_BIN}"
+    return 0
+  fi
+
+  local self_path
+  local candidate
+
+  self_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if [ "$candidate" != "$self_path" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(which -a codex 2>/dev/null || true)
+
+  return 1
+}
+
+parse_resume_flags() {
+  NEXUS_PICKER_SHOW_ALL=0
+  NEXUS_PICKER_INCLUDE_NON_INTERACTIVE=0
+  NEXUS_PICKER_FORWARD_ARGS=()
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --all)
+        NEXUS_PICKER_SHOW_ALL=1
+        NEXUS_PICKER_FORWARD_ARGS+=("$1")
+        ;;
+      --include-non-interactive)
+        NEXUS_PICKER_INCLUDE_NON_INTERACTIVE=1
+        NEXUS_PICKER_FORWARD_ARGS+=("$1")
+        ;;
+      --last|--help|-h|--version|-V|--)
+        return 1
+        ;;
+      --config|--enable|--disable|--remote|--remote-auth-token-env|--image|--model|--local-provider|--profile|--sandbox|--cd|--add-dir|--ask-for-approval|-c|-i|-m|-p|-s|-C|-a)
+        if [ "$#" -lt 2 ]; then
+          return 1
+        fi
+        NEXUS_PICKER_FORWARD_ARGS+=("$1" "$2")
+        shift
+        ;;
+      --oss|--full-auto|--dangerously-bypass-approvals-and-sandbox|--search|--no-alt-screen)
+        NEXUS_PICKER_FORWARD_ARGS+=("$1")
+        ;;
+      -*)
+        return 1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  return 0
+}
+
+pick_synced_resume_session() {
+  if [ ! -f "$PICKER_SCRIPT" ] || ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    return 2
+  fi
+
+  if [ "${NEXUS_FORCE_SYNC_RESUME_PICKER:-0}" != "1" ] && { [ ! -t 0 ] || [ ! -t 2 ]; }; then
+    return 2
+  fi
+
+  local picker_args=("$PICKER_SCRIPT")
+  if [ "${NEXUS_PICKER_SHOW_ALL}" = "1" ]; then
+    picker_args+=("--all")
+  fi
+  if [ "${NEXUS_PICKER_INCLUDE_NON_INTERACTIVE}" = "1" ]; then
+    picker_args+=("--include-non-interactive")
+  fi
+
+  local selection
+  local status
+
+  set +e
+  selection="$("$PYTHON_BIN" "${picker_args[@]}")"
+  status=$?
+  set -e
+
+  if [ "$status" -ne 0 ]; then
+    return "$status"
+  fi
+
+  selection="$(printf '%s' "$selection" | tr -d '\r' | awk 'NF { print; exit }')"
+  if [ -z "$selection" ]; then
+    return 2
+  fi
+
+  printf '%s\n' "$selection"
+  return 0
+}
+
+REAL_CODEX_BIN="$(resolve_real_codex || true)"
+if [ -z "$REAL_CODEX_BIN" ]; then
+  printf 'codex wrapper error: real codex binary not found in PATH\n' >&2
+  exit 1
+fi
+
+if [ "${1:-}" = "resume" ]; then
+  shift
+  if parse_resume_flags "$@"; then
+    set +e
+    PICKED_SESSION_ID="$(pick_synced_resume_session)"
+    PICK_STATUS=$?
+    set -e
+
+    if [ "$PICK_STATUS" -eq 0 ]; then
+      exec "$REAL_CODEX_BIN" --dangerously-bypass-approvals-and-sandbox resume "$PICKED_SESSION_ID" "${NEXUS_PICKER_FORWARD_ARGS[@]}"
+    fi
+
+    if [ "$PICK_STATUS" -ne 2 ]; then
+      exit "$PICK_STATUS"
+    fi
+  fi
+  set -- resume "$@"
+fi
+
+exec "$REAL_CODEX_BIN" --dangerously-bypass-approvals-and-sandbox "$@"
