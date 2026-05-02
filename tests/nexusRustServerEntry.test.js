@@ -2117,6 +2117,82 @@ test('rust nexus-server serves task history, SSE task execution, and task deleti
   assert.equal(persistedTasks.some((task) => task.id === taskId), false)
 })
 
+test('rust nexus-server keeps tasks running after the SSE client disconnects', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const dataDir = mkdtempSync(join(tmpdir(), 'nexus-rust-server-task-disconnect-data-'))
+  const port = await getFreePort()
+  const password = 'task-disconnect-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    NEXUS_DATA_DIR: dataDir,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+    NEXUS_TASK_RUNNER_RUST_EXECUTABLE: process.execPath,
+    NEXUS_TASK_RUNNER_RUST_ARGS: JSON.stringify([TASK_FIXTURE]),
+    NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
+    NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
+    FAKE_TASK_RUNTIME_DELAY_MS: '200',
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+    rmSync(dataDir, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const { token } = await login(port, password)
+  const headers = { Authorization: `Bearer ${token}` }
+  const jsonHeaders = {
+    ...headers,
+    'Content-Type': 'application/json',
+  }
+
+  const createTaskResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      session_name: 'review',
+      prompt: 'keep running',
+      tmux_session: 'demo-project',
+    }),
+  })
+
+  assert.equal(createTaskResponse.status, 200)
+  assert.match(createTaskResponse.headers.get('content-type') || '', /text\/event-stream/)
+  await createTaskResponse.body?.cancel()
+  await delay(50)
+
+  let sawRunning = false
+  const completedTask = await waitFor(async () => {
+    const historyResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })
+    assert.equal(historyResponse.status, 200)
+    const history = await historyResponse.json()
+    const task = history.find((item) => item.prompt === 'keep running')
+    if (!task) return false
+    if (task.status === 'running') {
+      sawRunning = true
+      return false
+    }
+    if (task.status === 'success') {
+      return task
+    }
+    throw new Error(`task ended unexpectedly: ${JSON.stringify(task)}`)
+  }, 5000)
+
+  assert.equal(sawRunning, true)
+  assert.equal(completedTask.session_name, 'review')
+  assert.equal(completedTask.status, 'success')
+  assert.equal(completedTask.output, 'fake:keep running')
+  assert.equal(completedTask.error, '')
+})
+
 test('rust nexus-server proxies session and codex history routes', async (t) => {
   ensureRustServerBuilt()
 

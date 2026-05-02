@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline'
 
 const mode = process.env.FAKE_TASK_RUNTIME_MODE || 'normal'
+const defaultDelayMs = Number.parseInt(process.env.FAKE_TASK_RUNTIME_DELAY_MS || '10', 10)
 const readyPayload = {
   ready: true,
   source: 'fake-task-rust-runtime',
@@ -17,6 +18,17 @@ if (mode === 'exit-immediately') {
 
 const timers = new Map()
 let runningTasks = 0
+
+function parseChunkList(envKey) {
+  const raw = process.env[envKey]
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.map((item) => String(item)) : null
+  } catch {
+    return null
+  }
+}
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`)
@@ -85,16 +97,31 @@ rl.on('line', (line) => {
           return
         }
 
+        const stdoutChunks = parseChunkList('FAKE_TASK_RUNTIME_STDOUT_CHUNKS_JSON') || [`fake:${params.prompt || ''}`]
+        const stderrChunks = parseChunkList('FAKE_TASK_RUNTIME_STDERR_CHUNKS_JSON') || []
+        const exitCode = Number.parseInt(process.env.FAKE_TASK_RUNTIME_EXIT_CODE || '0', 10)
+        const errorMessage = process.env.FAKE_TASK_RUNTIME_ERROR_MESSAGE || ''
+        const delayMs = Number.isFinite(defaultDelayMs) ? defaultDelayMs : 10
+
         runningTasks += 1
         response(id, true, { ok: true })
         const timer = setTimeout(() => {
-          event('chunk', {
-            taskId: params.taskId,
-            chunk: `fake:${params.prompt || ''}`,
-            isErr: false,
-          })
-          finishTask(params.taskId, 0)
-        }, 10)
+          for (const chunk of stdoutChunks) {
+            event('chunk', {
+              taskId: params.taskId,
+              chunk,
+              isErr: false,
+            })
+          }
+          for (const chunk of stderrChunks) {
+            event('chunk', {
+              taskId: params.taskId,
+              chunk,
+              isErr: true,
+            })
+          }
+          finishTask(params.taskId, Number.isNaN(exitCode) ? 0 : exitCode, errorMessage)
+        }, delayMs)
         timers.set(params.taskId, timer)
         return
       }
