@@ -1,6 +1,6 @@
 # CURRENT ROADMAP — Nexus
 
-最后整理：2026-04-21
+最后整理：2026-05-02
 
 目的：给“当前到底还有哪些 TODO、下一步该做什么”一个短而硬的答案，避免继续被历史文档误导。
 
@@ -27,7 +27,7 @@
 
 ## 当前 Open TODO
 
-当前没有新的 open backlog。
+- 当前没有新的 open TODO。
 
 ## 已完成，不再算 Open Backlog
 
@@ -41,10 +41,12 @@
 - `DESIGN.md` 已完成。
 - Codex 历史功能与验证债都已闭环；证据见 [codex-history-browser-smoke-2026-04-21.md](verification/codex-history-browser-smoke-2026-04-21.md)。
 - systemd residue 关闭证据见 [systemd-residue-smoke-2026-04-21.md](verification/systemd-residue-smoke-2026-04-21.md)。
+- `/api/tasks` SSE 断连不再取消后台任务；已于 2026-05-02 通过 Rust server 任务回归验证闭环。
+- 任务运行期 `stdout/stderr` 改为有界滚动缓冲；已于 2026-05-02 通过 Rust 单测与 server 任务回归验证闭环。
 
 ## 当前主开发方向
 
-按当前仓库状态，已没有明确仍开的交付 backlog。
+按当前仓库状态，没有未闭环的 P1 任务 runtime backlog。后续工作应基于新需求或新回归重新建账，而不是继续追这两条已闭环项。
 
 ## 暂不建议当主线推进的事项
 

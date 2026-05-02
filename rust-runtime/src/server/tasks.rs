@@ -50,11 +50,25 @@ pub(super) struct TaskSseFrame {
 }
 
 pub(super) struct TaskEventStream {
-    pub(super) task_manager: Arc<TaskManager>,
-    pub(super) task_id: String,
     pub(super) start_frame: Option<TaskSseFrame>,
     pub(super) receiver: mpsc::UnboundedReceiver<TaskSseFrame>,
-    pub(super) completed: bool,
+}
+
+fn append_bounded_chunk(buffer: &mut String, chunk: &str, max_chars: usize) {
+    if max_chars == 0 {
+        buffer.clear();
+        return;
+    }
+
+    if chunk.chars().count() >= max_chars {
+        *buffer = truncate_tail(chunk, max_chars);
+        return;
+    }
+
+    buffer.push_str(chunk);
+    if buffer.chars().count() > max_chars {
+        *buffer = truncate_tail(buffer, max_chars);
+    }
 }
 
 impl TaskManager {
@@ -161,12 +175,6 @@ impl TaskManager {
         })
     }
 
-    pub(super) async fn kill_task(&self, task_id: &str) -> Result<(), String> {
-        self.runtime
-            .notify("killTask", json!({ "taskId": task_id }))
-            .await
-    }
-
     pub(super) async fn list_recent(&self, limit: usize) -> Result<Vec<Value>, String> {
         let tasks = self.load_tasks().await?;
         Ok(tasks.into_iter().rev().take(limit).collect())
@@ -242,9 +250,17 @@ impl TaskManager {
                         return;
                     };
                     if chunk.is_err {
-                        state.error_output.push_str(&chunk.chunk);
+                        append_bounded_chunk(
+                            &mut state.error_output,
+                            &chunk.chunk,
+                            MAX_TASK_ERROR_LENGTH,
+                        );
                     } else {
-                        state.output.push_str(&chunk.chunk);
+                        append_bounded_chunk(
+                            &mut state.output,
+                            &chunk.chunk,
+                            MAX_TASK_OUTPUT_LENGTH,
+                        );
                     }
                     let _ = state.sender.send(TaskSseFrame {
                         event: if chunk.is_err { "error" } else { "output" }.to_string(),
@@ -373,15 +389,8 @@ impl TaskManager {
 }
 
 impl TaskEventStream {
-    pub(super) fn new(
-        task_manager: Arc<TaskManager>,
-        session_name: String,
-        prompt: String,
-        handle: TaskRunHandle,
-    ) -> Self {
+    pub(super) fn new(session_name: String, prompt: String, handle: TaskRunHandle) -> Self {
         Self {
-            task_manager,
-            task_id: handle.task_id.clone(),
             start_frame: Some(TaskSseFrame {
                 event: "start".to_string(),
                 payload: json!({
@@ -392,7 +401,6 @@ impl TaskEventStream {
                 }),
             }),
             receiver: handle.receiver,
-            completed: false,
         }
     }
 }
@@ -406,31 +414,10 @@ impl Stream for TaskEventStream {
         }
 
         match Pin::new(&mut self.receiver).poll_recv(cx) {
-            Poll::Ready(Some(frame)) => {
-                if frame.event == "done" {
-                    self.completed = true;
-                }
-                Poll::Ready(Some(Ok(to_sse_event(frame))))
-            }
-            Poll::Ready(None) => {
-                self.completed = true;
-                Poll::Ready(None)
-            }
+            Poll::Ready(Some(frame)) => Poll::Ready(Some(Ok(to_sse_event(frame)))),
+            Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
-    }
-}
-
-impl Drop for TaskEventStream {
-    fn drop(&mut self) {
-        if self.completed {
-            return;
-        }
-        let task_manager = Arc::clone(&self.task_manager);
-        let task_id = self.task_id.clone();
-        tokio::spawn(async move {
-            let _ = task_manager.kill_task(&task_id).await;
-        });
     }
 }
 
@@ -501,7 +488,7 @@ pub(super) async fn api_create_task(
         Err(error) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
     };
 
-    let stream = TaskEventStream::new(state.task_manager.clone(), session_name, prompt, handle);
+    let stream = TaskEventStream::new(session_name, prompt, handle);
     let mut response = Sse::new(stream).into_response();
     response
         .headers_mut()
@@ -510,4 +497,25 @@ pub(super) async fn api_create_task(
         .headers_mut()
         .insert(CONNECTION, HeaderValue::from_static("keep-alive"));
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::append_bounded_chunk;
+
+    #[test]
+    fn append_bounded_chunk_keeps_tail_within_limit() {
+        let mut buffer = "12345".to_string();
+        append_bounded_chunk(&mut buffer, "67890", 6);
+        assert_eq!(buffer, "567890");
+        assert!(buffer.chars().count() <= 6);
+    }
+
+    #[test]
+    fn append_bounded_chunk_replaces_buffer_when_chunk_exceeds_limit() {
+        let mut buffer = "prefix".to_string();
+        append_bounded_chunk(&mut buffer, "abcdefghij", 4);
+        assert_eq!(buffer, "ghij");
+        assert!(buffer.chars().count() <= 4);
+    }
 }
