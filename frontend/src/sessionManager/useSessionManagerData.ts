@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { buildAuthHeaders, parseApiError, parseNetworkError } from './api'
+import { shouldAutoRefreshProjects } from './shouldAutoRefreshProjects'
 import type { Channel, Project } from './types'
 
 interface UseSessionManagerDataArgs {
@@ -12,9 +13,11 @@ interface UseSessionManagerDataArgs {
 export function useSessionManagerData({ currentProject, t, token }: UseSessionManagerDataArgs) {
   const [projects, setProjects] = useState<Project[]>([])
   const [channels, setChannels] = useState<Channel[]>([])
+  const [hasLoadedProjects, setHasLoadedProjects] = useState(false)
   const [loadingProjects, setLoadingProjects] = useState(false)
   const [loadingChannels, setLoadingChannels] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const autoRefreshAttemptRef = useRef<string | null>(null)
 
   const headers = useMemo(() => buildAuthHeaders(token), [token])
 
@@ -30,6 +33,7 @@ export function useSessionManagerData({ currentProject, t, token }: UseSessionMa
     } catch (fetchError: unknown) {
       setError(parseNetworkError(fetchError))
     } finally {
+      setHasLoadedProjects(true)
       setLoadingProjects(false)
     }
   }, [headers, t])
@@ -61,6 +65,32 @@ export function useSessionManagerData({ currentProject, t, token }: UseSessionMa
     if (!currentProject) return
     void fetchChannels(currentProject)
   }, [currentProject, fetchChannels])
+
+  useEffect(() => {
+    const normalizedProject = currentProject.trim()
+    if (!normalizedProject) {
+      autoRefreshAttemptRef.current = null
+      return
+    }
+    if (projects.some((project) => project.name === normalizedProject)) {
+      autoRefreshAttemptRef.current = null
+    }
+  }, [currentProject, projects])
+
+  useEffect(() => {
+    if (!shouldAutoRefreshProjects({
+      currentProject,
+      hasLoadedProjects,
+      loadingProjects,
+      lastAttemptedProject: autoRefreshAttemptRef.current,
+      projects,
+    })) {
+      return
+    }
+
+    autoRefreshAttemptRef.current = currentProject.trim()
+    void fetchProjects()
+  }, [currentProject, fetchProjects, hasLoadedProjects, loadingProjects, projects])
 
   const handleRefresh = useCallback(() => {
     void fetchProjects()
