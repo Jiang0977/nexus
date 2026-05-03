@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState, lazy, startTransition } from 'react'
+import { useEffect, useRef, useCallback, useState, lazy, startTransition, type DragEvent as ReactDragEvent } from 'react'
 import type { Terminal as XTerm } from '@xterm/xterm'
 import type { SessionManagerSidebarDetailView, SessionManagerV2Handle } from './SessionManagerV2'
 import { useTranslation } from 'react-i18next'
@@ -14,6 +14,7 @@ import { TerminalModalStack, preloadCodexSessionsPanel, preloadSessionManagerV2 
 import { ProfileGuideOverlay } from './terminal/ProfileGuideOverlay'
 import { ScrollbackOverlay } from './terminal/ScrollbackOverlay'
 import { TerminalViewport } from './terminal/TerminalViewport'
+import { SplitWorkspaceView } from './terminal/SplitWorkspaceView'
 import { applyNexusCssVars, getInitialTheme, THEME_KEY, THEMES, type ThemeMode } from './terminal/theme'
 import { UploadConflictDialog } from './terminal/UploadConflictDialog'
 import { UploadNotifications } from './terminal/UploadNotifications'
@@ -22,6 +23,8 @@ import { useTerminalRuntime } from './terminal/useTerminalRuntime'
 import { useTerminalSessions } from './terminal/useTerminalSessions'
 import { useProfileGuide } from './terminal/useProfileGuide'
 import { WelcomeGuideOverlay } from './terminal/WelcomeGuideOverlay'
+import { CHANNEL_DRAG_MIME, type PaneTarget, type SidebarChannelDragPayload } from './terminal/splitLayoutTypes'
+import type { FocusedPaneRuntime } from './terminal/TerminalPane'
 
 const SessionManagerV2 = lazy(preloadSessionManagerV2)
 
@@ -38,6 +41,8 @@ export default function Terminal({ token }: Props) {
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const termRef = useRef<XTerm | null>(null)
+  const focusedPaneRuntimeRef = useRef<FocusedPaneRuntime | null>(null)
+  const focusedPaneTargetRef = useRef<PaneTarget | null>(null)
   const [activeWindowIndex, setActiveWindowIndex] = useState(() => parseInt(localStorage.getItem('nexus_window') || '0', 10))
   const [showSettings, setShowSettings] = useState(false)
   const [showGeneralSettings, setShowGeneralSettings] = useState(false)
@@ -162,6 +167,7 @@ export default function Terminal({ token }: Props) {
     activeWindowIndex,
     activeWindowIndexRef,
     attachWindowFnRef,
+    enabled: !isWidePC,
     inputRef,
     isWidePC,
     overlayOpen: runtimeOverlayOpen,
@@ -305,9 +311,27 @@ export default function Terminal({ token }: Props) {
 
   const toolbarProps = {
     token,
-    sendToWs,
-    scrollToBottom,
-    onFitTerminal: fitTerminal,
+    sendToWs: (data: string) => {
+      if (isWidePC) {
+        focusedPaneRuntimeRef.current?.sendToWs(data)
+        return
+      }
+      sendToWs(data)
+    },
+    scrollToBottom: () => {
+      if (isWidePC) {
+        focusedPaneRuntimeRef.current?.scrollToBottom()
+        return
+      }
+      scrollToBottom()
+    },
+    onFitTerminal: () => {
+      if (isWidePC) {
+        focusedPaneRuntimeRef.current?.fitTerminal()
+        return
+      }
+      fitTerminal()
+    },
     termRef,
     themeMode,
     onToggleTheme: toggleTheme,
@@ -352,6 +376,29 @@ export default function Terminal({ token }: Props) {
     setShowGeneralSettings(false)
     setShowSettings(true)
   }
+
+  const handleFocusedPaneRuntimeChange = useCallback((runtime: FocusedPaneRuntime | null) => {
+    focusedPaneRuntimeRef.current = runtime
+    termRef.current = runtime?.termRef.current ?? null
+  }, [])
+
+  const handleFocusedPaneTargetChange = useCallback((target: PaneTarget | null) => {
+    focusedPaneTargetRef.current = target
+  }, [])
+
+  const handleSidebarChannelDragStart = useCallback((event: ReactDragEvent<HTMLElement>, channel: { index: number; name: string }, projectName: string) => {
+    if (!projectName) return
+    const payload: SidebarChannelDragPayload = {
+      type: 'nexus-channel',
+      session: projectName,
+      windowIndex: channel.index,
+      name: channel.name,
+    }
+    const raw = JSON.stringify(payload)
+    event.dataTransfer.effectAllowed = 'copy'
+    event.dataTransfer.setData(CHANNEL_DRAG_MIME, raw)
+    event.dataTransfer.setData('text/plain', raw)
+  }, [])
 
   return (
     <div className="flex flex-col w-full relative" style={{ height: vvHeight ?? '100dvh' }}>
@@ -407,6 +454,7 @@ export default function Terminal({ token }: Props) {
                   onCodexResumeSuccess={handleCodexResumeSuccess}
                   onCodexDeleteSuccess={handleCodexSessionDelete}
                   onStartNewCodex={handleSidebarStartNewCodex}
+                  onChannelDragStart={handleSidebarChannelDragStart}
                 />
               )}
               onAttachWindow={attachToWindow}
@@ -434,14 +482,13 @@ export default function Terminal({ token }: Props) {
               windowOutputs={windowOutputs}
             />
             <div className="flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden relative">
-              <TerminalViewport
-                containerRef={containerRef}
-                isConnecting={isConnecting}
-                isScrolledUp={isScrolledUp}
-                onFocusTerminal={() => termRef.current?.textarea?.focus()}
-                onFetchScrollback={fetchScrollback}
-                onScrollToBottom={scrollToBottom}
-                selectTextLabel={t('terminal.selectText')}
+              <SplitWorkspaceView
+                activePaneTermRef={termRef}
+                activeTargetRef={focusedPaneTargetRef}
+                onFocusedPaneTargetChange={handleFocusedPaneTargetChange}
+                onFocusedRuntimeChange={handleFocusedPaneRuntimeChange}
+                themeMode={themeMode}
+                token={token}
               />
             </div>
           </div>
@@ -545,7 +592,7 @@ export default function Terminal({ token }: Props) {
       />
 
       {/* 空状态提示：只在数据加载完成后才显示 */}
-      {windows.length === 0 && windowsLoaded && !isConnecting && (
+      {!isWidePC && windows.length === 0 && windowsLoaded && !isConnecting && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center text-nexus-muted">
           <div className="text-5xl mb-3">🖥️</div>
           <div className="text-base mb-2">没有活动会话</div>

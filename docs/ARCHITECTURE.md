@@ -1,6 +1,6 @@
 # Nexus Architecture
 
-最后更新：2026-04-21
+最后更新：2026-05-04
 
 目标：给维护者一个当前真实可运行的结构图，不保留已经删除的 Node/npm/PM2 叙事。
 
@@ -71,6 +71,7 @@ bash start.sh
 | `rust-runtime/src/server/tasks.rs` | task runtime 相关 HTTP / SSE 行为 |
 | `rust-runtime/src/server/telegram.rs` | Telegram setup 与桥接入口 |
 | `rust-runtime/src/server/config.rs` | 配置读取、profile / feature config 入口 |
+| `rust-runtime/src/server/layouts.rs` | PC split-view active layout API 与 `data/workspace-layouts.json` 持久化 |
 | `rust-runtime/src/server/workspace.rs` | workspace / 文件系统相关 handler |
 | `rust-runtime/src/server/version.rs` | 版本与更新检查 |
 | `rust-runtime/src/server/session_ws.rs` | tmux session / window / websocket 入口 |
@@ -127,10 +128,14 @@ bash start.sh
 |---|---|
 | `frontend/src/Terminal.tsx` | 顶层编排：overlay、drawer、sidebar、toolbar、lazy 面板装配 |
 | `frontend/src/terminal/useTerminalRuntime.ts` | xterm、WebSocket、resize、输入代理与移动端键盘行为 |
+| `frontend/src/terminal/useTerminalPaneRuntime.ts` | PC split-view 每个 pane 独立的 xterm / WebSocket / resize / reconnect runtime |
 | `frontend/src/terminal/useTerminalSessions.ts` | tmux session/window 列表、切换、创建、轮询状态 |
 | `frontend/src/terminal/useTerminalArtifacts.ts` | scrollback、上传、通知、文件冲突处理 |
 | `frontend/src/terminal/DesktopSidebar.tsx` | 桌面端 session/sidebar 壳层 |
 | `frontend/src/terminal/MobileSessionDrawer.tsx` | 移动端 session drawer 壳层 |
+| `frontend/src/terminal/SplitWorkspaceView.tsx` | PC 右侧主工作区 split-view 编排、layout toolbar、状态条 |
+| `frontend/src/terminal/TerminalPane.tsx` | 单个 split pane：header、drop target、empty/stale/error/loading/live 状态 |
+| `frontend/src/terminal/useWorkspaceLayout.ts` | active layout GET/PUT、前端 normalize、保存状态 |
 
 ## 数据落点
 
@@ -141,6 +146,7 @@ bash start.sh
 | `data/tasks.json` | 异步任务历史 |
 | `data/toolbar-config.json` | 工具栏配置 |
 | `data/project-shell-defaults.json` | 项目默认 shell / profile |
+| `data/workspace-layouts.json` | PC split-view active layout；坏文件/非法内容 fail-open 到默认 single |
 | `data/configs/` | Claude profile |
 | `data/codex-configs/` | Codex profile |
 | `data/uploads/` | 上传文件 |

@@ -250,7 +250,12 @@ async function loginAndWaitForTerminal(page, port, password) {
   await page.goto(`http://127.0.0.1:${port}/`)
   await page.getByPlaceholder('Enter password').fill(password)
   await page.getByRole('button', { name: 'Login' }).click()
-  await page.getByRole('button', { name: 'Select text' }).waitFor()
+  const isMobile = await page.evaluate(() => window.innerWidth < 768)
+  if (isMobile) {
+    await page.getByRole('button', { name: 'Select text' }).waitFor()
+    return
+  }
+  await page.getByTestId('split-workspace-view').waitFor()
 }
 
 async function dispatchMobileSwipe(page, points) {
@@ -292,30 +297,103 @@ test('browser regression: desktop login opens the terminal shell and session man
   )
 })
 
-test('browser regression: desktop terminal viewport fills the available height', { timeout: 120000 }, async (t) => {
+test('browser regression: desktop split workspace fills the available height', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
 
   await loginAndWaitForTerminal(page, port, password)
 
-  const metrics = await page.getByRole('button', { name: 'Select text' }).evaluate((button) => {
-    const viewportRoot = button.parentElement
-    const rightWrapper = viewportRoot?.parentElement
+  const metrics = await page.getByTestId('split-workspace-view').evaluate((workspace) => {
+    const rightWrapper = workspace.parentElement
     return {
-      viewportHeight: viewportRoot?.getBoundingClientRect().height ?? 0,
+      workspaceHeight: workspace.getBoundingClientRect().height,
       wrapperHeight: rightWrapper?.getBoundingClientRect().height ?? 0,
       windowHeight: window.innerHeight,
     }
   })
 
-  assert.ok(metrics.wrapperHeight > 0, `expected terminal wrapper height to be measurable, got ${JSON.stringify(metrics)}`)
+  assert.ok(metrics.wrapperHeight > 0, `expected split workspace wrapper height to be measurable, got ${JSON.stringify(metrics)}`)
   assert.ok(
-    Math.abs(metrics.viewportHeight - metrics.wrapperHeight) <= 1,
-    `expected terminal viewport to fill wrapper height, got ${JSON.stringify(metrics)}`,
+    Math.abs(metrics.workspaceHeight - metrics.wrapperHeight) <= 1,
+    `expected split workspace to fill wrapper height, got ${JSON.stringify(metrics)}`,
   )
   assert.ok(
-    Math.abs(metrics.viewportHeight - metrics.windowHeight) <= 1,
-    `expected desktop terminal viewport to fill the screen height, got ${JSON.stringify(metrics)}`,
+    Math.abs(metrics.workspaceHeight - metrics.windowHeight) <= 1,
+    `expected desktop split workspace to fill the screen height, got ${JSON.stringify(metrics)}`,
   )
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: desktop split layout modes persist after refresh', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const modes = [
+    { button: 'Single', mode: 'single', panes: 1 },
+    { button: 'V Split', mode: 'vertical', panes: 2 },
+    { button: 'H Split', mode: 'horizontal', panes: 2 },
+    { button: '2x2', mode: 'grid-2x2', panes: 4 },
+    { button: '3x3', mode: 'grid-3x3', panes: 9 },
+  ]
+
+  for (const { button, mode, panes } of modes) {
+    const saveResponse = page.waitForResponse((response) => (
+      response.url().includes('/api/workspace-layouts/active')
+        && response.request().method() === 'PUT'
+        && response.ok()
+    ))
+    await page.getByRole('button', { name: button }).click()
+    await saveResponse
+    await page.waitForFunction(
+      (expectedMode) => document.body.textContent?.includes(`mode ${expectedMode}`),
+      mode,
+    )
+    assert.equal(await page.locator('[data-testid^="terminal-pane-"]').count(), panes)
+  }
+
+  await page.reload()
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => document.body.textContent?.includes('mode grid-3x3'))
+  assert.equal(await page.locator('[data-testid^="terminal-pane-"]').count(), 9)
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: desktop drags a sidebar channel into a split pane and restores it after refresh', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const source = page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first()
+  await source.waitFor()
+
+  const saveResponse = page.waitForResponse((response) => (
+    response.url().includes('/api/workspace-layouts/active')
+      && response.request().method() === 'PUT'
+      && response.ok()
+  ))
+  await source.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await saveResponse
+  await page.waitForFunction(() => document.body.textContent?.includes('notes ready'))
+
+  await page.reload()
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => (
+    document.body.textContent?.includes('nexus-preview-rust / notes')
+      && document.body.textContent?.includes('已连接 1/1 panes')
+  ))
+
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),
     [],
