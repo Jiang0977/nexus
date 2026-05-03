@@ -26,6 +26,7 @@ interface Props {
   onCodexResumeSuccess?: (channelIndex: number) => void
   onCodexDeleteSuccess?: (closedWindowIndexes: number[]) => void | Promise<void>
   onStartNewCodex?: () => void
+  onChannelDragStart?: (event: React.DragEvent<HTMLElement>, channel: Channel, projectName: string) => void
 }
 
 function useIsDesktop() {
@@ -72,6 +73,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   onCodexResumeSuccess,
   onCodexDeleteSuccess,
   onStartNewCodex,
+  onChannelDragStart,
 }: Props, ref) {
   const { t } = useTranslation()
   const isDesktop = useIsDesktop()
@@ -325,8 +327,10 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
             <div
               key={channel.index}
               data-menu-row
+              draggable={Boolean(onChannelDragStart)}
               className={`flex items-start gap-2 rounded-lg px-2.5 py-2 cursor-pointer select-none transition-colors duration-75 group/item ${isActive ? 'bg-nexus-accent/10' : 'hover:bg-nexus-bg-2/60'}`}
               style={{ WebkitTouchCallout: 'none' }}
+              onDragStart={(event) => onChannelDragStart?.(event, channel, currentProject)}
               onPointerDown={() => { void doSwitchChannel(channel, false) }}
               onContextMenu={(e) => { e.preventDefault(); handleSidebarContext(e, channel, undefined) }}
             >

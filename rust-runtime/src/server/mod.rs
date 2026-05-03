@@ -55,6 +55,7 @@ use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
 use tokio::time::{Duration, timeout};
 
 mod config;
+mod layouts;
 mod runtime;
 mod session_ws;
 mod tasks;
@@ -63,6 +64,7 @@ mod version;
 mod workspace;
 
 use self::config::*;
+use self::layouts::*;
 use self::runtime::*;
 use self::session_ws::*;
 use self::tasks::*;
@@ -110,6 +112,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         codex_validate_dir: Arc::new(config.codex_validate_dir),
         project_defaults_file: Arc::new(config.project_defaults_file),
         toolbar_config_file: Arc::new(config.toolbar_config_file),
+        workspace_layouts_file: Arc::new(config.workspace_layouts_file),
         uploads_dir: Arc::new(config.uploads_dir),
         proxy_vars: Arc::new(config.proxy_vars),
         public_dir: Arc::new(config.project_root.join("public")),
@@ -171,6 +174,10 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/project-defaults", get(api_project_defaults))
         .route("/api/toolbar-config", get(api_toolbar_config))
         .route("/api/toolbar-config", post(api_save_toolbar_config))
+        .route(
+            "/api/workspace-layouts/active",
+            get(api_get_active_workspace_layout).put(api_put_active_workspace_layout),
+        )
         .route("/api/webhooks/telegram", post(api_telegram_webhook))
         .route("/api/telegram/setup", get(api_telegram_setup))
         .route("/api/version", get(api_version))

@@ -20,6 +20,7 @@ interface UseTerminalRuntimeArgs {
   activeWindowIndex: number
   activeWindowIndexRef: MutableRefObject<number>
   attachWindowFnRef: MutableRefObject<(index: number) => void>
+  enabled?: boolean
   inputRef: RefObject<HTMLInputElement | null>
   isWidePC: boolean
   overlayOpen: boolean
@@ -42,6 +43,7 @@ export function useTerminalRuntime({
   activeWindowIndex,
   activeWindowIndexRef,
   attachWindowFnRef,
+  enabled = true,
   inputRef,
   isWidePC,
   overlayOpen,
@@ -119,7 +121,7 @@ export function useTerminalRuntime({
 
   useEffect(() => {
     const container = containerRef.current
-    if (!container) return
+    if (!container || !enabled) return
 
     let rafId: number | null = null
     let debounceTimer: number | null = null
@@ -176,9 +178,11 @@ export function useTerminalRuntime({
       if (rafId) cancelAnimationFrame(rafId)
       if (debounceTimer) window.clearTimeout(debounceTimer)
     }
-  }, [fitNow])
+  }, [enabled, fitNow])
 
   useEffect(() => {
+    if (!enabled) return
+
     const fontSize = parseInt(localStorage.getItem(FONT_SIZE_KEY) || '16', 10)
     const initialTheme = getInitialTheme()
     const term = new XTerm({
@@ -580,9 +584,16 @@ export function useTerminalRuntime({
       termRef.current = null
       fitAddonRef.current = null
     }
-  }, [activeWindowIndexRef, attachWindowFnRef, fitNow, inputRef, setToolbarCollapsed, showScrollbackRef, toolbarCollapsedRef, triggerScrollbackRef, uploadFileRef, windowsRef])
+  }, [activeWindowIndexRef, attachWindowFnRef, enabled, fitNow, inputRef, setToolbarCollapsed, showScrollbackRef, toolbarCollapsedRef, triggerScrollbackRef, uploadFileRef, windowsRef])
 
   useEffect(() => {
+    if (!enabled) {
+      setIsConnecting(false)
+      wsRef.current?.close()
+      wsRef.current = null
+      return
+    }
+
     if (!activeTmuxSession || !windowsLoaded || windowsRef.current.length === 0) {
       setIsConnecting(false)
       return
@@ -689,9 +700,14 @@ export function useTerminalRuntime({
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
       wsRef.current?.close()
     }
-  }, [activeTmuxSession, activeWindowIndex, activeTmuxSessionRef, activeWindowIndexRef, scrollPositionsRef, token, windowsLoaded, windowsRef, wsSessionKey])
+  }, [activeTmuxSession, activeWindowIndex, activeTmuxSessionRef, activeWindowIndexRef, enabled, scrollPositionsRef, token, windowsLoaded, windowsRef, wsSessionKey])
 
   useEffect(() => {
+    if (!enabled) {
+      setVvHeight(null)
+      return
+    }
+
     if (isWidePC) {
       setVvHeight(null)
       return
@@ -709,9 +725,10 @@ export function useTerminalRuntime({
     handleResize()
     viewport.addEventListener('resize', handleResize)
     return () => viewport.removeEventListener('resize', handleResize)
-  }, [isWidePC])
+  }, [enabled, isWidePC])
 
   useEffect(() => {
+    if (!enabled) return
     if (isWidePC) return
 
     function handleFocusin(event: FocusEvent) {
@@ -726,9 +743,10 @@ export function useTerminalRuntime({
 
     document.addEventListener('focusin', handleFocusin)
     return () => document.removeEventListener('focusin', handleFocusin)
-  }, [inputRef, isWidePC])
+  }, [enabled, inputRef, isWidePC])
 
   useEffect(() => {
+    if (!enabled) return
     if (isWidePC) return
 
     const ta = termRef.current?.textarea
@@ -745,7 +763,7 @@ export function useTerminalRuntime({
     }, 100)
 
     return () => window.clearTimeout(restoreTimer)
-  }, [isWidePC, overlayOpen])
+  }, [enabled, isWidePC, overlayOpen])
 
   function handleInputChange(event: ChangeEvent<HTMLInputElement>) {
     if (isComposingRef.current) return

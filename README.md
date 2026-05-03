@@ -53,6 +53,7 @@
 
 - 🔌 **WebSocket ↔ tmux bridge** — one PTY per window, real-time bidirectional I/O
 - 📱 **Mobile-first terminal** — xterm.js, swipe navigation, pinch-to-zoom, configurable soft toolbar
+- 🖥️ **Desktop split view** — single / vertical / horizontal / 2x2 / 3x3 terminal panes, each attached to its own tmux session window
 - 🤖 **Async task runner** — fire-and-forget agent tasks via `/api/tasks`, SSE streaming, and Telegram bridge
 - 📂 **File browser** — browse, edit, upload workspace files (sort by name / modified / size)
 - 🗂️ **Project & channel management** — directory-based projects, each with channel-like sessions (like Slack channels for your terminal)
