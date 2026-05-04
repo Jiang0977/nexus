@@ -17,6 +17,10 @@ import { THEMES, type ThemeMode } from './theme'
 interface Props {
   activePaneTermRef: MutableRefObject<XTerm | null>
   activeTargetRef: MutableRefObject<PaneTarget | null>
+  clearRequest?: {
+    requestId: number
+    target: PaneTarget
+  } | null
   focusRequest?: {
     requestId: number
     target: PaneTarget
@@ -61,6 +65,7 @@ function saveStateLabel(saveState: 'loading' | 'saving' | 'saved' | 'unsaved', h
 export function SplitWorkspaceView({
   activePaneTermRef,
   activeTargetRef,
+  clearRequest = null,
   focusRequest = null,
   onFocusedPaneTargetChange,
   onFocusedRuntimeChange,
@@ -78,6 +83,7 @@ export function SplitWorkspaceView({
   })
   const focusedRuntimeRef = useRef<FocusedPaneRuntime | null>(null)
   const focusedPaneIdRef = useRef(layout.focusedPaneId)
+  const handledClearRequestIdRef = useRef(0)
   const handledFocusRequestIdRef = useRef(0)
   const paneScrollbackOverlayRef = useRef<HTMLDivElement>(null)
   const scrollbackRequestIdRef = useRef(0)
@@ -174,6 +180,28 @@ export function SplitWorkspaceView({
   useEffect(() => {
     onVisiblePanesChange?.(visiblePanes, layout.focusedPaneId)
   }, [layout.focusedPaneId, onVisiblePanesChange, visiblePanes])
+
+  useEffect(() => {
+    if (!clearRequest) return
+    if (clearRequest.requestId === handledClearRequestIdRef.current) return
+    handledClearRequestIdRef.current = clearRequest.requestId
+
+    const matchedPanes = visiblePanes.filter((pane) => (
+      pane.target?.session === clearRequest.target.session
+      && pane.target?.windowIndex === clearRequest.target.windowIndex
+    ))
+    if (matchedPanes.length === 0) return
+
+    const panesToClear = [...matchedPanes].sort((left, right) => {
+      if (left.id === layout.focusedPaneId) return 1
+      if (right.id === layout.focusedPaneId) return -1
+      return left.id.localeCompare(right.id)
+    })
+
+    for (const pane of panesToClear) {
+      setPaneTarget(pane.id, null)
+    }
+  }, [clearRequest, layout.focusedPaneId, setPaneTarget, visiblePanes])
 
   useEffect(() => {
     if (!focusRequest) return

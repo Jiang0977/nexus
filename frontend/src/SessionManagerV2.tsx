@@ -29,6 +29,7 @@ interface Props {
   onStartNewCodex?: () => void
   activeSplitPaneId?: string | null
   onChannelDragStart?: (event: React.DragEvent<HTMLElement>, channel: Channel, projectName: string) => void
+  onChannelClosed?: (channel: Channel, projectName: string) => void | Promise<void>
   onSidebarChannelClick?: (channel: Channel, projectName: string) => void
   paneAssignmentsByChannelKey?: Record<string, string[]>
 }
@@ -79,6 +80,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   onStartNewCodex,
   activeSplitPaneId = null,
   onChannelDragStart,
+  onChannelClosed,
   onSidebarChannelClick,
   paneAssignmentsByChannelKey,
 }: Props, ref) {
@@ -173,6 +175,7 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
     fetchProjects,
     headers,
     onClose,
+    onChannelClosed,
     onSwitchChannel,
     onSwitchProject,
     projects,

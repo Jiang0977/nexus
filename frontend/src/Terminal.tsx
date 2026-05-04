@@ -67,6 +67,7 @@ export default function Terminal({ token }: Props) {
   const [splitViewPanes, setSplitViewPanes] = useState<PaneState[]>([])
   const [splitViewFocusedPaneId, setSplitViewFocusedPaneId] = useState<string | null>(null)
   const [splitViewFocusRequest, setSplitViewFocusRequest] = useState<{ requestId: number; target: PaneTarget } | null>(null)
+  const [splitViewClearRequest, setSplitViewClearRequest] = useState<{ requestId: number; target: PaneTarget } | null>(null)
   const pausePollingRef = useRef(false)
   const activeWindowIndexRef = useRef(0)
   activeWindowIndexRef.current = activeWindowIndex
@@ -439,6 +440,16 @@ export default function Terminal({ token }: Props) {
     }))
   }, [splitPaneAssignmentsByChannelKey])
 
+  const handleSidebarChannelClosed = useCallback((channel: { index: number }, projectName: string) => {
+    setSplitViewClearRequest((current) => ({
+      requestId: (current?.requestId ?? 0) + 1,
+      target: {
+        session: projectName,
+        windowIndex: channel.index,
+      },
+    }))
+  }, [])
+
   return (
     <div className="flex flex-col w-full relative" style={{ height: vvHeight ?? '100dvh' }}>
       <ProfileGuideOverlay
@@ -495,6 +506,7 @@ export default function Terminal({ token }: Props) {
                   onStartNewCodex={handleSidebarStartNewCodex}
                   activeSplitPaneId={splitViewFocusedPaneId}
                   onChannelDragStart={handleSidebarChannelDragStart}
+                  onChannelClosed={handleSidebarChannelClosed}
                   onSidebarChannelClick={handleSidebarChannelClick}
                   paneAssignmentsByChannelKey={splitPaneAssignmentsByChannelKey}
                 />
@@ -527,6 +539,7 @@ export default function Terminal({ token }: Props) {
               <SplitWorkspaceView
                 activePaneTermRef={termRef}
                 activeTargetRef={focusedPaneTargetRef}
+                clearRequest={splitViewClearRequest}
                 focusRequest={splitViewFocusRequest}
                 onFocusedPaneTargetChange={handleFocusedPaneTargetChange}
                 onFocusedRuntimeChange={handleFocusedPaneRuntimeChange}
