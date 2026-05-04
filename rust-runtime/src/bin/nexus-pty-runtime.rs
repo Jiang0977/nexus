@@ -1,7 +1,9 @@
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -125,6 +127,7 @@ struct PtyEntry {
     client_sizes: Mutex<HashMap<String, (u16, u16)>>,
     last_output: Mutex<String>,
     last_activity_ms: AtomicU64,
+    grouped_session: Option<String>,
 }
 
 impl PtyEntry {
@@ -132,6 +135,7 @@ impl PtyEntry {
         master: Box<dyn portable_pty::MasterPty + Send>,
         writer: Box<dyn Write + Send>,
         killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
+        grouped_session: Option<String>,
     ) -> Self {
         Self {
             master: Mutex::new(master),
@@ -141,6 +145,7 @@ impl PtyEntry {
             client_sizes: Mutex::new(HashMap::new()),
             last_output: Mutex::new(String::new()),
             last_activity_ms: AtomicU64::new(now_ms()),
+            grouped_session,
         }
     }
 }
@@ -260,6 +265,12 @@ fn pty_key(session: &str, window_index: u32) -> String {
     format!("{}:{}", session, window_index)
 }
 
+fn grouped_session_name(key: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    key.hash(&mut hasher);
+    format!("nexus-pty-{}-{:x}", std::process::id(), hasher.finish())
+}
+
 fn tmux_session_exists(session: &str) -> bool {
     Command::new("tmux")
         .args(["has-session", "-t", session])
@@ -289,6 +300,55 @@ fn list_window_indices(session: &str) -> Vec<u32> {
         .collect()
 }
 
+fn run_tmux(args: &[String]) -> Result<(), String> {
+    let output = Command::new("tmux")
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| error.to_string())?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Err(format!("tmux {} failed", args.join(" ")))
+    } else {
+        Err(stderr)
+    }
+}
+
+fn kill_grouped_session(session: &str) {
+    let _ = Command::new("tmux")
+        .args(["kill-session", "-t", session])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+fn prepare_grouped_session(
+    source_session: &str,
+    target_window: u32,
+    grouped_session: &str,
+) -> Result<(), String> {
+    kill_grouped_session(grouped_session);
+    run_tmux(&[
+        "new-session".to_string(),
+        "-d".to_string(),
+        "-s".to_string(),
+        grouped_session.to_string(),
+        "-t".to_string(),
+        source_session.to_string(),
+    ])?;
+    run_tmux(&[
+        "select-window".to_string(),
+        "-t".to_string(),
+        format!("{}:{}", grouped_session, target_window),
+    ])
+}
+
 fn resolve_attach_target(session: &str, requested_window_index: u32) -> Result<u32, String> {
     if !tmux_session_exists(session) {
         return Err("session_missing".to_string());
@@ -308,6 +368,9 @@ fn resolve_attach_target(session: &str, requested_window_index: u32) -> Result<u
 fn kill_entry(entry: &Arc<PtyEntry>) {
     if let Ok(mut killer) = entry.killer.lock() {
         let _ = killer.kill();
+    }
+    if let Some(grouped_session) = entry.grouped_session.as_deref() {
+        kill_grouped_session(grouped_session);
     }
 }
 
@@ -381,6 +444,9 @@ fn start_pty_waiter(
     thread::spawn(move || {
         let _ = child.wait();
         state.remove_entry_if_same(&key, &entry);
+        if let Some(grouped_session) = entry.grouped_session.as_deref() {
+            kill_grouped_session(grouped_session);
+        }
     });
 }
 
@@ -396,44 +462,62 @@ fn ensure_window_pty(
         return Ok((key, entry));
     }
 
-    let pty_system = native_pty_system();
-    let pair = pty_system
-        .openpty(PtySize {
-            rows: DEFAULT_ROWS,
-            cols: DEFAULT_COLS,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|error| error.to_string())?;
+    let grouped_session = grouped_session_name(&key);
+    let create_result = (|| -> Result<Arc<PtyEntry>, String> {
+        prepare_grouped_session(session, target_window, &grouped_session)?;
 
-    let mut command = CommandBuilder::new("tmux");
-    command.arg("attach-session");
-    command.arg("-t");
-    command.arg(format!("{}:{}", session, target_window));
-    command.env("TERM", TMUX_CLIENT_TERM);
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: DEFAULT_ROWS,
+                cols: DEFAULT_COLS,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|error| error.to_string())?;
 
-    let child = pair
-        .slave
-        .spawn_command(command)
-        .map_err(|error| error.to_string())?;
-    drop(pair.slave);
+        let mut command = CommandBuilder::new("tmux");
+        command.arg("attach-session");
+        command.arg("-t");
+        command.arg(grouped_session.clone());
+        command.env("TERM", TMUX_CLIENT_TERM);
 
-    let reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|error| error.to_string())?;
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|error| error.to_string())?;
-    let killer = child.clone_killer();
-    let entry = Arc::new(PtyEntry::new(pair.master, writer, killer));
+        let child = pair
+            .slave
+            .spawn_command(command)
+            .map_err(|error| error.to_string())?;
+        drop(pair.slave);
 
-    state.insert_entry(key.clone(), Arc::clone(&entry));
-    start_pty_reader(state.clone(), Arc::clone(&entry), reader);
-    start_pty_waiter(state.clone(), key.clone(), Arc::clone(&entry), child);
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|error| error.to_string())?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|error| error.to_string())?;
+        let killer = child.clone_killer();
+        let entry = Arc::new(PtyEntry::new(
+            pair.master,
+            writer,
+            killer,
+            Some(grouped_session.clone()),
+        ));
 
-    Ok((key, entry))
+        state.insert_entry(key.clone(), Arc::clone(&entry));
+        start_pty_reader(state.clone(), Arc::clone(&entry), reader);
+        start_pty_waiter(state.clone(), key.clone(), Arc::clone(&entry), child);
+
+        Ok(entry)
+    })();
+
+    match create_result {
+        Ok(entry) => Ok((key, entry)),
+        Err(error) => {
+            kill_grouped_session(&grouped_session);
+            Err(error)
+        }
+    }
 }
 
 fn attach_connection(
