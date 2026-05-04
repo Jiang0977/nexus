@@ -15,6 +15,9 @@ if [ -z "$PROJECT" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/scripts/nexus-paths.sh"
+ensure_codex_cli_on_path
+ensure_rust_toolchain_on_path "${SOURCE_HOME}"
 DEFAULT_CODEX_HOME_EXECUTABLE="${SCRIPT_DIR}/rust-runtime/target/release/nexus-codex-home"
 CODEX_HOME_EXECUTABLE="${NEXUS_CODEX_HOME_EXECUTABLE:-$DEFAULT_CODEX_HOME_EXECUTABLE}"
 CONFIG_FILE=""

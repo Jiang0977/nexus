@@ -6,6 +6,7 @@ set -e
 
 PROFILE="$1"
 PROJECT="$2"
+SOURCE_HOME="${HOME:-}"
 
 if [ -z "$PROFILE" ] || [ -z "$PROJECT" ]; then
     echo "[Nexus] Usage: nexus-run-claude.sh <profile> <project_path>"
@@ -13,6 +14,8 @@ if [ -z "$PROFILE" ] || [ -z "$PROJECT" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/scripts/nexus-paths.sh"
+ensure_rust_toolchain_on_path "${SOURCE_HOME}"
 CONFIG_FILE="${SCRIPT_DIR}/data/configs/${PROFILE}.json"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "[Nexus] Config profile '${PROFILE}' not found at ${CONFIG_FILE}"

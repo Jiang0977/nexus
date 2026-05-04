@@ -76,3 +76,30 @@ ensure_codex_cli_on_path() {
   fi
   prefer_path_dir "$local_bin_dir"
 }
+
+ensure_rust_toolchain_on_path() {
+  local source_home="${1:-${HOME:-}}"
+  local cargo_home="${CARGO_HOME:-}"
+  local rustup_home="${RUSTUP_HOME:-}"
+  local cargo_bin_dir=""
+
+  if [[ -z "$cargo_home" && -n "$source_home" ]]; then
+    cargo_home="${source_home}/.cargo"
+  fi
+  if [[ -z "$rustup_home" && -n "$source_home" ]]; then
+    rustup_home="${source_home}/.rustup"
+  fi
+  if [[ -z "$cargo_home" ]]; then
+    return 0
+  fi
+
+  cargo_bin_dir="${cargo_home}/bin"
+  if [[ -d "$cargo_bin_dir" ]]; then
+    prepend_path_dir "$cargo_bin_dir"
+    export CARGO_HOME="$cargo_home"
+  fi
+
+  if [[ -n "$rustup_home" && -d "$rustup_home" ]]; then
+    export RUSTUP_HOME="$rustup_home"
+  fi
+}
