@@ -99,6 +99,9 @@ export function useTerminalPaneRuntime({
 
     const resizeObserver = new ResizeObserver(doResize)
     resizeObserver.observe(container)
+    if (container.parentElement) {
+      resizeObserver.observe(container.parentElement)
+    }
     window.setTimeout(doResize, 100)
 
     return () => {

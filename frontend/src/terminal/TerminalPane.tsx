@@ -3,7 +3,7 @@ import type { Terminal as XTerm } from '@xterm/xterm'
 import { Icon } from '../icons'
 import { PaneDropTarget } from './PaneDropTarget'
 import { PaneHeader } from './PaneHeader'
-import type { PaneState, PaneTarget } from './splitLayoutTypes'
+import type { LayoutMode, PaneState, PaneTarget } from './splitLayoutTypes'
 import { useTerminalPaneRuntime, type PaneConnectionState } from './useTerminalPaneRuntime'
 import type { ThemeMode } from './theme'
 
@@ -25,6 +25,7 @@ interface Props {
   onFocusPane: (paneId: string, runtime: FocusedPaneRuntime) => void
   onPaneStatusChange: (paneId: string, status: PaneStatus) => void
   onSetTarget: (paneId: string, target: PaneTarget) => void
+  layoutMode: LayoutMode
   pane: PaneState
   themeMode: ThemeMode
   token: string
@@ -43,6 +44,7 @@ export function TerminalPane({
   onFocusPane,
   onPaneStatusChange,
   onSetTarget,
+  layoutMode,
   pane,
   themeMode,
   token,
@@ -123,7 +125,24 @@ export function TerminalPane({
     onFocusPane(pane.id, runtimeHandle)
   }, [focused, onFocusPane, pane.id, runtime.connectionState, runtimeHandle])
 
-  const focusPane = () => onFocusPane(pane.id, runtimeHandle)
+  useEffect(() => {
+    if (!pane.target || targetCheck.status !== 'valid') return
+    const rafId = requestAnimationFrame(() => runtime.fitNow())
+    const timerId = window.setTimeout(() => runtime.fitNow(), 120)
+    return () => {
+      cancelAnimationFrame(rafId)
+      window.clearTimeout(timerId)
+    }
+  }, [layoutMode, pane.target, runtime.fitNow, targetCheck.status])
+
+  const focusPane = () => {
+    runtime.termRef.current?.focus()
+    onFocusPane(pane.id, runtimeHandle)
+  }
+  const focusPaneFromPointer = (target: EventTarget | null) => {
+    if ((target as HTMLElement | null)?.closest('button')) return
+    focusPane()
+  }
 
   return (
     <section
@@ -131,7 +150,8 @@ export function TerminalPane({
       className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded border bg-nexus-bg ${
         focused ? 'border-nexus-accent shadow-[inset_0_0_0_1px_var(--nexus-accent)]' : 'border-nexus-border'
       }`}
-      onPointerDown={focusPane}
+      onClick={(event) => focusPaneFromPointer(event.target)}
+      onPointerDown={(event) => focusPaneFromPointer(event.target)}
     >
       <PaneHeader
         focused={focused}
@@ -173,8 +193,8 @@ export function TerminalPane({
             </div>
           </div>
         ) : pane.target ? (
-          <div className="relative flex min-h-0 flex-1">
-            <div ref={runtime.containerRef} className="min-h-0 flex-1 overflow-hidden px-2 py-1" />
+          <div className="relative flex min-h-0 min-w-0 flex-1">
+            <div ref={runtime.containerRef} className="min-h-0 min-w-0 flex-1 overflow-hidden px-2 py-1" />
             {runtime.connectionState === 'loading' && (
               <div className="pointer-events-none absolute right-3 top-3 rounded border border-nexus-border bg-nexus-bg/90 px-2 py-1 text-xs text-nexus-text-2">
                 连接中...

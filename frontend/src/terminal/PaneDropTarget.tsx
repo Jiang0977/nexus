@@ -14,7 +14,7 @@ export function PaneDropTarget({ children, empty = false, onDropTarget }: Props)
 
   return (
     <div
-      className="relative flex min-h-0 flex-1 overflow-hidden"
+      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
       onDragOver={(event) => {
         if (!hasChannelDragPayload(event.dataTransfer)) return
         event.preventDefault()

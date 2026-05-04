@@ -118,6 +118,7 @@ export function SplitWorkspaceView({
               onFocusPane={handleFocusedPane}
               onPaneStatusChange={handlePaneStatusChange}
               onSetTarget={setPaneTarget}
+              layoutMode={layout.mode}
               pane={pane}
               themeMode={themeMode}
               token={token}

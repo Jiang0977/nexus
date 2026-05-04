@@ -22,6 +22,17 @@ const state = {
   windowsCreated: 0,
 }
 
+function extraProjectChannels() {
+  const raw = process.env.FAKE_SESSION_MANAGEMENT_EXTRA_CHANNELS_JSON || ''
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 if (mode === 'exit-immediately') {
   process.exit(7)
 }
@@ -83,6 +94,7 @@ rl.on('line', (line) => {
       response(id, true, {
         project: params.projectName || 'demo-project',
         channels: [
+          ...extraProjectChannels(),
           { index: 2, name: 'review', active: false, cwd: workspacePath('demo') },
           { index: 1, name: 'shell', active: true, cwd: workspacePath() },
         ],
