@@ -22,6 +22,7 @@ interface Props {
   focused: boolean
   index: number
   onClearTarget: (paneId: string) => void
+  onFocusedRuntimeReady: (paneId: string, runtime: FocusedPaneRuntime) => void
   onFocusPane: (paneId: string, runtime: FocusedPaneRuntime) => void
   onPaneStatusChange: (paneId: string, status: PaneStatus) => void
   onSetTarget: (paneId: string, target: PaneTarget) => void
@@ -41,6 +42,7 @@ export function TerminalPane({
   focused,
   index,
   onClearTarget,
+  onFocusedRuntimeReady,
   onFocusPane,
   onPaneStatusChange,
   onSetTarget,
@@ -122,8 +124,8 @@ export function TerminalPane({
 
   useEffect(() => {
     if (!focused) return
-    onFocusPane(pane.id, runtimeHandle)
-  }, [focused, onFocusPane, pane.id, runtime.connectionState, runtimeHandle])
+    onFocusedRuntimeReady(pane.id, runtimeHandle)
+  }, [focused, onFocusedRuntimeReady, pane.id, runtime.connectionState, runtimeHandle])
 
   useEffect(() => {
     if (!pane.target || targetCheck.status !== 'valid') return
@@ -151,7 +153,7 @@ export function TerminalPane({
         focused ? 'border-nexus-accent shadow-[inset_0_0_0_1px_var(--nexus-accent)]' : 'border-nexus-border'
       }`}
       onClick={(event) => focusPaneFromPointer(event.target)}
-      onPointerDown={(event) => focusPaneFromPointer(event.target)}
+      onPointerDownCapture={(event) => focusPaneFromPointer(event.target)}
     >
       <PaneHeader
         focused={focused}

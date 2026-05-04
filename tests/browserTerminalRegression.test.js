@@ -498,6 +498,106 @@ test('browser regression: desktop split panes keep input and resize scoped to th
   )
 })
 
+test('browser regression: desktop sidebar channel clicks do not rewrite split pane assignments', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    extraChannels: [{ index: 0, name: 'preview', active: false, cwd: '/workspace' }],
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const shellSource = page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first()
+  await shellSource.waitFor()
+  await shellSource.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await page.waitForFunction(() => document.body.textContent?.includes('nexus-preview-rust / notes'))
+
+  const attachRequests = []
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/api/sessions/0/attach?session=nexus-preview-rust')) {
+      attachRequests.push(request.url())
+    }
+  })
+  await page.locator('[draggable="true"]').filter({ hasText: 'preview' }).first().click()
+  await page.waitForTimeout(200)
+  assert.equal(attachRequests.length, 0, 'clicking a draggable sidebar channel should not attach the global terminal')
+  await page.waitForFunction(() => document.body.textContent?.includes('nexus-preview-rust / notes'))
+
+  await page.getByRole('button', { name: '2x2' }).click()
+  await page.waitForFunction(() => document.body.textContent?.includes('mode grid-2x2'))
+  await page.locator('[draggable="true"]').filter({ hasText: 'preview' }).first().dragTo(page.getByTestId('terminal-pane-pane-2'))
+  await page.waitForFunction(() => {
+    const text = document.body.textContent || ''
+    return text.includes('nexus-preview-rust / notes')
+      && text.includes('nexus-preview-rust / shell')
+      && text.includes('已占用 2')
+  })
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: desktop split panes can copy selected terminal text', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: `http://127.0.0.1:${port}`,
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const shellSource = page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first()
+  await shellSource.waitFor()
+  await shellSource.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await page.waitForFunction(() => document.body.textContent?.includes('notes ready'))
+
+  const row = page.getByTestId('terminal-pane-pane-1').locator('.xterm-rows').first()
+  const box = await row.boundingBox()
+  assert.ok(box, 'expected xterm rows to be measurable')
+  await page.mouse.move(box.x + 4, box.y + 12)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 110, box.y + 12)
+  await page.mouse.up()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+C' : 'Control+C')
+
+  await page.waitForFunction(async () => (await navigator.clipboard.readText()).includes('notes ready'))
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: desktop bottom-right split pane can be focused', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  await page.getByRole('button', { name: '3x3' }).click()
+  await page.waitForFunction(() => document.body.textContent?.includes('mode grid-3x3'))
+  await page.getByTestId('terminal-pane-pane-9').click({ position: { x: 24, y: 18 } })
+
+  await page.waitForFunction(() => {
+    const pane9 = document.querySelector('[data-testid="terminal-pane-pane-9"]')
+    const pane1 = document.querySelector('[data-testid="terminal-pane-pane-1"]')
+    return pane9?.className.includes('border-nexus-accent')
+      && !pane1?.className.includes('border-nexus-accent')
+  })
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
 test('browser regression: mobile codex history modal opens and restores focus to the trigger', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
 
