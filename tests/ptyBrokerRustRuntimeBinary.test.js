@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -33,20 +33,23 @@ function ensureBuilt() {
 
 function createFakeTmuxBin() {
   const baseDir = mkdtempSync(join(tmpdir(), 'nexus-fake-rust-tmux-'))
+  const logFile = join(baseDir, 'tmux.log')
   const tmuxPath = join(baseDir, 'tmux')
+  writeFileSync(logFile, '', 'utf8')
   writeFileSync(tmuxPath, `#!/bin/sh
 set -eu
 cmd="$1"
 shift || true
+printf '%s|%s\\n' "$cmd" "$*" >> ${JSON.stringify(logFile)}
 case "$cmd" in
   has-session)
     exit 0
     ;;
   list-windows)
-    printf '3\n'
+    printf '0\n3\n'
     exit 0
     ;;
-  attach-session)
+  attach-session|new-session|select-window|kill-session)
     while IFS= read -r line; do
       printf '%s\n' "$line"
     done
@@ -57,7 +60,7 @@ case "$cmd" in
     ;;
 esac
 `, { mode: 0o755 })
-  return { baseDir }
+  return { baseDir, logFile }
 }
 
 function resolveSystemTmux() {
@@ -144,6 +147,48 @@ test('real rust pty runtime speaks the broker contract through a fake tmux backe
     status = await client.getStatus()
   }
   assert.equal(status.runningPtys, 0)
+})
+
+test('real rust pty runtime isolates same-session windows with grouped tmux sessions', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const { baseDir, logFile } = createFakeTmuxBin()
+  const client = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env: {
+      ...process.env,
+      PATH: `${baseDir}:${process.env.PATH || ''}`,
+    },
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await client.ready()
+
+  const first = await client.attachConnection({
+    connectionId: 'conn-main-window-0',
+    session: 'main',
+    windowIndex: 0,
+  })
+  const second = await client.attachConnection({
+    connectionId: 'conn-main-window-3',
+    session: 'main',
+    windowIndex: 3,
+  })
+
+  assert.deepEqual(first, { key: 'main:0' })
+  assert.deepEqual(second, { key: 'main:3' })
+
+  const log = readFileSync(logFile, 'utf8')
+  assert.doesNotMatch(log, /attach-session\|-t main:/)
+  assert.match(log, /new-session\|-d -s nexus-pty-[^ ]+ -t main/)
+  assert.match(log, /select-window\|-t nexus-pty-[^ ]+:0/)
+  assert.match(log, /select-window\|-t nexus-pty-[^ ]+:3/)
+  assert.match(log, /attach-session\|-t nexus-pty-[^\n]+/)
 })
 
 test('real rust pty runtime forces an xterm TERM when parent env is dumb', { skip: process.platform === 'win32' }, async (t) => {
