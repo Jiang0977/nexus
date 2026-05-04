@@ -66,9 +66,9 @@ test('real rust codex home tool materializes explicit profile auth and config', 
     assert.match(authText, /"OPENAI_API_KEY": "sk-test"/)
     assert.match(configToml, /model = "gpt-5\.4"/)
     assert.match(configToml, /\[projects\."\/workspace\/demo"\]/)
-    assert.match(configToml, /\[features\]/)
-    assert.match(configToml, /apps = false/)
-    assert.match(configToml, /plugins = false/)
+    assert.doesNotMatch(configToml, /\[features\]/)
+    assert.doesNotMatch(configToml, /apps = false/)
+    assert.doesNotMatch(configToml, /plugins = false/)
   } finally {
     rmSync(sourceHome, { recursive: true, force: true })
     rmSync(runtimeHome, { recursive: true, force: true })
@@ -119,7 +119,6 @@ test('real rust codex home tool imports current live ~/.codex config and links s
     assert.match(configToml, /model = "gpt-5\.4"/)
     assert.match(configToml, /base_url = "https:\/\/api\.openai\.com\/v1"/)
     assert.match(configToml, /\[projects\."\/workspace\/demo"\]/)
-    assert.match(configToml, /\[features\]/)
     assert.equal(readFileSync(join(runtimeCodexDir, 'session_index.jsonl'), 'utf8'), '{"id":"session-1"}\n')
     assert.equal(readFileSync(join(runtimeCodexDir, 'history.jsonl'), 'utf8'), '{"type":"history"}\n')
     assert.equal(readFileSync(join(runtimeCodexDir, 'skills', 'my-custom-skill', 'SKILL.md'), 'utf8'), '# custom skill\n')
@@ -187,10 +186,50 @@ test('real rust codex home tool merges shared sections and preserves explicit au
     assert.match(configToml, /\[plugins\."github@openai-curated"\]/)
     assert.match(configToml, /\[notice\.model_migrations\]/)
     assert.match(configToml, /\[projects\."\/workspace\/demo"\]/)
-    assert.match(configToml, /\[features\]/)
-    assert.match(configToml, /apps = false/)
-    assert.match(configToml, /plugins = false/)
+    assert.doesNotMatch(configToml, /\[features\]/)
+    assert.doesNotMatch(configToml, /apps = false/)
+    assert.doesNotMatch(configToml, /plugins = false/)
     assert.doesNotMatch(configToml, /model = "source-model"/)
+  } finally {
+    rmSync(sourceHome, { recursive: true, force: true })
+    rmSync(runtimeHome, { recursive: true, force: true })
+  }
+})
+
+test('real rust codex home tool preserves explicit feature flags from imported config', async () => {
+  ensureBuilt()
+  const sourceHome = mkdtempSync(join(tmpdir(), 'nexus-codex-source-home-'))
+  const runtimeHome = mkdtempSync(join(tmpdir(), 'nexus-codex-runtime-home-'))
+  const configFile = join(runtimeHome, 'profile.json')
+
+  writeFileSync(configFile, JSON.stringify({
+    CONFIG_TOML: [
+      'model = "gpt-5.4"',
+      '',
+      '[features]',
+      'fast_mode = true',
+      'apps = true',
+      'plugins = true',
+    ].join('\n'),
+  }, null, 2))
+
+  try {
+    const result = runCodexHomeTool({
+      configFile,
+      homeDir: runtimeHome,
+      projectPath: '/workspace/demo',
+      env: { HOME: sourceHome },
+    })
+
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+
+    const configToml = readFileSync(join(runtimeHome, '.codex', 'config.toml'), 'utf8')
+    assert.match(configToml, /\[features\]/)
+    assert.match(configToml, /fast_mode = true/)
+    assert.match(configToml, /apps = true/)
+    assert.match(configToml, /plugins = true/)
+    assert.doesNotMatch(configToml, /apps = false/)
+    assert.doesNotMatch(configToml, /plugins = false/)
   } finally {
     rmSync(sourceHome, { recursive: true, force: true })
     rmSync(runtimeHome, { recursive: true, force: true })

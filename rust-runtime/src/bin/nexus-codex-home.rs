@@ -23,7 +23,6 @@ const SHARED_CODEX_STATE_PATHS: &[&str] = &[
 
 const SHARED_CODEX_CONFIG_SECTION_PREFIXES: &[&str] = &["mcp_servers.", "plugins."];
 const SHARED_CODEX_CONFIG_SECTION_NAMES: &[&str] = &["notice.model_migrations"];
-const RUNTIME_DISABLED_CODEX_FEATURES: &[&str] = &["apps", "plugins"];
 
 #[derive(Clone, Debug, Default)]
 struct NormalizedCodexConfig {
@@ -381,80 +380,6 @@ fn merge_shared_codex_config_sections(
     ensure_trailing_newline(&merged_text)
 }
 
-fn disable_runtime_codex_features(config_toml_text: &str) -> String {
-    let source_lines = config_toml_text.split('\n').collect::<Vec<_>>();
-    let mut output_lines: Vec<String> = Vec::new();
-    let mut pending_features = RUNTIME_DISABLED_CODEX_FEATURES
-        .iter()
-        .map(|value| value.to_string())
-        .collect::<HashSet<_>>();
-    let mut inside_features = false;
-    let mut saw_features_section = false;
-
-    let append_missing_feature_overrides =
-        |output_lines: &mut Vec<String>,
-         pending_features: &mut HashSet<String>,
-         inside_features: bool| {
-            if !inside_features {
-                return;
-            }
-            for feature_name in RUNTIME_DISABLED_CODEX_FEATURES {
-                if pending_features.remove(*feature_name) {
-                    output_lines.push(format!("{feature_name} = false"));
-                }
-            }
-        };
-
-    for raw_line in source_lines {
-        let trimmed_line = raw_line.trim();
-        if trimmed_line.starts_with('[') && trimmed_line.ends_with(']') {
-            append_missing_feature_overrides(
-                &mut output_lines,
-                &mut pending_features,
-                inside_features,
-            );
-            inside_features = trimmed_line[1..trimmed_line.len() - 1].trim() == "features";
-            if inside_features {
-                saw_features_section = true;
-            }
-            output_lines.push(raw_line.to_string());
-            continue;
-        }
-
-        if inside_features && let Some((key, _)) = trimmed_line.split_once('=') {
-            let key = key.trim();
-            if pending_features.remove(key) {
-                output_lines.push(format!("{key} = false"));
-                continue;
-            }
-        }
-
-        output_lines.push(raw_line.to_string());
-    }
-
-    append_missing_feature_overrides(&mut output_lines, &mut pending_features, inside_features);
-
-    if !saw_features_section {
-        let trimmed_output = output_lines.join("\n").trim().to_string();
-        let feature_section = format!(
-            "[features]\n{}",
-            RUNTIME_DISABLED_CODEX_FEATURES
-                .iter()
-                .map(|feature_name| format!("{feature_name} = false"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-        let merged = if trimmed_output.is_empty() {
-            feature_section
-        } else {
-            format!("{trimmed_output}\n\n{feature_section}")
-        };
-        return ensure_trailing_newline(&merged);
-    }
-
-    ensure_trailing_newline(output_lines.join("\n").trim())
-}
-
 fn read_source_codex_config_toml(source_home: &Path) -> String {
     if source_home.as_os_str().is_empty() {
         return String::new();
@@ -549,10 +474,10 @@ fn materialize_codex_home(
     } else {
         String::new()
     };
-    let config_toml = disable_runtime_codex_features(&merge_shared_codex_config_sections(
+    let config_toml = merge_shared_codex_config_sections(
         &build_codex_config_toml(config, project_path),
         &source_config_toml,
-    ));
+    );
     fs::write(codex_dir.join("config.toml"), config_toml).map_err(|error| {
         format!(
             "failed to write config.toml in {}: {error}",

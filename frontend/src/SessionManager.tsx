@@ -92,6 +92,10 @@ type FieldSpec = {
   secret?: boolean
 }
 
+function hasTextValue(value: string | undefined): boolean {
+  return Boolean(value && value.trim())
+}
+
 const FIELD_SPECS: Record<ConfigKind, FieldSpec[]> = {
   claude: [
     { key: 'label', labelKey: 'apiConfig.labelName', placeholder: 'Kimi (kimi-for-coding)' },
@@ -441,6 +445,8 @@ export default function SessionManager({ token, onClose }: Props) {
   if (editingConfig) {
     const fields = FIELD_SPECS[editingConfig.kind]
     const editingValues = editingConfig as unknown as Record<string, string | undefined>
+    const codexConfigToml = editingConfig.kind === 'codex' ? String(editingValues.CONFIG_TOML || '') : ''
+    const codexAuthJson = editingConfig.kind === 'codex' ? String(editingValues.AUTH_JSON || '') : ''
     return (
       <div className={isDesktop ? 'fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-5' : 'fixed inset-0 bg-black/60 z-[100]'}>
         <div className={isDesktop ? 'bg-nexus-bg border border-nexus-border rounded-xl flex flex-col text-nexus-text w-full max-w-[800px] max-h-[85vh] shadow-[0_20px_60px_rgba(0,0,0,0.5)] overflow-hidden' : 'fixed inset-0 bg-nexus-bg flex flex-col text-nexus-text'}>
@@ -495,6 +501,45 @@ export default function SessionManager({ token, onClose }: Props) {
                   />
                 </div>
               ))}
+
+              {editingConfig.kind === 'codex' && (
+                <div className="mb-3 rounded-lg border border-nexus-border bg-nexus-bg-2/40 px-3 py-3">
+                  <div className="text-[11px] text-nexus-text-2 tracking-wider uppercase mb-2">
+                    {t('apiConfig.codexAdvanced')}
+                  </div>
+                  <p className="text-xs text-nexus-text-2 leading-relaxed mb-3">
+                    {t('apiConfig.codexAdvancedHint')}
+                  </p>
+
+                  {hasTextValue(codexConfigToml) && (
+                    <div className="mb-3 last:mb-0">
+                      <label className="block text-nexus-text-2 text-xs mb-1.5">
+                        {t('apiConfig.codexConfigToml')}
+                      </label>
+                      <textarea
+                        className="bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text text-xs px-3 py-2.5 outline-none w-full box-border font-mono min-h-[180px] resize-y"
+                        value={codexConfigToml}
+                        readOnly
+                        spellCheck={false}
+                      />
+                    </div>
+                  )}
+
+                  {hasTextValue(codexAuthJson) && (
+                    <div>
+                      <label className="block text-nexus-text-2 text-xs mb-1.5">
+                        {t('apiConfig.codexAuthJson')}
+                      </label>
+                      <textarea
+                        className="bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text text-xs px-3 py-2.5 outline-none w-full box-border font-mono min-h-[140px] resize-y"
+                        value={codexAuthJson}
+                        readOnly
+                        spellCheck={false}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
 
               <button
                 className={`bg-nexus-accent border-none rounded-md text-white cursor-pointer text-sm font-semibold px-5 py-2.5 w-full ${savingCfg ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -647,10 +692,24 @@ export default function SessionManager({ token, onClose }: Props) {
             {activeConfigs.map((config) => {
               const configValues = config as unknown as Record<string, string | undefined>
               const modelText = String(configValues.MODEL || configValues.DEFAULT_MODEL || '—')
+              const showCodexTomlBadge = activeKind === 'codex' && hasTextValue(configValues.CONFIG_TOML)
+              const showCodexAuthBadge = activeKind === 'codex' && hasTextValue(configValues.AUTH_JSON)
               return (
                 <div key={config.id} className="flex items-center gap-2.5 py-2.5">
                   <div className="flex-1 min-w-0">
-                    <div className="text-nexus-text text-sm truncate">{config.label}</div>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="text-nexus-text text-sm truncate">{config.label}</div>
+                      {showCodexTomlBadge && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-nexus-accent/20 text-nexus-accent shrink-0">
+                          {t('apiConfig.codexConfigTomlBadge')}
+                        </span>
+                      )}
+                      {showCodexAuthBadge && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-nexus-success/15 text-nexus-success shrink-0">
+                          {t('apiConfig.codexAuthJsonBadge')}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-nexus-muted text-[11px] mt-0.5 font-mono truncate" title={`${config.id} · ${modelText}`}>
                       {config.id} · {modelText}
                     </div>
