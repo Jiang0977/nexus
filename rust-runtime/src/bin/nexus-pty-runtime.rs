@@ -271,6 +271,10 @@ fn grouped_session_name(key: &str) -> String {
     format!("nexus-pty-{}-{:x}", std::process::id(), hasher.finish())
 }
 
+fn is_grouped_session(session: &str) -> bool {
+    session.trim().starts_with("nexus-pty-")
+}
+
 fn tmux_session_exists(session: &str) -> bool {
     Command::new("tmux")
         .args(["has-session", "-t", session])
@@ -326,6 +330,29 @@ fn kill_grouped_session(session: &str) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+}
+
+fn cleanup_stale_grouped_sessions() {
+    let output = Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}|#{session_attached}"])
+        .stdin(Stdio::null())
+        .output();
+
+    let Ok(output) = output else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let mut parts = line.splitn(2, '|');
+        let session = parts.next().unwrap_or("").trim();
+        let attached = parts.next().unwrap_or("0").trim();
+        if is_grouped_session(session) && attached == "0" {
+            kill_grouped_session(session);
+        }
+    }
 }
 
 fn prepare_grouped_session(
@@ -656,6 +683,8 @@ fn send_response<T>(
 }
 
 fn main() {
+    cleanup_stale_grouped_sessions();
+
     let (tx, rx) = mpsc::channel::<String>();
     let state = SharedState {
         ptys: Arc::new(Mutex::new(HashMap::new())),
