@@ -9,6 +9,7 @@ import {
   PANE_COUNT_BY_MODE,
   visiblePanesForLayout,
   type LayoutMode,
+  type PaneState,
   type PaneTarget,
 } from './splitLayoutTypes'
 import { THEMES, type ThemeMode } from './theme'
@@ -16,8 +17,13 @@ import { THEMES, type ThemeMode } from './theme'
 interface Props {
   activePaneTermRef: MutableRefObject<XTerm | null>
   activeTargetRef: MutableRefObject<PaneTarget | null>
+  focusRequest?: {
+    requestId: number
+    target: PaneTarget
+  } | null
   onFocusedPaneTargetChange: (target: PaneTarget | null) => void
   onFocusedRuntimeChange: (runtime: FocusedPaneRuntime | null) => void
+  onVisiblePanesChange?: (panes: PaneState[], focusedPaneId: string) => void
   themeMode: ThemeMode
   token: string
 }
@@ -55,8 +61,10 @@ function saveStateLabel(saveState: 'loading' | 'saving' | 'saved' | 'unsaved', h
 export function SplitWorkspaceView({
   activePaneTermRef,
   activeTargetRef,
+  focusRequest = null,
   onFocusedPaneTargetChange,
   onFocusedRuntimeChange,
+  onVisiblePanesChange,
   themeMode,
   token,
 }: Props) {
@@ -70,10 +78,11 @@ export function SplitWorkspaceView({
   })
   const focusedRuntimeRef = useRef<FocusedPaneRuntime | null>(null)
   const focusedPaneIdRef = useRef(layout.focusedPaneId)
+  const handledFocusRequestIdRef = useRef(0)
   const paneScrollbackOverlayRef = useRef<HTMLDivElement>(null)
   const scrollbackRequestIdRef = useRef(0)
   focusedPaneIdRef.current = layout.focusedPaneId
-  const visiblePanes = visiblePanesForLayout(layout)
+  const visiblePanes = useMemo(() => visiblePanesForLayout(layout), [layout])
   const isCompact = layout.mode === 'grid-3x3'
   const scrollbackTheme = THEMES[themeMode] as Record<string, unknown>
   const scrollbackBackground = String(scrollbackTheme.background ?? '#1a1a2e')
@@ -161,6 +170,22 @@ export function SplitWorkspaceView({
     const el = paneScrollbackOverlayRef.current
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 50)
   }, [paneScrollback.content])
+
+  useEffect(() => {
+    onVisiblePanesChange?.(visiblePanes, layout.focusedPaneId)
+  }, [layout.focusedPaneId, onVisiblePanesChange, visiblePanes])
+
+  useEffect(() => {
+    if (!focusRequest) return
+    if (focusRequest.requestId === handledFocusRequestIdRef.current) return
+    const matchedPane = visiblePanes.find((pane) => (
+      pane.target?.session === focusRequest.target.session
+      && pane.target?.windowIndex === focusRequest.target.windowIndex
+    ))
+    if (!matchedPane) return
+    handledFocusRequestIdRef.current = focusRequest.requestId
+    focusPane(matchedPane.id)
+  }, [focusPane, focusRequest, visiblePanes])
 
   const liveCount = useMemo(() => visiblePanes.filter((pane) => paneStatuses[pane.id] === 'live').length, [paneStatuses, visiblePanes])
   const wsCount = liveCount
