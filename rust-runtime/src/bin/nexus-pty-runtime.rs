@@ -10,13 +10,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 30;
 const MAX_OUTPUT_BUFFER: usize = 10_000;
 const RECENT_OUTPUT_REPLAY: usize = 2_000;
 const TMUX_CLIENT_TERM: &str = "xterm-256color";
+const ATTACH_TARGET_RETRY_ATTEMPTS: usize = 8;
+const ATTACH_TARGET_RETRY_DELAY_MS: u64 = 75;
 
 #[derive(Deserialize)]
 struct Message {
@@ -381,15 +383,18 @@ fn resolve_attach_target(session: &str, requested_window_index: u32) -> Result<u
         return Err("session_missing".to_string());
     }
 
-    let windows = list_window_indices(session);
-    if windows.is_empty() {
-        return Err("window_missing".to_string());
-    }
-    if windows.contains(&requested_window_index) {
-        return Ok(requested_window_index);
+    for attempt in 0..ATTACH_TARGET_RETRY_ATTEMPTS {
+        let windows = list_window_indices(session);
+        if windows.contains(&requested_window_index) {
+            return Ok(requested_window_index);
+        }
+
+        if attempt + 1 < ATTACH_TARGET_RETRY_ATTEMPTS {
+            thread::sleep(Duration::from_millis(ATTACH_TARGET_RETRY_DELAY_MS));
+        }
     }
 
-    Ok(windows[0])
+    Err("window_missing".to_string())
 }
 
 fn kill_entry(entry: &Arc<PtyEntry>) {

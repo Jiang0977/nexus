@@ -262,6 +262,40 @@ test('real rust pty runtime isolates same-session windows with grouped tmux sess
   assert.match(log, /attach-session\|-t nexus-pty-[^\n]+/)
 })
 
+test('real rust pty runtime refuses missing requested windows instead of reusing another pane', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const { baseDir, logFile } = createFakeTmuxBin()
+  const client = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env: {
+      ...process.env,
+      PATH: `${baseDir}:${process.env.PATH || ''}`,
+    },
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await client.ready()
+
+  await assert.rejects(
+    client.attachConnection({
+      connectionId: 'conn-main-window-9',
+      session: 'main',
+      windowIndex: 9,
+    }),
+    /window_missing/,
+  )
+
+  const log = readFileSync(logFile, 'utf8')
+  assert.doesNotMatch(log, /select-window\|-t nexus-pty-[^ ]+:0/)
+  assert.doesNotMatch(log, /attach-session\|-t nexus-pty-/)
+})
+
 test('real rust pty runtime forces an xterm TERM when parent env is dumb', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
 
