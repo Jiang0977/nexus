@@ -82,6 +82,9 @@ case "$cmd" in
       'owned-outside-root|1|0' \
       'foreign-shared-root|1|0' \
       'hidden-elsewhere|1|0'
+    if [ -n "\${FAKE_TMUX_EXTRA_SESSIONS:-}" ]; then
+      printf '%s\n' "$FAKE_TMUX_EXTRA_SESSIONS"
+    fi
     exit 0
     ;;
   show-environment)
@@ -462,6 +465,42 @@ test('real rust session runtime exposes all tmux-backed sessions and projects th
   assert.match(log, /display-message\|-t demo-fallback -p #\{pane_current_path\}/)
   assert.match(log, /list-windows\|-t legacy-preview -F #\{window_index\}\|#\{window_name\}\|#\{window_active\}\|#\{pane_current_path\}/)
   assert.match(log, /list-windows\|-t legacy-preview -F #I/)
+})
+
+test('real rust session runtime hides internal nexus-pty sessions from discoverable workspaces', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const { baseDir } = createFakeTmuxBin()
+  const client = createClient(baseDir, {
+    TMUX_SESSION: 'nexus-preview-rust',
+    WORKSPACE_ROOT: '/tmp/nexus-preview-workspace',
+    FAKE_TMUX_EXTRA_SESSIONS: [
+      'nexus-pty-2820024-a47faeb015b329f0|1|0',
+      'nexus-pty-2850420-a47faeb015b329f0|1|1',
+    ].join('\n'),
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await client.ready()
+
+  assert.deepEqual(await client.listTmuxSessions(), [
+    { name: 'nexus-preview-rust', windows: 1, attached: true },
+    { name: 'legacy-preview', windows: 2, attached: false },
+    { name: 'owned-outside-root', windows: 1, attached: false },
+    { name: 'foreign-shared-root', windows: 1, attached: false },
+    { name: 'hidden-elsewhere', windows: 1, attached: false },
+  ])
+
+  assert.deepEqual(await client.listProjects(), [
+    { name: 'hidden-elsewhere', path: '/home/demo/workspace/other', active: false, channelCount: 1 },
+    { name: 'foreign-shared-root', path: '/tmp/nexus-preview-workspace/apps/foreign', active: false, channelCount: 1 },
+    { name: 'owned-outside-root', path: '/srv/preview-owned', active: false, channelCount: 1 },
+    { name: 'legacy-preview', path: '/tmp/nexus-preview-workspace/apps/legacy', active: false, channelCount: 2 },
+    { name: 'nexus-preview-rust', path: '/tmp/nexus-preview-workspace', active: true, channelCount: 1 },
+  ])
 })
 
 test('real rust session runtime handles codex history listing, detail, resume, and delete through fake tmux', { skip: process.platform === 'win32' }, async (t) => {

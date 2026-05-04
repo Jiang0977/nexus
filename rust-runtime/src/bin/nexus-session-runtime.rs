@@ -368,6 +368,10 @@ fn current_workspace_root() -> String {
     env_or_default("WORKSPACE_ROOT", "")
 }
 
+fn is_internal_tmux_session(session: &str) -> bool {
+    session.trim().starts_with("nexus-pty-")
+}
+
 fn read_tmux_env_value(session: &str, key: &str) -> String {
     match run_tmux_capture(&[
         "show-environment".to_string(),
@@ -1174,7 +1178,7 @@ fn list_discoverable_sessions() -> Vec<DiscoverableSession> {
             .filter_map(|line| {
                 let mut parts = line.splitn(3, '|');
                 let name = parts.next().unwrap_or("").trim().to_string();
-                if name.is_empty() {
+                if name.is_empty() || is_internal_tmux_session(&name) {
                     return None;
                 }
                 let windows = parts

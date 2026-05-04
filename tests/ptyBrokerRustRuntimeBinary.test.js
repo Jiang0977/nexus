@@ -4,8 +4,9 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
+import { createInterface } from 'node:readline'
 
 import { createPtyBrokerRustClient } from './helpers/ptyBrokerRustClient.js'
 
@@ -81,6 +82,76 @@ set -eu
 exec "${realTmux}" -L "${socketName}" -f /dev/null "$@"
 `, { mode: 0o755 })
   return { baseDir, tmuxPath }
+}
+
+function listRealTmuxSessions(tmuxPath, env) {
+  const result = spawnSync(tmuxPath, ['list-sessions', '-F', '#{session_name}|#{session_attached}'], {
+    encoding: 'utf8',
+    env,
+  })
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  return result.stdout
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+}
+
+function spawnRawPtyRuntime(env) {
+  const child = spawn(RUNTIME, [], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env,
+  })
+
+  const pending = new Map()
+  let requestCounter = 0
+  const stdoutReader = createInterface({
+    input: child.stdout,
+    crlfDelay: Infinity,
+  })
+
+  stdoutReader.on('line', (line) => {
+    if (!line.trim()) return
+    const message = JSON.parse(line)
+    if (message.kind !== 'response') return
+    const handler = pending.get(message.id)
+    if (!handler) return
+    pending.delete(message.id)
+    handler(message)
+  })
+
+  child.stderr.on('data', () => {})
+
+  function request(method, params = {}, timeoutMs = 2000) {
+    const id = `raw-pty-runtime-${++requestCounter}`
+    child.stdin.write(`${JSON.stringify({ kind: 'request', id, method, params })}\n`)
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(id)
+        reject(new Error(`timeout:${method}`))
+      }, timeoutMs)
+      pending.set(id, (message) => {
+        clearTimeout(timer)
+        if (message.ok) {
+          resolve(message.result)
+          return
+        }
+        reject(new Error(message.error?.message || `request failed: ${method}`))
+      })
+    })
+  }
+
+  return {
+    child,
+    ready() {
+      return request('ready')
+    },
+    attachConnection(params) {
+      return request('attachConnection', params)
+    },
+    shutdown() {
+      return request('shutdown')
+    },
+  }
 }
 
 test('real rust pty runtime speaks the broker contract through a fake tmux backend', { skip: process.platform === 'win32' }, async (t) => {
@@ -267,4 +338,63 @@ test('real rust pty runtime forces an xterm TERM when parent env is dumb', { ski
     status = await client.getStatus()
   }
   assert.equal(status.runningPtys, 0)
+})
+
+test('real rust pty runtime clears stale grouped tmux sessions left by an ungraceful prior broker exit', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+
+  const realTmux = resolveSystemTmux()
+  if (!realTmux) {
+    t.skip('tmux is not installed')
+    return
+  }
+
+  const { baseDir, tmuxPath } = createRealTmuxBin(realTmux)
+  const env = {
+    ...process.env,
+    PATH: `${baseDir}:${process.env.PATH || ''}`,
+    TERM: 'xterm-256color',
+  }
+
+  const createSession = spawnSync(tmuxPath, ['new-session', '-d', '-s', 'main', '-n', 'shell', 'cat'], {
+    encoding: 'utf8',
+    env,
+  })
+  assert.equal(createSession.status, 0, createSession.stderr || createSession.stdout)
+
+  t.after(() => {
+    spawnSync(tmuxPath, ['kill-server'], { encoding: 'utf8', env })
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  const firstRuntime = spawnRawPtyRuntime(env)
+  t.after(() => {
+    firstRuntime.child.kill('SIGKILL')
+  })
+
+  await firstRuntime.ready()
+  await firstRuntime.attachConnection({
+    connectionId: 'conn-stale-cleanup',
+    session: 'main',
+    windowIndex: 0,
+  })
+
+  const beforeExit = listRealTmuxSessions(tmuxPath, env)
+  assert.ok(beforeExit.some((session) => session.startsWith('nexus-pty-')))
+
+  firstRuntime.child.kill('SIGTERM')
+  await new Promise((resolve) => firstRuntime.child.once('exit', resolve))
+
+  const secondRuntime = spawnRawPtyRuntime(env)
+  t.after(() => {
+    secondRuntime.child.kill('SIGKILL')
+  })
+
+  await secondRuntime.ready()
+
+  const afterRestart = listRealTmuxSessions(tmuxPath, env)
+  assert.deepEqual(afterRestart, ['main|0'])
+
+  await secondRuntime.shutdown()
+  await new Promise((resolve) => secondRuntime.child.once('exit', resolve))
 })
