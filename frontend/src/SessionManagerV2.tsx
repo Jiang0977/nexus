@@ -7,6 +7,7 @@ import { ErrorBanner } from './sessionManager/ErrorBanner'
 import type { Channel, Project, SessionManagerSidebarDetailView } from './sessionManager/types'
 import { useSessionManagerActions } from './sessionManager/useSessionManagerActions'
 import { useSessionManagerData } from './sessionManager/useSessionManagerData'
+import { channelTargetKey } from './terminal/splitLayoutTypes'
 
 interface Props {
   token: string
@@ -26,7 +27,10 @@ interface Props {
   onCodexResumeSuccess?: (channelIndex: number) => void
   onCodexDeleteSuccess?: (closedWindowIndexes: number[]) => void | Promise<void>
   onStartNewCodex?: () => void
+  activeSplitPaneId?: string | null
   onChannelDragStart?: (event: React.DragEvent<HTMLElement>, channel: Channel, projectName: string) => void
+  onSidebarChannelClick?: (channel: Channel, projectName: string) => void
+  paneAssignmentsByChannelKey?: Record<string, string[]>
 }
 
 function useIsDesktop() {
@@ -73,7 +77,10 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
   onCodexResumeSuccess,
   onCodexDeleteSuccess,
   onStartNewCodex,
+  activeSplitPaneId = null,
   onChannelDragStart,
+  onSidebarChannelClick,
+  paneAssignmentsByChannelKey,
 }: Props, ref) {
   const { t } = useTranslation()
   const isDesktop = useIsDesktop()
@@ -323,23 +330,55 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
         channels.map(channel => {
           const isActive = channel.index === currentChannelIndex
           const status = getChannelStatus(channel, isActive)
+          const channelKey = channelTargetKey(currentProject, channel.index)
+          const assignedPaneIds = paneAssignmentsByChannelKey?.[channelKey] || []
+          const visiblePaneNumbers = assignedPaneIds.map((paneId) => paneId.replace('pane-', ''))
+          const isPaneFocused = activeSplitPaneId ? assignedPaneIds.includes(activeSplitPaneId) : false
           return (
             <div
               key={channel.index}
               data-menu-row
+              data-testid={`sidebar-channel-${currentProject}-${channel.index}`}
               draggable={Boolean(onChannelDragStart)}
-              className={`flex items-start gap-2 rounded-lg px-2.5 py-2 cursor-pointer select-none transition-colors duration-75 group/item ${isActive ? 'bg-nexus-accent/10' : 'hover:bg-nexus-bg-2/60'}`}
+              className={`flex items-start gap-2 rounded-lg px-2.5 py-2 cursor-pointer select-none transition-colors duration-75 group/item ${isActive ? 'bg-nexus-accent/10' : isPaneFocused ? 'bg-nexus-accent/[0.07] hover:bg-nexus-accent/10' : 'hover:bg-nexus-bg-2/60'}`}
               style={{ WebkitTouchCallout: 'none' }}
               onDragStart={(event) => onChannelDragStart?.(event, channel, currentProject)}
-              onPointerDown={() => {
-                if (onChannelDragStart) return
+              onClick={() => {
+                if (onChannelDragStart) {
+                  onSidebarChannelClick?.(channel, currentProject)
+                  return
+                }
                 void doSwitchChannel(channel, false)
               }}
               onContextMenu={(e) => { e.preventDefault(); handleSidebarContext(e, channel, undefined) }}
+              title={visiblePaneNumbers.length > 0 ? t('sessionMgr.displayedInPanes', { panes: visiblePaneNumbers.join(', ') }) : channel.name}
             >
               <span className="w-2 h-2 rounded-full shrink-0 mt-1" style={{ background: STATUS_DOT[status] }} title={status} />
               <span className="text-nexus-text-2 text-[13px] font-medium select-none shrink-0 mt-0.5">#</span>
               <span className="flex-1 min-w-0 text-sm text-nexus-text truncate leading-tight" title={channel.name}>{channel.name}</span>
+              {visiblePaneNumbers.length > 0 && (
+                <div
+                  data-testid={`sidebar-channel-assigned-panes-${currentProject}-${channel.index}`}
+                  className="ml-1 flex shrink-0 items-center gap-1"
+                >
+                  {visiblePaneNumbers.map((paneNumber, badgeIndex) => {
+                    const paneId = assignedPaneIds[badgeIndex]
+                    const isFocusedPane = paneId === activeSplitPaneId
+                    return (
+                      <span
+                        key={paneId}
+                        className={`inline-flex min-w-[18px] items-center justify-center rounded-md border px-1 py-0.5 text-[10px] font-semibold leading-none ${
+                          isFocusedPane
+                            ? 'border-nexus-accent bg-nexus-accent/15 text-nexus-accent'
+                            : 'border-nexus-border bg-nexus-bg2/50 text-nexus-text-2'
+                        }`}
+                      >
+                        {paneNumber}
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )
         })

@@ -498,7 +498,7 @@ test('browser regression: desktop split panes keep input and resize scoped to th
   )
 })
 
-test('browser regression: desktop sidebar channel clicks do not rewrite split pane assignments', { timeout: 120000 }, async (t) => {
+test('browser regression: desktop sidebar channel clicks focus the matching split pane without reattaching the global terminal', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
     extraChannels: [{ index: 0, name: 'preview', active: false, cwd: '/workspace' }],
   })
@@ -532,6 +532,25 @@ test('browser regression: desktop sidebar channel clicks do not rewrite split pa
     return text.includes('nexus-preview-rust / notes')
       && text.includes('nexus-preview-rust / shell')
       && text.includes('已占用 2')
+  })
+  await page.waitForFunction(() => {
+    const badgeText = document.querySelector('[data-testid="sidebar-channel-assigned-panes-nexus-preview-rust-0"]')?.textContent || ''
+    return badgeText.includes('2')
+  })
+
+  await page.locator('[draggable="true"]').filter({ hasText: 'preview' }).first().click()
+  await page.waitForFunction(() => {
+    const pane2 = document.querySelector('[data-testid="terminal-pane-pane-2"]')
+    const pane1 = document.querySelector('[data-testid="terminal-pane-pane-1"]')
+    return pane2?.className.includes('border-nexus-accent')
+      && !pane1?.className.includes('border-nexus-accent')
+  })
+  await page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first().click()
+  await page.waitForFunction(() => {
+    const pane2 = document.querySelector('[data-testid="terminal-pane-pane-2"]')
+    const pane1 = document.querySelector('[data-testid="terminal-pane-pane-1"]')
+    return pane1?.className.includes('border-nexus-accent')
+      && !pane2?.className.includes('border-nexus-accent')
   })
 
   assert.deepEqual(

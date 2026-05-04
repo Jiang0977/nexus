@@ -262,6 +262,7 @@
     "renameProjectPrompt": "重命名工作区",
     "renameChannelPrompt": "重命名窗口",
     "moreOptions": "更多选项",
+    "displayedInPanes": "已显示于右侧 Pane {{panes}}",
     "renameFailed": "重命名失败",
     "closeFailed": "关闭失败",
     "switchFailed": "切换失败",

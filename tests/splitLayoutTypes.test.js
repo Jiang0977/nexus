@@ -2,7 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  channelTargetKey,
   normalizeWorkspaceLayout,
+  paneTargetKey,
   visiblePanesForLayout,
 } from '../frontend/src/terminal/splitLayoutTypes.ts'
 
@@ -32,4 +34,13 @@ test('visiblePanesForLayout returns one-based pane ids', () => {
     visiblePanesForLayout(layoutFixture('grid-2x2', 'pane-1')).map((pane) => pane.id),
     ['pane-1', 'pane-2', 'pane-3', 'pane-4'],
   )
+})
+
+test('pane target keys stay stable across sidebar and split-view coordination', () => {
+  assert.equal(channelTargetKey('demo-project', 7), 'demo-project:7')
+  assert.equal(
+    paneTargetKey({ session: 'demo-project', windowIndex: 7 }),
+    'demo-project:7',
+  )
+  assert.equal(paneTargetKey(null), null)
 })

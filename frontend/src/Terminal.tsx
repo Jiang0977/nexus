@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState, lazy, startTransition, type DragEvent as ReactDragEvent } from 'react'
+import { useEffect, useRef, useCallback, useMemo, useState, lazy, startTransition, type DragEvent as ReactDragEvent } from 'react'
 import type { Terminal as XTerm } from '@xterm/xterm'
 import type { SessionManagerSidebarDetailView, SessionManagerV2Handle } from './SessionManagerV2'
 import { useTranslation } from 'react-i18next'
@@ -23,7 +23,13 @@ import { useTerminalRuntime } from './terminal/useTerminalRuntime'
 import { useTerminalSessions } from './terminal/useTerminalSessions'
 import { useProfileGuide } from './terminal/useProfileGuide'
 import { WelcomeGuideOverlay } from './terminal/WelcomeGuideOverlay'
-import { CHANNEL_DRAG_MIME, type PaneTarget, type SidebarChannelDragPayload } from './terminal/splitLayoutTypes'
+import {
+  CHANNEL_DRAG_MIME,
+  channelTargetKey,
+  type PaneState,
+  type PaneTarget,
+  type SidebarChannelDragPayload,
+} from './terminal/splitLayoutTypes'
 import type { FocusedPaneRuntime } from './terminal/TerminalPane'
 
 const SessionManagerV2 = lazy(preloadSessionManagerV2)
@@ -58,6 +64,9 @@ export default function Terminal({ token }: Props) {
   const [isWidePC, setIsWidePC] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768)
   const [showFiles, setShowFiles] = useState(false)
   const [showWorkspace, setShowWorkspace] = useState(false)
+  const [splitViewPanes, setSplitViewPanes] = useState<PaneState[]>([])
+  const [splitViewFocusedPaneId, setSplitViewFocusedPaneId] = useState<string | null>(null)
+  const [splitViewFocusRequest, setSplitViewFocusRequest] = useState<{ requestId: number; target: PaneTarget } | null>(null)
   const pausePollingRef = useRef(false)
   const activeWindowIndexRef = useRef(0)
   activeWindowIndexRef.current = activeWindowIndex
@@ -400,6 +409,36 @@ export default function Terminal({ token }: Props) {
     event.dataTransfer.setData('text/plain', raw)
   }, [])
 
+  const handleSplitViewPanesChange = useCallback((panes: PaneState[], focusedPaneId: string) => {
+    setSplitViewPanes(panes)
+    setSplitViewFocusedPaneId(focusedPaneId)
+  }, [])
+
+  const splitPaneAssignmentsByChannelKey = useMemo(() => {
+    const assignments: Record<string, string[]> = {}
+    for (const pane of splitViewPanes) {
+      if (!pane.target) continue
+      const key = channelTargetKey(pane.target.session, pane.target.windowIndex)
+      if (!assignments[key]) {
+        assignments[key] = []
+      }
+      assignments[key].push(pane.id)
+    }
+    return assignments
+  }, [splitViewPanes])
+
+  const handleSidebarChannelClick = useCallback((channel: { index: number }, projectName: string) => {
+    const key = channelTargetKey(projectName, channel.index)
+    if (!splitPaneAssignmentsByChannelKey[key]?.length) return
+    setSplitViewFocusRequest((current) => ({
+      requestId: (current?.requestId ?? 0) + 1,
+      target: {
+        session: projectName,
+        windowIndex: channel.index,
+      },
+    }))
+  }, [splitPaneAssignmentsByChannelKey])
+
   return (
     <div className="flex flex-col w-full relative" style={{ height: vvHeight ?? '100dvh' }}>
       <ProfileGuideOverlay
@@ -454,7 +493,10 @@ export default function Terminal({ token }: Props) {
                   onCodexResumeSuccess={handleCodexResumeSuccess}
                   onCodexDeleteSuccess={handleCodexSessionDelete}
                   onStartNewCodex={handleSidebarStartNewCodex}
+                  activeSplitPaneId={splitViewFocusedPaneId}
                   onChannelDragStart={handleSidebarChannelDragStart}
+                  onSidebarChannelClick={handleSidebarChannelClick}
+                  paneAssignmentsByChannelKey={splitPaneAssignmentsByChannelKey}
                 />
               )}
               onAttachWindow={attachToWindow}
@@ -485,8 +527,10 @@ export default function Terminal({ token }: Props) {
               <SplitWorkspaceView
                 activePaneTermRef={termRef}
                 activeTargetRef={focusedPaneTargetRef}
+                focusRequest={splitViewFocusRequest}
                 onFocusedPaneTargetChange={handleFocusedPaneTargetChange}
                 onFocusedRuntimeChange={handleFocusedPaneRuntimeChange}
+                onVisiblePanesChange={handleSplitViewPanesChange}
                 themeMode={themeMode}
                 token={token}
               />

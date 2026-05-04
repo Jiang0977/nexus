@@ -262,6 +262,7 @@
     "renameProjectPrompt": "Rename Workspace",
     "renameChannelPrompt": "Rename Window",
     "moreOptions": "More options",
+    "displayedInPanes": "Shown in right-side pane {{panes}}",
     "renameFailed": "Rename failed",
     "closeFailed": "Close failed",
     "switchFailed": "Switch failed",

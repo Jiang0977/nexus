@@ -78,6 +78,15 @@ export function visiblePanesForLayout(layout: WorkspaceLayout): PaneState[] {
   })
 }
 
+export function channelTargetKey(session: string, windowIndex: number): string {
+  return `${session}:${windowIndex}`
+}
+
+export function paneTargetKey(target: PaneTarget | null | undefined): string | null {
+  if (!target) return null
+  return channelTargetKey(target.session, target.windowIndex)
+}
+
 export function parseChannelDragPayload(dataTransfer: DataTransfer | null): SidebarChannelDragPayload | null {
   if (!dataTransfer) return null
 
