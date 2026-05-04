@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject, type UIEvent } from 'react'
 import type { Terminal as XTerm } from '@xterm/xterm'
 import { Icon } from '../icons'
+import { ScrollbackOverlay } from './ScrollbackOverlay'
 import { TerminalPane, type FocusedPaneRuntime, type PaneStatus } from './TerminalPane'
 import { useWorkspaceLayout } from './useWorkspaceLayout'
 import {
@@ -10,7 +11,7 @@ import {
   type LayoutMode,
   type PaneTarget,
 } from './splitLayoutTypes'
-import type { ThemeMode } from './theme'
+import { THEMES, type ThemeMode } from './theme'
 
 interface Props {
   activePaneTermRef: MutableRefObject<XTerm | null>
@@ -37,6 +38,13 @@ const GRID_STYLE: Record<LayoutMode, CSSProperties> = {
   'grid-3x3': { gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gridTemplateRows: 'repeat(3, minmax(0, 1fr))' },
 }
 
+interface PaneScrollbackState {
+  content: string
+  loading: boolean
+  title: string
+  visible: boolean
+}
+
 function saveStateLabel(saveState: 'loading' | 'saving' | 'saved' | 'unsaved', hasError: boolean) {
   if (saveState === 'loading') return '布局加载中'
   if (saveState === 'saving') return '布局保存中'
@@ -54,11 +62,23 @@ export function SplitWorkspaceView({
 }: Props) {
   const { error, focusPane, layout, saveState, setMode, setPaneTarget } = useWorkspaceLayout(token)
   const [paneStatuses, setPaneStatuses] = useState<Record<string, PaneStatus>>({})
+  const [paneScrollback, setPaneScrollback] = useState<PaneScrollbackState>({
+    content: '',
+    loading: false,
+    title: '终端文本',
+    visible: false,
+  })
   const focusedRuntimeRef = useRef<FocusedPaneRuntime | null>(null)
   const focusedPaneIdRef = useRef(layout.focusedPaneId)
+  const paneScrollbackOverlayRef = useRef<HTMLDivElement>(null)
+  const scrollbackRequestIdRef = useRef(0)
   focusedPaneIdRef.current = layout.focusedPaneId
   const visiblePanes = visiblePanesForLayout(layout)
   const isCompact = layout.mode === 'grid-3x3'
+  const scrollbackTheme = THEMES[themeMode] as Record<string, unknown>
+  const scrollbackBackground = String(scrollbackTheme.background ?? '#1a1a2e')
+  const scrollbackForeground = String(scrollbackTheme.foreground ?? '#e2e8f0')
+  const scrollbackMuted = String(scrollbackTheme.brightBlack ?? '#4a5568')
 
   const publishFocusedRuntime = useCallback((runtime: FocusedPaneRuntime) => {
     focusedRuntimeRef.current = runtime
@@ -81,6 +101,66 @@ export function SplitWorkspaceView({
   const handlePaneStatusChange = useCallback((paneId: string, status: PaneStatus) => {
     setPaneStatuses((current) => current[paneId] === status ? current : { ...current, [paneId]: status })
   }, [])
+
+  const closePaneScrollback = useCallback(() => {
+    scrollbackRequestIdRef.current += 1
+    setPaneScrollback((current) => ({
+      ...current,
+      content: '',
+      loading: false,
+      visible: false,
+    }))
+  }, [])
+
+  const handlePaneScrollbackScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    const el = event.currentTarget
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 30
+    if (atBottom) closePaneScrollback()
+  }, [closePaneScrollback])
+
+  const openPaneScrollback = useCallback((target: PaneTarget, windowName?: string) => {
+    const requestId = scrollbackRequestIdRef.current + 1
+    scrollbackRequestIdRef.current = requestId
+    const windowLabel = windowName || `#${target.windowIndex}`
+
+    setPaneScrollback({
+      content: '',
+      loading: true,
+      title: `${target.session} / ${windowLabel} 终端文本`,
+      visible: true,
+    })
+
+    fetch(`/api/sessions/${target.windowIndex}/scrollback?session=${encodeURIComponent(target.session)}&lines=3000`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((response) => response.ok ? response.json() : Promise.reject(response.status))
+      .then(({ content }: { content: string }) => {
+        if (scrollbackRequestIdRef.current !== requestId) return
+        setPaneScrollback((current) => ({
+          ...current,
+          content: content.trimEnd(),
+          loading: false,
+        }))
+      })
+      .catch((error: unknown) => {
+        if (scrollbackRequestIdRef.current !== requestId) return
+        console.error('[SplitWorkspaceView] Failed to load pane scrollback', {
+          error,
+          target,
+        })
+        setPaneScrollback((current) => ({
+          ...current,
+          content: '(加载失败)',
+          loading: false,
+        }))
+      })
+  }, [token])
+
+  useEffect(() => {
+    if (!paneScrollback.content || !paneScrollbackOverlayRef.current) return
+    const el = paneScrollbackOverlayRef.current
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 50)
+  }, [paneScrollback.content])
 
   const liveCount = useMemo(() => visiblePanes.filter((pane) => paneStatuses[pane.id] === 'live').length, [paneStatuses, visiblePanes])
   const wsCount = liveCount
@@ -129,6 +209,7 @@ export function SplitWorkspaceView({
               onFocusPane={handleFocusedPane}
               onFocusedRuntimeReady={handleFocusedRuntimeReady}
               onPaneStatusChange={handlePaneStatusChange}
+              onOpenScrollback={openPaneScrollback}
               onSetTarget={setPaneTarget}
               layoutMode={layout.mode}
               pane={pane}
@@ -155,6 +236,22 @@ export function SplitWorkspaceView({
         <span className={saveState === 'saved' && !error ? 'text-nexus-success' : 'text-nexus-warning'}>{statusLabel}</span>
         <span className="ml-auto">mode {layout.mode}</span>
       </div>
+      <ScrollbackOverlay
+        visible={paneScrollback.visible}
+        background={scrollbackBackground}
+        content={paneScrollback.content}
+        fontFamily="Menlo, Monaco, monospace"
+        fontSize={14}
+        foreground={scrollbackForeground}
+        hint="这里可直接选中文字，滚到底部返回终端"
+        loading={paneScrollback.loading}
+        loadingLabel="加载中..."
+        muted={scrollbackMuted}
+        onClose={closePaneScrollback}
+        onScroll={handlePaneScrollbackScroll}
+        overlayRef={paneScrollbackOverlayRef}
+        title={paneScrollback.title}
+      />
     </div>
   )
 }

@@ -575,6 +575,61 @@ test('browser regression: desktop split panes can copy selected terminal text', 
   )
 })
 
+test('browser regression: desktop split pane header opens selectable terminal text', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: `http://127.0.0.1:${port}`,
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const shellSource = page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first()
+  await shellSource.waitFor()
+  await shellSource.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await page.waitForFunction(() => document.body.textContent?.includes('notes ready'))
+
+  const scrollbackRequests = []
+  await page.route('**/api/sessions/1/scrollback?**', async (route) => {
+    scrollbackRequests.push(route.request().url())
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ content: 'notes ready\n' }),
+    })
+  })
+
+  await page
+    .getByTestId('terminal-pane-pane-1')
+    .getByRole('button', { name: '选字复制' })
+    .click()
+
+  const scrollbackText = page.locator('pre').filter({ hasText: 'notes ready' }).first()
+  await scrollbackText.waitFor()
+  await delay(400)
+  const box = await scrollbackText.boundingBox()
+  assert.ok(box, 'expected scrollback text to be measurable')
+
+  await page.mouse.move(box.x + 4, box.y + 10)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 110, box.y + 10)
+  await page.mouse.up()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+C' : 'Control+C')
+
+  await page.waitForFunction(async () => (await navigator.clipboard.readText()).includes('notes ready'))
+  assert.equal(scrollbackRequests.length, 1)
+  assert.match(scrollbackRequests[0], /\/api\/sessions\/1\/scrollback\?/)
+  assert.match(scrollbackRequests[0], /session=nexus-preview-rust/)
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
 test('browser regression: desktop bottom-right split pane can be focused', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
 

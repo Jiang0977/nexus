@@ -10,6 +10,7 @@ interface Props {
   health: PaneHealth
   onClear: () => void
   onFit: () => void
+  onOpenScrollback: () => void
   target: PaneTarget | null
   windowName?: string
 }
@@ -23,11 +24,12 @@ const STATUS_META: Record<PaneHealth, { label: string; color: string }> = {
   stale: { label: '已失效', color: 'var(--nexus-error)' },
 }
 
-export function PaneHeader({ focused, health, index, onClear, onFit, target, windowName }: Props) {
+export function PaneHeader({ focused, health, index, onClear, onFit, onOpenScrollback, target, windowName }: Props) {
   const meta = STATUS_META[health]
   const title = target
     ? `${target.session} / ${windowName || `#${target.windowIndex}`}`
     : '(空)'
+  const canOpenScrollback = Boolean(target && health !== 'stale')
 
   return (
     <div className={`flex h-9 min-h-9 items-center gap-2 border-b px-3 text-sm ${focused ? 'border-nexus-accent/80' : 'border-nexus-border'}`}>
@@ -39,6 +41,25 @@ export function PaneHeader({ focused, health, index, onClear, onFit, target, win
       <span className="shrink-0 text-xs font-semibold" style={{ color: meta.color }}>
         {meta.label}
       </span>
+      {target && (
+        <button
+          aria-label="选字复制"
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent bg-transparent ${
+            canOpenScrollback
+              ? 'text-nexus-text-2 hover:border-nexus-border hover:text-nexus-text'
+              : 'cursor-not-allowed text-nexus-muted'
+          }`}
+          disabled={!canOpenScrollback}
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpenScrollback()
+          }}
+          title="选字复制"
+          type="button"
+        >
+          <Icon name="copy" size={13} />
+        </button>
+      )}
       <button
         className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent bg-transparent text-nexus-text-2 hover:border-nexus-border hover:text-nexus-text"
         onClick={onFit}
