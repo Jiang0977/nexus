@@ -165,7 +165,7 @@ function createBrowserProjectFixture() {
   return { dataDir, projectRoot }
 }
 
-async function launchBrowserApp(t, { mobile = false } = {}) {
+async function launchBrowserApp(t, { extraChannels = [], mobile = false } = {}) {
   ensureRustServerBuilt()
 
   const { dataDir, projectRoot } = createBrowserProjectFixture()
@@ -185,6 +185,7 @@ async function launchBrowserApp(t, { mobile = false } = {}) {
     NEXUS_PTY_BROKER_RUST_ARGS: JSON.stringify([PTY_FIXTURE]),
     NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
     NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
+    FAKE_SESSION_MANAGEMENT_EXTRA_CHANNELS_JSON: JSON.stringify(extraChannels),
     FAKE_PTY_RUNTIME_SNAPSHOT_JSON: JSON.stringify({
       'nexus-preview-rust:0': {
         output: 'preview shell ready\n',
@@ -394,6 +395,102 @@ test('browser regression: desktop drags a sidebar channel into a split pane and 
       && document.body.textContent?.includes('已连接 1/1 panes')
   ))
 
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: desktop split panes keep input and resize scoped to the focused pane', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    extraChannels: [{ index: 0, name: 'preview', active: false, cwd: '/workspace' }],
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+
+    const NativeWebSocket = window.WebSocket
+    window.__nexusWsSends = []
+    function PatchedWebSocket(url, protocols) {
+      const socket = protocols === undefined
+        ? new NativeWebSocket(url)
+        : new NativeWebSocket(url, protocols)
+      const rawSend = socket.send
+      socket.send = function send(data) {
+        window.__nexusWsSends.push({ url: String(url), data: String(data) })
+        return rawSend.call(this, data)
+      }
+      return socket
+    }
+    Object.assign(PatchedWebSocket, NativeWebSocket)
+    Object.defineProperty(window, 'WebSocket', {
+      configurable: true,
+      writable: true,
+      value: PatchedWebSocket,
+    })
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const shellSource = page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first()
+  await shellSource.waitFor()
+  await shellSource.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await page.waitForFunction(() => document.body.textContent?.includes('notes ready'))
+
+  await page.waitForFunction(() => {
+    const sends = window.__nexusWsSends || []
+    return sends.some((send) => send.url.includes('window=1') && send.data.includes('"resize"'))
+  })
+  const singleCols = await page.evaluate(() => {
+    const sends = window.__nexusWsSends || []
+    const resize = sends
+      .filter((send) => send.url.includes('window=1'))
+      .map((send) => {
+        try { return JSON.parse(send.data) } catch { return null }
+      })
+      .filter((message) => message?.type === 'resize')
+      .at(-1)
+    return resize?.cols || 0
+  })
+
+  await page.getByRole('button', { name: '2x2' }).click()
+  await page.waitForFunction(() => document.body.textContent?.includes('mode grid-2x2'))
+  await page.waitForFunction((previousCols) => {
+    const sends = window.__nexusWsSends || []
+    return sends
+      .filter((send) => send.url.includes('window=1'))
+      .map((send) => {
+        try { return JSON.parse(send.data) } catch { return null }
+      })
+      .some((message) => message?.type === 'resize' && message.cols > 0 && message.cols < previousCols)
+  }, singleCols)
+
+  const previewSource = page.locator('[draggable="true"]').filter({ hasText: 'preview' }).first()
+  await previewSource.waitFor()
+  await previewSource.dragTo(page.getByTestId('terminal-pane-pane-2'))
+  await page.waitForFunction(() => document.body.textContent?.includes('preview shell ready'))
+
+  await page.evaluate(() => {
+    window.__nexusWsSends = []
+  })
+
+  await page.getByTestId('terminal-pane-pane-1').click({ position: { x: 24, y: 18 } })
+  await page.keyboard.type('pane-one')
+  await page.getByTestId('terminal-pane-pane-2').click({ position: { x: 24, y: 18 } })
+  await page.keyboard.type('pane-two')
+
+  const textByWindow = await page.evaluate(() => (window.__nexusWsSends || [])
+    .filter((send) => !send.data.includes('"resize"'))
+    .reduce((acc, send) => {
+      const windowIndex = new URL(send.url).searchParams.get('window')
+      acc[windowIndex] = `${acc[windowIndex] || ''}${send.data}`
+      return acc
+    }, {}))
+
+  assert.deepEqual(textByWindow, {
+    0: 'pane-two',
+    1: 'pane-one',
+  })
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),
     [],
