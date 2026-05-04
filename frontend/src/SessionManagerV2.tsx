@@ -331,7 +331,10 @@ export default forwardRef<SessionManagerV2Handle, Props>(function SessionManager
               className={`flex items-start gap-2 rounded-lg px-2.5 py-2 cursor-pointer select-none transition-colors duration-75 group/item ${isActive ? 'bg-nexus-accent/10' : 'hover:bg-nexus-bg-2/60'}`}
               style={{ WebkitTouchCallout: 'none' }}
               onDragStart={(event) => onChannelDragStart?.(event, channel, currentProject)}
-              onPointerDown={() => { void doSwitchChannel(channel, false) }}
+              onPointerDown={() => {
+                if (onChannelDragStart) return
+                void doSwitchChannel(channel, false)
+              }}
               onContextMenu={(e) => { e.preventDefault(); handleSidebarContext(e, channel, undefined) }}
             >
               <span className="w-2 h-2 rounded-full shrink-0 mt-1" style={{ background: STATUS_DOT[status] }} title={status} />

@@ -149,6 +149,21 @@ export function useTerminalPaneRuntime({
     const screen = container.querySelector('.xterm-screen') as HTMLElement | null
     if (screen) screen.style.userSelect = 'text'
 
+    term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (event.type !== 'keydown') return true
+      const clipboardMod = event.ctrlKey || event.metaKey
+      const clipboardKey = event.key.toLowerCase()
+      const noOtherMod = !event.shiftKey && !event.altKey
+      if (clipboardMod && clipboardKey === 'c' && noOtherMod && term.hasSelection()) {
+        event.preventDefault()
+        navigator.clipboard.writeText(term.getSelection()).catch((error: unknown) => {
+          console.error('[TerminalPane] Failed to copy selected terminal text', error)
+        })
+        return false
+      }
+      return true
+    })
+
     term.onData((data) => sendToWs(data))
     term.onScroll(() => {
       const buffer = (term as any).buffer?.active

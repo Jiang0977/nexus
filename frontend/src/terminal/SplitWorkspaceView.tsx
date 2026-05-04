@@ -55,17 +55,28 @@ export function SplitWorkspaceView({
   const { error, focusPane, layout, saveState, setMode, setPaneTarget } = useWorkspaceLayout(token)
   const [paneStatuses, setPaneStatuses] = useState<Record<string, PaneStatus>>({})
   const focusedRuntimeRef = useRef<FocusedPaneRuntime | null>(null)
+  const focusedPaneIdRef = useRef(layout.focusedPaneId)
+  focusedPaneIdRef.current = layout.focusedPaneId
   const visiblePanes = visiblePanesForLayout(layout)
   const isCompact = layout.mode === 'grid-3x3'
 
-  const handleFocusedPane = useCallback((paneId: string, runtime: FocusedPaneRuntime) => {
+  const publishFocusedRuntime = useCallback((runtime: FocusedPaneRuntime) => {
     focusedRuntimeRef.current = runtime
     activePaneTermRef.current = runtime.termRef.current
     activeTargetRef.current = runtime.target
-    focusPane(paneId)
     onFocusedRuntimeChange(runtime)
     onFocusedPaneTargetChange(runtime.target)
-  }, [activePaneTermRef, activeTargetRef, focusPane, onFocusedPaneTargetChange, onFocusedRuntimeChange])
+  }, [activePaneTermRef, activeTargetRef, onFocusedPaneTargetChange, onFocusedRuntimeChange])
+
+  const handleFocusedPane = useCallback((paneId: string, runtime: FocusedPaneRuntime) => {
+    publishFocusedRuntime(runtime)
+    focusPane(paneId)
+  }, [focusPane, publishFocusedRuntime])
+
+  const handleFocusedRuntimeReady = useCallback((paneId: string, runtime: FocusedPaneRuntime) => {
+    if (paneId !== focusedPaneIdRef.current) return
+    publishFocusedRuntime(runtime)
+  }, [publishFocusedRuntime])
 
   const handlePaneStatusChange = useCallback((paneId: string, status: PaneStatus) => {
     setPaneStatuses((current) => current[paneId] === status ? current : { ...current, [paneId]: status })
@@ -116,6 +127,7 @@ export function SplitWorkspaceView({
               index={index + 1}
               onClearTarget={(paneId) => setPaneTarget(paneId, null)}
               onFocusPane={handleFocusedPane}
+              onFocusedRuntimeReady={handleFocusedRuntimeReady}
               onPaneStatusChange={handlePaneStatusChange}
               onSetTarget={setPaneTarget}
               layoutMode={layout.mode}

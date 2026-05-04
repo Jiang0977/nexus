@@ -58,7 +58,7 @@ export function normalizeWorkspaceLayout(layout: WorkspaceLayout, mode: LayoutMo
     }
   }
 
-  const visiblePaneIds = new Set(Array.from({ length: requiredPaneCount }, (_, index) => `pane-${index}`))
+  const visiblePaneIds = new Set(Array.from({ length: requiredPaneCount }, (_, index) => `pane-${index + 1}`))
   const focusedPaneId = visiblePaneIds.has(layout.focusedPaneId) ? layout.focusedPaneId : 'pane-1'
 
   return {
