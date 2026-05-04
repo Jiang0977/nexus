@@ -25,6 +25,7 @@ interface Props {
   onFocusedRuntimeReady: (paneId: string, runtime: FocusedPaneRuntime) => void
   onFocusPane: (paneId: string, runtime: FocusedPaneRuntime) => void
   onPaneStatusChange: (paneId: string, status: PaneStatus) => void
+  onOpenScrollback: (target: PaneTarget, windowName?: string) => void
   onSetTarget: (paneId: string, target: PaneTarget) => void
   layoutMode: LayoutMode
   pane: PaneState
@@ -45,6 +46,7 @@ export function TerminalPane({
   onFocusedRuntimeReady,
   onFocusPane,
   onPaneStatusChange,
+  onOpenScrollback,
   onSetTarget,
   layoutMode,
   pane,
@@ -146,6 +148,11 @@ export function TerminalPane({
     focusPane()
   }
 
+  const openScrollback = () => {
+    if (!pane.target) return
+    onOpenScrollback(pane.target, targetCheck.windowName)
+  }
+
   return (
     <section
       data-testid={`terminal-pane-${pane.id}`}
@@ -161,6 +168,7 @@ export function TerminalPane({
         index={index}
         onClear={() => onClearTarget(pane.id)}
         onFit={runtime.fitNow}
+        onOpenScrollback={openScrollback}
         target={pane.target}
         windowName={targetCheck.windowName}
       />
