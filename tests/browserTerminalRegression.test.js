@@ -560,6 +560,41 @@ test('browser regression: desktop sidebar channel clicks focus the matching spli
   )
 })
 
+test('browser regression: closing a sidebar channel clears its split pane assignment', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    extraChannels: [{ index: 0, name: 'preview', active: false, cwd: '/workspace' }],
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const channelRow = page.getByTestId('sidebar-channel-nexus-preview-rust-1')
+  await channelRow.waitFor()
+  await channelRow.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await page.waitForFunction(() => {
+    const badgeText = document.querySelector('[data-testid="sidebar-channel-assigned-panes-nexus-preview-rust-1"]')?.textContent || ''
+    return document.body.textContent?.includes('nexus-preview-rust / notes') && badgeText.includes('1')
+  })
+
+  await channelRow.click({ button: 'right' })
+  await page.getByRole('button', { name: 'Close' }).click()
+  await page.waitForFunction(() => {
+    const badge = document.querySelector('[data-testid="sidebar-channel-assigned-panes-nexus-preview-rust-1"]')
+    const pane = document.querySelector('[data-testid="terminal-pane-pane-1"]')
+    return !badge
+      && pane?.textContent?.includes('拖入窗口')
+      && !pane.querySelector('.xterm')
+  })
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
 test('browser regression: desktop split panes can copy selected terminal text', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
   await page.addInitScript(() => {

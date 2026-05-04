@@ -11,6 +11,7 @@ interface UseSessionManagerActionsArgs {
   fetchProjects: () => Promise<void>
   headers: Record<string, string>
   onClose: () => void
+  onChannelClosed?: (channel: Channel, projectName: string) => void | Promise<void>
   onSwitchChannel: (channelIndex: number) => void
   onSwitchProject: (projectName: string, lastChannel?: number) => void
   projects: Project[]
@@ -26,6 +27,7 @@ export function useSessionManagerActions({
   fetchProjects,
   headers,
   onClose,
+  onChannelClosed,
   onSwitchChannel,
   onSwitchProject,
   projects,
@@ -100,11 +102,12 @@ export function useSessionManagerActions({
         setError(await parseApiError(response, t('sessionMgr.closeFailed')))
         return
       }
+      await onChannelClosed?.(channel, currentProject)
       await fetchChannels(currentProject)
     } catch (fetchError: unknown) {
       setError(parseNetworkError(fetchError))
     }
-  }, [currentProject, dismissChannelMenus, fetchChannels, headers, setError, t])
+  }, [currentProject, dismissChannelMenus, fetchChannels, headers, onChannelClosed, setError, t])
 
   const handleRenameProject = useCallback(async (project: Project) => {
     dismissProjectMenus()
