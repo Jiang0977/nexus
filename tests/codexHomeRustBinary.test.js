@@ -97,6 +97,8 @@ test('real rust codex home tool imports current live ~/.codex config and links s
     auth_mode: 'chatgpt',
     tokens: { access_token: 'access-token' },
   }, null, 2), 'utf8')
+  writeFileSync(join(sourceCodexDir, 'AGENTS.md'), '# AGENTS\n@/home/test/.codex/RTK.md\n', 'utf8')
+  writeFileSync(join(sourceCodexDir, 'RTK.md'), '# RTK\nAlways prefix shell commands with rtk.\n', 'utf8')
   writeFileSync(join(sourceCodexDir, 'session_index.jsonl'), '{"id":"session-1"}\n', 'utf8')
   writeFileSync(join(sourceCodexDir, 'history.jsonl'), '{"type":"history"}\n', 'utf8')
   writeFileSync(join(sourceCodexDir, 'skills', 'my-custom-skill', 'SKILL.md'), '# custom skill\n', 'utf8')
@@ -119,10 +121,14 @@ test('real rust codex home tool imports current live ~/.codex config and links s
     assert.match(configToml, /model = "gpt-5\.4"/)
     assert.match(configToml, /base_url = "https:\/\/api\.openai\.com\/v1"/)
     assert.match(configToml, /\[projects\."\/workspace\/demo"\]/)
+    assert.equal(readFileSync(join(runtimeCodexDir, 'AGENTS.md'), 'utf8'), '# AGENTS\n@/home/test/.codex/RTK.md\n')
     assert.equal(readFileSync(join(runtimeCodexDir, 'session_index.jsonl'), 'utf8'), '{"id":"session-1"}\n')
     assert.equal(readFileSync(join(runtimeCodexDir, 'history.jsonl'), 'utf8'), '{"type":"history"}\n')
+    assert.equal(readFileSync(join(runtimeCodexDir, 'RTK.md'), 'utf8'), '# RTK\nAlways prefix shell commands with rtk.\n')
     assert.equal(readFileSync(join(runtimeCodexDir, 'skills', 'my-custom-skill', 'SKILL.md'), 'utf8'), '# custom skill\n')
+    assert.equal(lstatSync(join(runtimeCodexDir, 'AGENTS.md')).isSymbolicLink(), true)
     assert.equal(lstatSync(join(runtimeCodexDir, 'session_index.jsonl')).isSymbolicLink(), true)
+    assert.equal(lstatSync(join(runtimeCodexDir, 'RTK.md')).isSymbolicLink(), true)
     assert.equal(existsSync(join(runtimeCodexDir, 'logs_2.sqlite')), false)
   } finally {
     rmSync(sourceHome, { recursive: true, force: true })

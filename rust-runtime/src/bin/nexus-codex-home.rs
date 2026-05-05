@@ -8,11 +8,13 @@ use std::process;
 const SHARED_CODEX_STATE_PATHS: &[&str] = &[
     ".codex-global-state.json",
     ".tmp",
+    "AGENTS.md",
     "cache",
     "history.jsonl",
     "installation_id",
     "models_cache.json",
     "plugins",
+    "RTK.md",
     "session_index.jsonl",
     "sessions",
     "shell_snapshots",
