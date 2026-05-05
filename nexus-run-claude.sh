@@ -27,6 +27,57 @@ cfg() {
     python3 -c "import json; d=json.load(open('${CONFIG_FILE}')); print(d.get('$1',''))"
 }
 
+materialize_claude_hook_settings() {
+    local source_home="$1"
+    local runtime_root="$2"
+    local window_id=""
+    local safe_window_id=""
+    local settings_path=""
+
+    if [ -z "$source_home" ]; then
+        return 0
+    fi
+
+    window_id="$(tmux display-message -p '#{window_id}' 2>/dev/null || true)"
+    if [ -z "$window_id" ]; then
+        window_id="window-$$"
+    fi
+    safe_window_id="$(printf '%s' "$window_id" | sed 's/[^a-zA-Z0-9._-]/-/g')"
+    settings_path="${runtime_root}/${safe_window_id}/settings.json"
+
+    python3 - "$source_home" "$settings_path" <<'PY'
+import json
+import pathlib
+import sys
+
+source_home, settings_path = sys.argv[1:3]
+source_settings = pathlib.Path(source_home) / ".claude" / "settings.json"
+target_settings = pathlib.Path(settings_path)
+
+try:
+    data = json.loads(source_settings.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    target_settings.unlink(missing_ok=True)
+    sys.exit(0)
+except Exception as error:
+    print(f"[Nexus] Warning: failed to parse {source_settings}: {error}", file=sys.stderr)
+    target_settings.unlink(missing_ok=True)
+    sys.exit(0)
+
+hooks = data.get("hooks")
+if not hooks:
+    target_settings.unlink(missing_ok=True)
+    sys.exit(0)
+
+target_settings.parent.mkdir(parents=True, exist_ok=True)
+target_settings.write_text(
+    json.dumps({"hooks": hooks}, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+print(target_settings)
+PY
+}
+
 BASE_URL=$(cfg BASE_URL)
 AUTH_TOKEN=$(cfg AUTH_TOKEN)
 API_KEY=$(cfg API_KEY)
@@ -84,6 +135,16 @@ unset _proxy
 
 cd "$PROJECT"
 
+declare -a CLAUDE_LAUNCH_ARGS
+CLAUDE_LAUNCH_ARGS=(--dangerously-skip-permissions --setting-sources project,local)
+CLAUDE_RUNTIME_ROOT="${NEXUS_CLAUDE_RUNTIME_DIR:-${SCRIPT_DIR}/data/claude-runtime}"
+CLAUDE_HOOK_SETTINGS_FILE="$(materialize_claude_hook_settings "$SOURCE_HOME" "$CLAUDE_RUNTIME_ROOT" || true)"
+if [ -n "$CLAUDE_HOOK_SETTINGS_FILE" ]; then
+    # Keep user-level hooks such as RTK, but do not re-import user env that can
+    # override the selected Nexus profile provider.
+    CLAUDE_LAUNCH_ARGS+=(--settings "$CLAUDE_HOOK_SETTINGS_FILE")
+fi
+
 echo ""
 echo "╔══════════════════════════════════════════╗"
 echo "║  Nexus · Claude Session"
@@ -106,7 +167,7 @@ while true; do
     # Profile windows must not inherit user-level ~/.claude/settings.json env.
     # Claude Code 2.1.x gives settings env higher priority than process env,
     # which can mix the selected Nexus profile with the globally active provider.
-    claude --dangerously-skip-permissions --setting-sources project,local || true
+    claude "${CLAUDE_LAUNCH_ARGS[@]}" || true
     echo ""
     echo "[Nexus] Claude exited.  r=restart  b=bash shell  q=quit window"
     read -r REPLY
