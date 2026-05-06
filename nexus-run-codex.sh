@@ -37,6 +37,8 @@ safe_window_id="$(printf '%s' "$window_id" | sed 's/[^a-zA-Z0-9._-]/-/g')"
 runtime_home="${SCRIPT_DIR}/data/codex-runtime/${safe_window_id}"
 
 mkdir -p "${SCRIPT_DIR}/data/codex-runtime"
+export NEXUS_SOURCE_HOME="${SOURCE_HOME}"
+export NEXUS_CODEX_SOURCE_HOME="${SOURCE_HOME}/.codex"
 if [ -z "${NEXUS_CODEX_HOME_EXECUTABLE:-}" ] && [ ! -x "$DEFAULT_CODEX_HOME_EXECUTABLE" ]; then
     echo "[Nexus] 构建 Rust codex home tool..."
     cargo build --manifest-path "${SCRIPT_DIR}/rust-runtime/Cargo.toml" --release --bin nexus-codex-home
@@ -47,14 +49,8 @@ if [ ! -x "$CODEX_HOME_EXECUTABLE" ]; then
 fi
 HOME="${SOURCE_HOME}" "${CODEX_HOME_EXECUTABLE}" "${CONFIG_FILE}" "${runtime_home}" "${PROJECT}"
 
-export HOME="${runtime_home}"
 export LANG="C.UTF-8"
 export LC_ALL="C.UTF-8"
-if [ -n "$SOURCE_HOME" ]; then
-    # Preserve host CLI auth while keeping Codex state isolated under runtime_home.
-    export GH_CONFIG_DIR="${SOURCE_HOME}/.config/gh"
-    export SVN_CONFIG_DIR="${SOURCE_HOME}/.subversion"
-fi
 
 # 代理变量：优先使用 NEXUS_PROXY（nexus-server 注入），其次继承环境
 _proxy="${NEXUS_PROXY:-${HTTP_PROXY:-}}"
@@ -102,10 +98,17 @@ echo "╚═══════════════════════�
 echo ""
 
 while true; do
+    codex_env=(
+        HOME="${runtime_home}"
+        LANG="C.UTF-8"
+        LC_ALL="C.UTF-8"
+        NEXUS_SOURCE_HOME="${SOURCE_HOME}"
+        NEXUS_CODEX_SOURCE_HOME="${SOURCE_HOME}/.codex"
+    )
     if [ -n "$RESUME_SESSION_ID" ]; then
-        "$CODEX_BIN" resume "$RESUME_SESSION_ID" --dangerously-bypass-approvals-and-sandbox --no-alt-screen || true
+        env "${codex_env[@]}" "$CODEX_BIN" resume "$RESUME_SESSION_ID" --dangerously-bypass-approvals-and-sandbox --no-alt-screen || true
     else
-        "$CODEX_BIN" --dangerously-bypass-approvals-and-sandbox --no-alt-screen || true
+        env "${codex_env[@]}" "$CODEX_BIN" --dangerously-bypass-approvals-and-sandbox --no-alt-screen || true
     fi
     echo ""
     echo "[Nexus] Codex exited.  r=restart  b=bash shell  q=quit window"
