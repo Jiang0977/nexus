@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/nexus-runtime-proxy.sh"
+
+SOURCE_HOME="$(nexus_runtime_source_home)"
+REAL_GH_BIN="$(nexus_runtime_resolve_real_command gh "${SCRIPT_DIR}/$(basename -- "${BASH_SOURCE[0]}")")"
+
+if [ -n "${GH_CONFIG_DIR:-}" ]; then
+  exec "$REAL_GH_BIN" "$@"
+fi
+
+if [ -n "$SOURCE_HOME" ]; then
+  exec env GH_CONFIG_DIR="${SOURCE_HOME}/.config/gh" "$REAL_GH_BIN" "$@"
+fi
+
+exec "$REAL_GH_BIN" "$@"
