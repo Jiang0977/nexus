@@ -5,6 +5,8 @@
   "scripts": {
     "start": "bash ./start.sh",
     "start:rust-server": "bash ./start.sh",
+    "deploy:service": "bash ./scripts/deploy-nexus-service.sh",
+    "restart:service": "bash ./scripts/restart-nexus-service.sh",
     "dev": "cargo build --manifest-path rust-runtime/Cargo.toml --bin nexus-server && NEXUS_SERVER_EXECUTABLE=./rust-runtime/target/debug/nexus-server bash ./start.sh",
     "test": "npm run test:rust && npm run test:node",
     "test:browser": "node --test tests/browserTerminalRegression.test.js",

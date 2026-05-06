@@ -80,9 +80,43 @@ fi
 echo "$BACKUP_DIR"
 ```
 
-### 4. 重启服务
+### 4. 一键部署
+
+如果前端源码没改，优先直接运行：
+
+```bash
+npm run deploy:service
+```
+
+如果这次改了 `frontend/src/`，先重建前端再部署：
+
+```bash
+npm run deploy:service -- --frontend
+```
+
+行为：
+
+- 先备份当前 Rust release binaries 到 `/tmp/nexus-deploy-backup.*`
+- 重新构建 `nexus-server` 与 4 个 runtime binary
+- 调用 `npm run restart:service`
+- 如果重启或探活失败，自动恢复旧 release binaries 并再次重启服务
+
+注意：
+
+- 这个脚本只自动回滚 Rust release binaries，不会自动回滚工作树里的 shell 脚本或文档改动。
+- 如果脚本最终失败但服务已被回滚拉起，修复问题后再重新部署。
+
+### 5. 手动重启服务
 
 优先用你实际安装方式对应的命令：
+
+当前这台机器如果已经具备免交互 sudo，优先直接跑仓库脚本：
+
+```bash
+npm run restart:service
+```
+
+它会执行 `sudo -n systemctl restart nexus`，随后检查 `systemctl status` 和 `http://127.0.0.1:59000/api/version`。
 
 如果这次部署改了 `deploy/systemd/*.service`，先把 unit 文件同步到 systemd 并 reload：
 
@@ -109,7 +143,7 @@ sudo systemctl restart nexus
 sudo systemctl status nexus --no-pager
 ```
 
-### 5. 上线后验证
+### 6. 上线后验证
 
 用户级：
 
