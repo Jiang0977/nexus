@@ -27,6 +27,8 @@ test('profile Codex launcher preserves host rust toolchain env after HOME isolat
     mkdirSync(fakeBinDir, { recursive: true })
     mkdirSync(join(homeDir, '.cargo', 'bin'), { recursive: true })
     mkdirSync(join(homeDir, '.rustup'), { recursive: true })
+    mkdirSync(join(homeDir, '.config', 'gh'), { recursive: true })
+    mkdirSync(join(homeDir, '.subversion'), { recursive: true })
     mkdirSync(pollutedHome, { recursive: true })
     mkdirSync(projectDir, { recursive: true })
     writeFileSync(join(homeDir, '.cargo', 'bin', 'cargo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
@@ -37,7 +39,7 @@ exit 0
 `, { mode: 0o755 })
     writeFileSync(join(fakeBinDir, 'codex'), `#!/bin/sh
 printf '%s\\n' "$*" > "${argsLog}"
-printf 'HOME=%s\\nCARGO_HOME=%s\\nRUSTUP_HOME=%s\\nPATH=%s\\n' "$HOME" "$CARGO_HOME" "$RUSTUP_HOME" "$PATH" > "${envLog}"
+printf 'HOME=%s\\nCARGO_HOME=%s\\nRUSTUP_HOME=%s\\nGH_CONFIG_DIR=%s\\nSVN_CONFIG_DIR=%s\\nPATH=%s\\n' "$HOME" "$CARGO_HOME" "$RUSTUP_HOME" "$GH_CONFIG_DIR" "$SVN_CONFIG_DIR" "$PATH" > "${envLog}"
 exit 0
 `, { mode: 0o755 })
 
@@ -63,6 +65,8 @@ exit 0
     assert.match(launcherEnv, /HOME=.*data\/codex-runtime\//)
     assert.match(launcherEnv, new RegExp(`CARGO_HOME=${escapeForRegExp(homeDir)}/\\.cargo`))
     assert.match(launcherEnv, new RegExp(`RUSTUP_HOME=${escapeForRegExp(homeDir)}/\\.rustup`))
+    assert.match(launcherEnv, new RegExp(`GH_CONFIG_DIR=${escapeForRegExp(homeDir)}/\\.config/gh`))
+    assert.match(launcherEnv, new RegExp(`SVN_CONFIG_DIR=${escapeForRegExp(homeDir)}/\\.subversion`))
     assert.match(launcherEnv, new RegExp(`PATH=.*${escapeForRegExp(homeDir)}/\\.cargo/bin`))
     assert.match(readFileSync(argsLog, 'utf8'), /--dangerously-bypass-approvals-and-sandbox --no-alt-screen/)
   } finally {
