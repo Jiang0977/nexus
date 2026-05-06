@@ -29,8 +29,47 @@ prefer_path_dir() {
   export PATH="$dir${reordered:+:$reordered}"
 }
 
+resolve_source_home() {
+  local override="${NEXUS_SOURCE_HOME:-}"
+  local user_name="${USER:-${LOGNAME:-}}"
+  local resolved_home="${HOME:-}"
+  local passwd_home=""
+
+  if [[ -n "$override" && -d "$override" ]]; then
+    printf '%s\n' "$override"
+    return 0
+  fi
+
+  if [[ -n "$user_name" ]] && command -v getent >/dev/null 2>&1; then
+    passwd_home="$(getent passwd "$user_name" 2>/dev/null | awk -F: 'NR == 1 { print $6 }')"
+    if [[ -n "$passwd_home" && -d "$passwd_home" ]]; then
+      printf '%s\n' "$passwd_home"
+      return 0
+    fi
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    passwd_home="$(python3 - <<'PY'
+import os
+import pwd
+
+try:
+    print(pwd.getpwuid(os.getuid()).pw_dir)
+except Exception:
+    pass
+PY
+)"
+    if [[ -n "$passwd_home" && -d "$passwd_home" ]]; then
+      printf '%s\n' "$passwd_home"
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "$resolved_home"
+}
+
 find_codex_bin_dir() {
-  local home_dir="${HOME:-}"
+  local home_dir="${1:-${HOME:-}}"
   local candidate=""
   local nvm_root=""
 
@@ -62,7 +101,8 @@ find_codex_bin_dir() {
 }
 
 ensure_codex_cli_on_path() {
-  local local_bin_dir="${HOME:-}/.local/bin"
+  local source_home="${1:-${HOME:-}}"
+  local local_bin_dir="${source_home}/.local/bin"
 
   if codex --version >/dev/null 2>&1; then
     prefer_path_dir "$local_bin_dir"
@@ -70,7 +110,7 @@ ensure_codex_cli_on_path() {
   fi
 
   local codex_bin_dir=""
-  codex_bin_dir="$(find_codex_bin_dir || true)"
+  codex_bin_dir="$(find_codex_bin_dir "$source_home" || true)"
   if [[ -n "$codex_bin_dir" ]]; then
     prepend_path_dir "$codex_bin_dir"
   fi

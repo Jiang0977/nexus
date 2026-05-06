@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const START_SCRIPT = readFileSync(join(ROOT, 'start.sh'), 'utf8')
 const NEXUS_PATHS_SCRIPT = readFileSync(join(ROOT, 'scripts', 'nexus-paths.sh'), 'utf8')
+const DEPLOY_SERVICE_SCRIPT = readFileSync(join(ROOT, 'scripts', 'deploy-nexus-service.sh'), 'utf8')
+const RESTART_SERVICE_SCRIPT = readFileSync(join(ROOT, 'scripts', 'restart-nexus-service.sh'), 'utf8')
 
 function createFakeRustServerScript(envFile) {
   return `#!/bin/sh
@@ -114,9 +116,82 @@ function runStartScript(fixture, envOverrides = {}) {
   })
 }
 
+function createDeployScriptFixture() {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'nexus-deploy-script-'))
+  const cargoLogFile = join(fixtureRoot, 'cargo.log')
+  const restartLogFile = join(fixtureRoot, 'restart.log')
+  const restartCountFile = join(fixtureRoot, 'restart-count')
+  const binDir = join(fixtureRoot, 'bin')
+  const scriptsDir = join(fixtureRoot, 'scripts')
+  const frontendDistDir = join(fixtureRoot, 'frontend', 'dist')
+  const releaseDir = join(fixtureRoot, 'rust-runtime', 'target', 'release')
+
+  mkdirSync(binDir, { recursive: true })
+  mkdirSync(scriptsDir, { recursive: true })
+  mkdirSync(frontendDistDir, { recursive: true })
+  mkdirSync(releaseDir, { recursive: true })
+  mkdirSync(join(fixtureRoot, 'rust-runtime'), { recursive: true })
+
+  writeFileSync(cargoLogFile, '', 'utf8')
+  writeFileSync(restartLogFile, '', 'utf8')
+  writeFileSync(join(fixtureRoot, 'scripts', 'deploy-nexus-service.sh'), DEPLOY_SERVICE_SCRIPT, { mode: 0o755 })
+  writeFileSync(join(frontendDistDir, 'index.html'), '<!doctype html><html><body>fixture</body></html>\n')
+  writeFileSync(join(fixtureRoot, 'rust-runtime', 'Cargo.toml'), '[package]\nname = "fixture"\nversion = "0.0.0"\n', 'utf8')
+
+  for (const binary of [
+    'nexus-server',
+    'nexus-task-runtime',
+    'nexus-pty-runtime',
+    'nexus-window-launch-runtime',
+    'nexus-session-runtime',
+  ]) {
+    writeFileSync(join(releaseDir, binary), `old-${binary}\n`, { mode: 0o755 })
+  }
+
+  writeExecutable(
+    join(binDir, 'cargo'),
+    `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> ${JSON.stringify(cargoLogFile)}
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--bin" ] && [ "$#" -ge 2 ]; then
+    shift
+    printf 'new-%s\\n' "$1" > "rust-runtime/target/release/$1"
+    chmod +x "rust-runtime/target/release/$1"
+  fi
+  shift
+done
+`,
+  )
+
+  return {
+    fixtureRoot,
+    cargoLogFile,
+    restartLogFile,
+    restartCountFile,
+    releaseDir,
+    scriptsDir,
+    binDir,
+  }
+}
+
+function runDeployScript(fixture, envOverrides = {}, args = []) {
+  return spawnSync('bash', ['./scripts/deploy-nexus-service.sh', ...args], {
+    cwd: fixture.fixtureRoot,
+    env: {
+      ...process.env,
+      PATH: `${fixture.binDir}:${process.env.PATH || ''}`,
+      ...envOverrides,
+    },
+    encoding: 'utf8',
+  })
+}
+
 test('package.json keeps rust startup scripts and declares browser regression tooling explicitly', () => {
   const packageJson = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
   assert.equal(packageJson.scripts.start, 'bash ./start.sh')
+  assert.equal(packageJson.scripts['deploy:service'], 'bash ./scripts/deploy-nexus-service.sh')
+  assert.equal(packageJson.scripts['restart:service'], 'bash ./scripts/restart-nexus-service.sh')
   assert.equal(packageJson.scripts.test, 'npm run test:rust && npm run test:node')
   assert.equal(packageJson.scripts['test:browser'], 'node --test tests/browserTerminalRegression.test.js')
   assert.equal(packageJson.scripts['test:rust'], 'cargo test --manifest-path rust-runtime/Cargo.toml')
@@ -218,6 +293,76 @@ test('nexus-run-codex.sh uses the rust codex home tool instead of a node materia
   assert.match(runCodexScript, /nexus-codex-home/)
   assert.doesNotMatch(runCodexScript, /materialize-codex-home\.mjs/)
   assert.doesNotMatch(runCodexScript, /node "\$\{SCRIPT_DIR\}\/scripts\/materialize-codex-home\.mjs"/)
+})
+
+test('restart helper uses non-interactive sudo and accepts auth-gated healthchecks', () => {
+  assert.match(RESTART_SERVICE_SCRIPT, /sudo -n systemctl restart "\$\{SERVICE_NAME\}"/)
+  assert.match(RESTART_SERVICE_SCRIPT, /sudo -n systemctl status "\$\{SERVICE_NAME\}" --no-pager/)
+  assert.match(RESTART_SERVICE_SCRIPT, /curl -s -o \/tmp\/nexus-healthcheck\.out -w '%\{http_code\}' --max-time 5/)
+  assert.match(RESTART_SERVICE_SCRIPT, /"\$\{http_code\}" != "200"/)
+  assert.match(RESTART_SERVICE_SCRIPT, /"\$\{http_code\}" != "401"/)
+})
+
+test('deploy helper builds release binaries and invokes the configured restart helper', () => {
+  const fixture = createDeployScriptFixture()
+  writeExecutable(
+    join(fixture.scriptsDir, 'fake-restart.sh'),
+    `#!/bin/sh
+set -eu
+printf 'restart-ok\\n' >> ${JSON.stringify(fixture.restartLogFile)}
+`,
+  )
+
+  try {
+    const result = runDeployScript(fixture, {
+      NEXUS_RESTART_HELPER: './scripts/fake-restart.sh',
+    })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.match(result.stdout, /\[Nexus\] Building release binaries/)
+    assert.match(result.stdout, /\[Nexus\] Deploy complete\./)
+
+    const cargoLog = readFileSync(fixture.cargoLogFile, 'utf8')
+    assert.match(cargoLog, /--manifest-path rust-runtime\/Cargo.toml --release/)
+    assert.match(cargoLog, /--bin nexus-server/)
+    assert.match(cargoLog, /--bin nexus-session-runtime/)
+    assert.equal(readFileSync(join(fixture.releaseDir, 'nexus-server'), 'utf8'), 'new-nexus-server\n')
+    assert.equal(readFileSync(fixture.restartLogFile, 'utf8'), 'restart-ok\n')
+  } finally {
+    rmSync(fixture.fixtureRoot, { recursive: true, force: true })
+  }
+})
+
+test('deploy helper restores the previous release binaries when restart fails', () => {
+  const fixture = createDeployScriptFixture()
+  writeExecutable(
+    join(fixture.scriptsDir, 'fake-restart.sh'),
+    `#!/bin/sh
+set -eu
+count=0
+if [ -f ${JSON.stringify(fixture.restartCountFile)} ]; then
+  count="$(cat ${JSON.stringify(fixture.restartCountFile)})"
+fi
+count=$((count + 1))
+printf '%s' "$count" > ${JSON.stringify(fixture.restartCountFile)}
+printf 'attempt=%s\\n' "$count" >> ${JSON.stringify(fixture.restartLogFile)}
+if [ "$count" -eq 1 ]; then
+  exit 1
+fi
+`,
+  )
+
+  try {
+    const result = runDeployScript(fixture, {
+      NEXUS_RESTART_HELPER: './scripts/fake-restart.sh',
+    })
+    assert.equal(result.status, 1, result.stderr || result.stdout)
+    assert.match(result.stderr, /Deploy restart failed; restoring previous release binaries/)
+    assert.match(result.stderr, /Rollback completed\./)
+    assert.equal(readFileSync(join(fixture.releaseDir, 'nexus-server'), 'utf8'), 'old-nexus-server\n')
+    assert.equal(readFileSync(fixture.restartLogFile, 'utf8'), 'attempt=1\nattempt=2\n')
+  } finally {
+    rmSync(fixture.fixtureRoot, { recursive: true, force: true })
+  }
 })
 
 test('start.sh defaults to rust nexus-server and wires runtime executables without invoking npm when release binaries already exist', () => {

@@ -6,7 +6,6 @@ set -e
 
 PROFILE="$1"
 PROJECT="$2"
-SOURCE_HOME="${HOME:-}"
 
 if [ -z "$PROFILE" ] || [ -z "$PROJECT" ]; then
     echo "[Nexus] Usage: nexus-run-claude.sh <profile> <project_path>"
@@ -15,6 +14,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/scripts/nexus-paths.sh"
+SOURCE_HOME="$(resolve_source_home)"
 ensure_rust_toolchain_on_path "${SOURCE_HOME}"
 CONFIG_FILE="${SCRIPT_DIR}/data/configs/${PROFILE}.json"
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -27,11 +27,12 @@ cfg() {
     python3 -c "import json; d=json.load(open('${CONFIG_FILE}')); print(d.get('$1',''))"
 }
 
-materialize_claude_hook_settings() {
+materialize_claude_runtime_settings() {
     local source_home="$1"
     local runtime_root="$2"
     local window_id=""
     local safe_window_id=""
+    local runtime_dir=""
     local settings_path=""
 
     if [ -z "$source_home" ]; then
@@ -43,35 +44,65 @@ materialize_claude_hook_settings() {
         window_id="window-$$"
     fi
     safe_window_id="$(printf '%s' "$window_id" | sed 's/[^a-zA-Z0-9._-]/-/g')"
-    settings_path="${runtime_root}/${safe_window_id}/settings.json"
+    runtime_dir="${runtime_root}/${safe_window_id}"
+    settings_path="${runtime_dir}/settings.json"
 
+    mkdir -p "$runtime_dir"
+
+    NEXUS_PROFILE_BASE_URL="$BASE_URL" \
+    NEXUS_PROFILE_AUTH_TOKEN="$AUTH_TOKEN" \
+    NEXUS_PROFILE_API_KEY="$API_KEY" \
+    NEXUS_PROFILE_DEFAULT_MODEL="$DEFAULT_MODEL" \
+    NEXUS_PROFILE_DEFAULT_HAIKU_MODEL="$DEFAULT_HAIKU_MODEL" \
+    NEXUS_PROFILE_THINK_MODEL="$THINK_MODEL" \
+    NEXUS_PROFILE_LONG_CONTEXT_MODEL="$LONG_CONTEXT_MODEL" \
+    NEXUS_PROFILE_API_TIMEOUT_MS="$API_TIMEOUT_MS" \
     python3 - "$source_home" "$settings_path" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
 source_home, settings_path = sys.argv[1:3]
-source_settings = pathlib.Path(source_home) / ".claude" / "settings.json"
+source_claude_dir = pathlib.Path(source_home) / ".claude"
+source_settings = source_claude_dir / "settings.json"
 target_settings = pathlib.Path(settings_path)
+safe_setting_keys = (
+    "enabledPlugins",
+    "extraKnownMarketplaces",
+    "hooks",
+)
+profile_env = {
+    "ANTHROPIC_BASE_URL": os.environ.get("NEXUS_PROFILE_BASE_URL", ""),
+    "ANTHROPIC_AUTH_TOKEN": os.environ.get("NEXUS_PROFILE_AUTH_TOKEN", ""),
+    "ANTHROPIC_API_KEY": os.environ.get("NEXUS_PROFILE_API_KEY", ""),
+    "ANTHROPIC_MODEL": os.environ.get("NEXUS_PROFILE_DEFAULT_MODEL", ""),
+    "ANTHROPIC_SMALL_FAST_MODEL": os.environ.get("NEXUS_PROFILE_DEFAULT_MODEL", ""),
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": os.environ.get("NEXUS_PROFILE_DEFAULT_MODEL", ""),
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": os.environ.get("NEXUS_PROFILE_DEFAULT_MODEL", ""),
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": os.environ.get("NEXUS_PROFILE_DEFAULT_HAIKU_MODEL", ""),
+    "ANTHROPIC_THINK_MODEL": os.environ.get("NEXUS_PROFILE_THINK_MODEL", ""),
+    "ANTHROPIC_LONG_CONTEXT_MODEL": os.environ.get("NEXUS_PROFILE_LONG_CONTEXT_MODEL", ""),
+    "API_TIMEOUT_MS": os.environ.get("NEXUS_PROFILE_API_TIMEOUT_MS", ""),
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+}
 
 try:
     data = json.loads(source_settings.read_text(encoding="utf-8"))
 except FileNotFoundError:
-    target_settings.unlink(missing_ok=True)
-    sys.exit(0)
+    data = {}
 except Exception as error:
     print(f"[Nexus] Warning: failed to parse {source_settings}: {error}", file=sys.stderr)
-    target_settings.unlink(missing_ok=True)
-    sys.exit(0)
+    data = {}
 
-hooks = data.get("hooks")
-if not hooks:
-    target_settings.unlink(missing_ok=True)
-    sys.exit(0)
-
-target_settings.parent.mkdir(parents=True, exist_ok=True)
+sanitized_settings = {
+    key: data[key]
+    for key in safe_setting_keys
+    if data.get(key)
+}
+sanitized_settings["env"] = profile_env
 target_settings.write_text(
-    json.dumps({"hooks": hooks}, ensure_ascii=False, indent=2) + "\n",
+    json.dumps(sanitized_settings, ensure_ascii=False, indent=2) + "\n",
     encoding="utf-8",
 )
 print(target_settings)
@@ -91,6 +122,7 @@ LABEL=$(cfg label)
 # ── 导出所有环境变量 ──
 export LANG="C.UTF-8"
 export LC_ALL="C.UTF-8"
+export HOME="${SOURCE_HOME}"
 
 # 仅当配置项非空时才设置（使用官方 API 时这些可以为空）
 if [ -n "$BASE_URL" ]; then
@@ -136,13 +168,11 @@ unset _proxy
 cd "$PROJECT"
 
 declare -a CLAUDE_LAUNCH_ARGS
-CLAUDE_LAUNCH_ARGS=(--dangerously-skip-permissions --setting-sources project,local)
+CLAUDE_LAUNCH_ARGS=(--dangerously-skip-permissions)
 CLAUDE_RUNTIME_ROOT="${NEXUS_CLAUDE_RUNTIME_DIR:-${SCRIPT_DIR}/data/claude-runtime}"
-CLAUDE_HOOK_SETTINGS_FILE="$(materialize_claude_hook_settings "$SOURCE_HOME" "$CLAUDE_RUNTIME_ROOT" || true)"
-if [ -n "$CLAUDE_HOOK_SETTINGS_FILE" ]; then
-    # Keep user-level hooks such as RTK, but do not re-import user env that can
-    # override the selected Nexus profile provider.
-    CLAUDE_LAUNCH_ARGS+=(--settings "$CLAUDE_HOOK_SETTINGS_FILE")
+CLAUDE_RUNTIME_SETTINGS_FILE="$(materialize_claude_runtime_settings "$SOURCE_HOME" "$CLAUDE_RUNTIME_ROOT" || true)"
+if [ -n "$CLAUDE_RUNTIME_SETTINGS_FILE" ]; then
+    CLAUDE_LAUNCH_ARGS+=(--settings "$CLAUDE_RUNTIME_SETTINGS_FILE")
 fi
 
 echo ""
@@ -164,9 +194,6 @@ echo ""
 
 # ── 主循环：退出后提示续接 ──
 while true; do
-    # Profile windows must not inherit user-level ~/.claude/settings.json env.
-    # Claude Code 2.1.x gives settings env higher priority than process env,
-    # which can mix the selected Nexus profile with the globally active provider.
     claude "${CLAUDE_LAUNCH_ARGS[@]}" || true
     echo ""
     echo "[Nexus] Claude exited.  r=restart  b=bash shell  q=quit window"

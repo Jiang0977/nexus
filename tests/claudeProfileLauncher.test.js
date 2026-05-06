@@ -8,26 +8,47 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
-test('profile Claude launcher excludes user settings so selected profile env wins', { skip: process.platform === 'win32' }, () => {
+test('profile Claude launcher materializes profile env overrides without dropping the real user home', { skip: process.platform === 'win32' }, () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'nexus-claude-profile-launcher-'))
   const fakeBinDir = join(tempDir, 'bin')
   const homeDir = join(tempDir, 'home')
+  const pollutedHome = join(tempDir, 'runtime-home')
   const projectDir = join(tempDir, 'project')
   const runtimeDir = join(tempDir, 'claude-runtime')
   const argsLog = join(tempDir, 'claude-args.log')
   const envLog = join(tempDir, 'claude-env.log')
   const settingsSnapshot = join(tempDir, 'claude-settings.json')
+  const settingsPathLog = join(tempDir, 'claude-settings-path.log')
 
   try {
     mkdirSync(fakeBinDir, { recursive: true })
     mkdirSync(join(homeDir, '.cargo', 'bin'), { recursive: true })
     mkdirSync(join(homeDir, '.rustup'), { recursive: true })
-    mkdirSync(join(homeDir, '.claude'), { recursive: true })
+    mkdirSync(pollutedHome, { recursive: true })
+    mkdirSync(join(homeDir, '.claude', 'skills', 'my-custom-skill'), { recursive: true })
+    mkdirSync(join(homeDir, '.claude', 'plugins'), { recursive: true })
+    mkdirSync(join(homeDir, '.claude', 'hooks'), { recursive: true })
     mkdirSync(projectDir, { recursive: true })
     writeFileSync(join(homeDir, '.cargo', 'bin', 'cargo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    writeFileSync(join(homeDir, '.claude', 'CLAUDE.md'), '# global claude\n', 'utf8')
+    writeFileSync(join(homeDir, '.claude', 'RTK.md'), '# global rtk\n', 'utf8')
+    writeFileSync(join(homeDir, '.claude', 'hooks', 'rtk-rewrite.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    writeFileSync(join(homeDir, '.claude', 'skills', 'my-custom-skill', 'SKILL.md'), '# custom skill\n', 'utf8')
+    writeFileSync(join(homeDir, '.claude', 'plugins', 'installed_plugins.json'), '{"plugins":["openai-codex"]}\n', 'utf8')
     writeFileSync(join(homeDir, '.claude', 'settings.json'), JSON.stringify({
       env: {
         ANTHROPIC_BASE_URL: 'https://user.example.com',
+      },
+      enabledPlugins: {
+        'openai-codex@marketplace': true,
+      },
+      extraKnownMarketplaces: {
+        'openai-codex': {
+          source: {
+            source: 'github',
+            repo: 'openai/codex-plugin-cc',
+          },
+        },
       },
       hooks: {
         PreToolUse: [
@@ -48,16 +69,17 @@ printf '%s\\n' "$*" > "${argsLog}"
 settings_path=""
 prev=""
 for arg in "$@"; do
-  if [ "$prev" = "--settings" ]; then
+if [ "$prev" = "--settings" ]; then
     settings_path="$arg"
     break
   fi
   prev="$arg"
 done
 if [ -n "$settings_path" ]; then
+  printf '%s\\n' "$settings_path" > "${settingsPathLog}"
   cp "$settings_path" "${settingsSnapshot}"
 fi
-printf 'CARGO_HOME=%s\\nRUSTUP_HOME=%s\\nPATH=%s\\n' "$CARGO_HOME" "$RUSTUP_HOME" "$PATH" > "${envLog}"
+printf 'HOME=%s\\nCARGO_HOME=%s\\nRUSTUP_HOME=%s\\nPATH=%s\\n' "$HOME" "$CARGO_HOME" "$RUSTUP_HOME" "$PATH" > "${envLog}"
 exit 0
 `, { mode: 0o755 })
 
@@ -65,7 +87,8 @@ exit 0
       cwd: ROOT,
       env: {
         ...process.env,
-        HOME: homeDir,
+        HOME: pollutedHome,
+        NEXUS_SOURCE_HOME: homeDir,
         PATH: `${fakeBinDir}:/usr/bin:/bin`,
         CARGO_HOME: '',
         NEXUS_CLAUDE_RUNTIME_DIR: runtimeDir,
@@ -78,10 +101,35 @@ exit 0
 
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const argsText = readFileSync(argsLog, 'utf8')
-    assert.match(argsText, /--setting-sources project,local/)
     assert.match(argsText, /--settings /)
+    assert.doesNotMatch(argsText, /--setting-sources/)
     const launcherSettings = JSON.parse(readFileSync(settingsSnapshot, 'utf8'))
     assert.deepEqual(launcherSettings, {
+      env: {
+        ANTHROPIC_BASE_URL: '',
+        ANTHROPIC_AUTH_TOKEN: '',
+        ANTHROPIC_API_KEY: '',
+        ANTHROPIC_MODEL: '',
+        ANTHROPIC_SMALL_FAST_MODEL: '',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: '',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: '',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: '',
+        ANTHROPIC_THINK_MODEL: '',
+        ANTHROPIC_LONG_CONTEXT_MODEL: '',
+        API_TIMEOUT_MS: '3000000',
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      },
+      enabledPlugins: {
+        'openai-codex@marketplace': true,
+      },
+      extraKnownMarketplaces: {
+        'openai-codex': {
+          source: {
+            source: 'github',
+            repo: 'openai/codex-plugin-cc',
+          },
+        },
+      },
       hooks: {
         PreToolUse: [
           {
@@ -96,7 +144,11 @@ exit 0
         ],
       },
     })
+    const runtimeSettingsPath = readFileSync(settingsPathLog, 'utf8').trim()
+    assert.match(runtimeSettingsPath, new RegExp(`^${runtimeDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`))
+    assert.doesNotMatch(readFileSync(settingsSnapshot, 'utf8'), /user\.example\.com/)
     const launcherEnv = readFileSync(envLog, 'utf8')
+    assert.match(launcherEnv, new RegExp(`HOME=${homeDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
     assert.match(launcherEnv, new RegExp(`CARGO_HOME=${homeDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.cargo`))
     assert.match(launcherEnv, new RegExp(`RUSTUP_HOME=${homeDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.rustup`))
     assert.match(launcherEnv, new RegExp(`PATH=${homeDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.cargo/bin:`))

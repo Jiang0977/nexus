@@ -7,7 +7,6 @@ set -euo pipefail
 PROFILE="${1:-}"
 PROJECT="${2:-}"
 RESUME_SESSION_ID="${3:-}"
-SOURCE_HOME="${HOME:-}"
 
 if [ -z "$PROJECT" ]; then
     echo "[Nexus] Usage: nexus-run-codex.sh <profile?> <project_path> <resume_session_id?>"
@@ -16,7 +15,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/scripts/nexus-paths.sh"
-ensure_codex_cli_on_path
+SOURCE_HOME="$(resolve_source_home)"
+ensure_codex_cli_on_path "${SOURCE_HOME}"
 ensure_rust_toolchain_on_path "${SOURCE_HOME}"
 DEFAULT_CODEX_HOME_EXECUTABLE="${SCRIPT_DIR}/rust-runtime/target/release/nexus-codex-home"
 CODEX_HOME_EXECUTABLE="${NEXUS_CODEX_HOME_EXECUTABLE:-$DEFAULT_CODEX_HOME_EXECUTABLE}"
@@ -45,7 +45,7 @@ if [ ! -x "$CODEX_HOME_EXECUTABLE" ]; then
     echo "[Nexus] Rust codex home tool 不可执行: ${CODEX_HOME_EXECUTABLE}"
     exit 1
 fi
-"${CODEX_HOME_EXECUTABLE}" "${CONFIG_FILE}" "${runtime_home}" "${PROJECT}"
+HOME="${SOURCE_HOME}" "${CODEX_HOME_EXECUTABLE}" "${CONFIG_FILE}" "${runtime_home}" "${PROJECT}"
 
 export HOME="${runtime_home}"
 export LANG="C.UTF-8"
