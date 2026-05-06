@@ -50,6 +50,11 @@ HOME="${SOURCE_HOME}" "${CODEX_HOME_EXECUTABLE}" "${CONFIG_FILE}" "${runtime_hom
 export HOME="${runtime_home}"
 export LANG="C.UTF-8"
 export LC_ALL="C.UTF-8"
+if [ -n "$SOURCE_HOME" ]; then
+    # Preserve host CLI auth while keeping Codex state isolated under runtime_home.
+    export GH_CONFIG_DIR="${SOURCE_HOME}/.config/gh"
+    export SVN_CONFIG_DIR="${SOURCE_HOME}/.subversion"
+fi
 
 # 代理变量：优先使用 NEXUS_PROXY（nexus-server 注入），其次继承环境
 _proxy="${NEXUS_PROXY:-${HTTP_PROXY:-}}"
