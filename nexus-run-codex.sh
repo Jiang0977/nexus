@@ -49,6 +49,15 @@ if [ ! -x "$CODEX_HOME_EXECUTABLE" ]; then
 fi
 HOME="${SOURCE_HOME}" "${CODEX_HOME_EXECUTABLE}" "${CONFIG_FILE}" "${runtime_home}" "${PROJECT}"
 
+source_skills="${SOURCE_HOME}/.codex/skills"
+runtime_skills="${runtime_home}/.codex/skills"
+if [ -d "$source_skills" ] && [ ! -e "$runtime_skills" ] && [ ! -L "$runtime_skills" ]; then
+    ln -s "$source_skills" "$runtime_skills"
+elif [ -d "$source_skills" ] && [ -L "$runtime_skills" ] && [ "$(readlink "$runtime_skills")" != "$source_skills" ]; then
+    rm -f "$runtime_skills"
+    ln -s "$source_skills" "$runtime_skills"
+fi
+
 export LANG="C.UTF-8"
 export LC_ALL="C.UTF-8"
 
