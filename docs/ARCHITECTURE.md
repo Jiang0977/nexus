@@ -150,12 +150,13 @@ bash start.sh
 | `data/configs/` | Claude profile |
 | `data/codex-configs/` | Codex profile |
 | `data/uploads/` | 上传文件 |
-| `data/codex-runtime/` | Codex runtime 辅助数据 |
+| `data/codex-runtime/` | Codex profile channel 的隔离 HOME；`.codex/skills` 等共享状态应链接回真实 `~/.codex` |
 
 事实源说明：
 
 - tmux 是交互会话事实源
-- `~/.codex` 是共享 Codex 历史事实源
+- `~/.codex` 是共享 Codex 历史与 skills 事实源
+- `nexus-codex-home` 负责物化 Codex 隔离 HOME；部署链必须构建它，否则 profile channel 可能拿到旧的 `.codex` 物化逻辑
 - `data/` 主要保存配置和任务历史，不是业务数据库
 
 ## 运维现实

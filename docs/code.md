@@ -80,7 +80,7 @@
 | `rust-runtime/src/bin/nexus-window-launch-runtime.rs` | 新建窗口和 shell 启动 |
 | `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / broker |
 | `rust-runtime/src/bin/nexus-task-runtime.rs` | task 执行协议 |
-| `rust-runtime/src/bin/nexus-codex-home.rs` | Codex 隔离 home |
+| `rust-runtime/src/bin/nexus-codex-home.rs` | Codex 隔离 HOME 物化；把共享 history/skills/plugins 等状态链接进 runtime HOME |
 | `rust-runtime/src/bin/nexus-setup.rs` | `.env` + systemd + tmux bootstrap |
 
 ## 当前前端现实
