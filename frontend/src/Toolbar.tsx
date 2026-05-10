@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, RefObject } from 'react'
+import { useState, useRef, useEffect, useId, type ChangeEvent, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 import GhostShield from './GhostShield'
@@ -104,6 +104,9 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
   const pasteBoxRef   = useRef<HTMLTextAreaElement>(null)
   const pasteFileRef  = useRef<HTMLInputElement>(null)
   const fileInputRef  = useRef<HTMLInputElement>(null)
+  const uploadInputIdPrefix = useId()
+  const mediaInputId = `${uploadInputIdPrefix}-media`
+  const genericFileInputId = `${uploadInputIdPrefix}-file`
   const [drag, setDrag]               = useState<DragState | null>(null)
   const [savedFlash, setSavedFlash]   = useState(false)
   const [showQuickMenu, setShowQuickMenu] = useState(false)
@@ -124,6 +127,17 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
 
   function reportToolbarError(message: string, error: unknown, extra?: Record<string, unknown>) {
     console.error(`[Toolbar] ${message}`, { error, ...extra })
+  }
+
+  function closeUploadMenuAfterPickerGesture() {
+    window.setTimeout(() => setShowUploadMenu(false), 0)
+  }
+
+  function handleUploadInputChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file && onUploadFile) { onUploadFile(file) }
+    setShowUploadMenu(false)
+    e.target.value = ''
   }
 
   // 检测 PC/移动端
@@ -162,6 +176,7 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
     const el = rootRef.current
     if (!el) return
     const prevent = (e: TouchEvent) => {
+      if (e.target instanceof Element && e.target.closest('[data-native-file-picker="true"]')) return
       if (editScrollRef.current?.contains(e.target as Node)) return
       e.preventDefault()
     }
@@ -506,26 +521,22 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
   const fileInputsEl = (
     <>
       <input
+        id={mediaInputId}
         ref={fileInputRef}
         type="file"
-        accept="image/*,video/*"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file && onUploadFile) { onUploadFile(file) }
-          e.target.value = ''
-        }}
+        accept="image/*"
+        className={visuallyHiddenFileInputClass}
+        data-native-file-picker="true"
+        onChange={handleUploadInputChange}
       />
       <input
+        id={genericFileInputId}
         ref={pasteFileRef}
         type="file"
         accept="*/*"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file && onUploadFile) { onUploadFile(file) }
-          e.target.value = ''
-        }}
+        className={visuallyHiddenFileInputClass}
+        data-native-file-picker="true"
+        onChange={handleUploadInputChange}
       />
     </>
   )
@@ -656,17 +667,16 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
           </button>
           {showUploadMenu && createPortal(
             <>
-              <GhostShield />
               <div className="fixed inset-0 z-[300]" onPointerDown={() => setShowUploadMenu(false)} />
               <div className="fixed bg-nexus-menu-bg border border-nexus-border rounded-lg py-1 min-w-[120px] z-[400] shadow-[0_4px_16px_rgba(0,0,0,0.3)]" style={{ bottom: uploadMenuPos.bottom, right: uploadMenuPos.right }}>
-                <button className={quickMenuItemClass} onPointerDown={(e) => { e.preventDefault(); fileInputRef.current?.click(); setShowUploadMenu(false) }}>
+                <label className={quickMenuItemClass} htmlFor={mediaInputId} onClick={closeUploadMenuAfterPickerGesture}>
                   <Icon name="image" size={16} />
                   <span>{t('toolbar.photos')}</span>
-                </button>
-                <button className={quickMenuItemClass} onPointerDown={(e) => { e.preventDefault(); pasteFileRef.current?.click(); setShowUploadMenu(false) }}>
+                </label>
+                <label className={quickMenuItemClass} htmlFor={genericFileInputId} onClick={closeUploadMenuAfterPickerGesture}>
                   <Icon name="folder" size={16} />
                   <span>{t('toolbar.files')}</span>
-                </button>
+                </label>
               </div>
             </>,
             document.body
@@ -723,37 +733,36 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
             <Icon name="folder" size={18} />
           </button>
         )}
-        <button
-          className={iconBtnClass}
-          onPointerDown={(e) => {
-            e.preventDefault()
-            if (!showUploadMenu) {
-              const tbH = rootRef.current?.offsetHeight ?? 56
-              setUploadMenuPos({ bottom: tbH + 4, right: 44 })
-            }
-            setShowUploadMenu(v => !v)
-          }}
+        <span
+          className={`${iconBtnClass} relative overflow-hidden`}
+          data-native-file-picker="true"
           title={t('toolbar.pasteUpload')}
         >
           <Icon name="paperclip" size={18} />
-        </button>
-        {showUploadMenu && createPortal(
-          <>
-            <GhostShield />
-            <div className="fixed inset-0 z-[300]" onPointerDown={() => setShowUploadMenu(false)} />
-            <div className="fixed bg-nexus-menu-bg border border-nexus-border rounded-lg py-1 min-w-[120px] z-[400] shadow-[0_-4px_16px_rgba(0,0,0,0.3)]" style={{ bottom: uploadMenuPos.bottom, right: uploadMenuPos.right }}>
-              <button className={quickMenuItemClass} onPointerDown={(e) => { e.preventDefault(); fileInputRef.current?.click(); setShowUploadMenu(false) }}>
-                <Icon name="image" size={16} />
-                <span>{t('toolbar.photos')}</span>
-              </button>
-              <button className={quickMenuItemClass} onPointerDown={(e) => { e.preventDefault(); pasteFileRef.current?.click(); setShowUploadMenu(false) }}>
-                <Icon name="folder" size={16} />
-                <span>{t('toolbar.files')}</span>
-              </button>
-            </div>
-          </>,
-          document.body
-        )}
+          <input
+            type="file"
+            accept="image/*"
+            className={nativeFileInputOverlayClass}
+            data-native-file-picker="true"
+            aria-label={t('toolbar.pasteUpload')}
+            onChange={handleUploadInputChange}
+          />
+        </span>
+        <span
+          className={`${iconBtnClass} relative overflow-hidden`}
+          data-native-file-picker="true"
+          title={t('toolbar.files')}
+        >
+          <Icon name="file" size={18} />
+          <input
+            type="file"
+            accept="*/*"
+            className={nativeFileInputOverlayClass}
+            data-native-file-picker="true"
+            aria-label={t('toolbar.files')}
+            onChange={handleUploadInputChange}
+          />
+        </span>
         {/* quick menu */}
         <div className="relative">
           <button
@@ -848,6 +857,8 @@ const actionKeyEmbeddedClass = 'bg-nexus-bg-2 border border-nexus-border rounded
 const iconBtnClass = 'bg-transparent border-none text-nexus-text-2 cursor-pointer text-sm py-1 px-2 rounded flex items-center justify-center transition-all duration-100 active:scale-90 active:text-nexus-text active:bg-nexus-bg-2'
 const iconBtnPCClass = 'bg-transparent border-none text-nexus-text-2 cursor-pointer text-[13px] py-[3px] px-1.5 rounded flex-shrink-0 flex items-center justify-center transition-all duration-100 active:scale-90 active:text-nexus-text active:bg-nexus-bg-2'
 const quickMenuItemClass = 'flex items-center gap-2.5 bg-transparent border-none text-nexus-text cursor-pointer text-sm py-2.5 px-3.5 w-full text-left touch-manipulation transition-all duration-100 active:bg-nexus-bg-2 active:pl-4'
+const visuallyHiddenFileInputClass = 'fixed top-0 left-0 w-px h-px opacity-[0.01] pointer-events-none -z-10'
+const nativeFileInputOverlayClass = 'absolute inset-0 h-full w-full cursor-pointer opacity-0'
 const editBtnSmClass = 'bg-transparent border border-nexus-border rounded text-nexus-text-2 cursor-pointer text-xs py-1 px-2.5 transition-all duration-100 active:scale-95 active:bg-nexus-bg-2'
 const editBtnSmPCClass = 'bg-transparent border border-nexus-border rounded text-nexus-text-2 cursor-pointer text-[13px] py-1.5 px-3.5 transition-all duration-100 active:scale-95 active:bg-nexus-bg-2'
 const editBtnPrimaryClass = 'bg-nexus-accent border-none rounded text-white cursor-pointer text-xs font-semibold py-1 px-3 transition-all duration-100 active:scale-95 active:bg-blue-600'
