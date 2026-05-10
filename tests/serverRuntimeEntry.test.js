@@ -144,6 +144,7 @@ function createDeployScriptFixture() {
     'nexus-pty-runtime',
     'nexus-window-launch-runtime',
     'nexus-session-runtime',
+    'nexus-codex-home',
   ]) {
     writeFileSync(join(releaseDir, binary), `old-${binary}\n`, { mode: 0o755 })
   }
@@ -325,7 +326,9 @@ printf 'restart-ok\\n' >> ${JSON.stringify(fixture.restartLogFile)}
     assert.match(cargoLog, /--manifest-path rust-runtime\/Cargo.toml --release/)
     assert.match(cargoLog, /--bin nexus-server/)
     assert.match(cargoLog, /--bin nexus-session-runtime/)
+    assert.match(cargoLog, /--bin nexus-codex-home/)
     assert.equal(readFileSync(join(fixture.releaseDir, 'nexus-server'), 'utf8'), 'new-nexus-server\n')
+    assert.equal(readFileSync(join(fixture.releaseDir, 'nexus-codex-home'), 'utf8'), 'new-nexus-codex-home\n')
     assert.equal(readFileSync(fixture.restartLogFile, 'utf8'), 'restart-ok\n')
   } finally {
     rmSync(fixture.fixtureRoot, { recursive: true, force: true })
@@ -372,12 +375,14 @@ test('start.sh defaults to rust nexus-server and wires runtime executables witho
   const defaultPtyRuntime = join(fixture.releaseDir, 'nexus-pty-runtime')
   const defaultWindowLaunchRuntime = join(fixture.releaseDir, 'nexus-window-launch-runtime')
   const defaultSessionRuntime = join(fixture.releaseDir, 'nexus-session-runtime')
+  const defaultCodexHomeRuntime = join(fixture.releaseDir, 'nexus-codex-home')
 
   writeExecutable(defaultServer, createFakeRustServerScript(fixture.serverEnvFile))
   writeExecutable(defaultTaskRuntime)
   writeExecutable(defaultPtyRuntime)
   writeExecutable(defaultWindowLaunchRuntime)
   writeExecutable(defaultSessionRuntime)
+  writeExecutable(defaultCodexHomeRuntime)
 
   try {
     const result = runStartScript(fixture)
@@ -414,7 +419,7 @@ test('start.sh builds missing rust release binaries before launching the default
       .split('\n')
       .filter(Boolean)
     assert.equal(cargoCommands.length, 2)
-    assert.match(cargoCommands[0], /build --manifest-path rust-runtime\/Cargo\.toml --release --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime/)
+    assert.match(cargoCommands[0], /build --manifest-path rust-runtime\/Cargo\.toml --release --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home/)
     assert.match(cargoCommands[1], /build --manifest-path rust-runtime\/Cargo\.toml --release --bin nexus-server/)
 
     const serverEnv = parseEnvDump(fixture.serverEnvFile)

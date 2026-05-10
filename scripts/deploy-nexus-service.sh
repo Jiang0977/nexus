@@ -43,6 +43,7 @@ declare -a RELEASE_BINS=(
     "rust-runtime/target/release/nexus-pty-runtime"
     "rust-runtime/target/release/nexus-window-launch-runtime"
     "rust-runtime/target/release/nexus-session-runtime"
+    "rust-runtime/target/release/nexus-codex-home"
 )
 
 BACKUP_DIR="$(mktemp -d /tmp/nexus-deploy-backup.XXXXXX)"
@@ -103,7 +104,8 @@ echo "[Nexus] Building release binaries..."
     --bin nexus-task-runtime \
     --bin nexus-pty-runtime \
     --bin nexus-window-launch-runtime \
-    --bin nexus-session-runtime
+    --bin nexus-session-runtime \
+    --bin nexus-codex-home
 
 echo "[Nexus] Restarting deployed service..."
 if run_restart_helper; then

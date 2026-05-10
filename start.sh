@@ -119,11 +119,13 @@ DEFAULT_TASK_RUNTIME="$SCRIPT_DIR/rust-runtime/target/release/nexus-task-runtime
 DEFAULT_PTY_RUNTIME="$SCRIPT_DIR/rust-runtime/target/release/nexus-pty-runtime"
 DEFAULT_WINDOW_LAUNCH_RUNTIME="$SCRIPT_DIR/rust-runtime/target/release/nexus-window-launch-runtime"
 DEFAULT_SESSION_MANAGEMENT_RUNTIME="$SCRIPT_DIR/rust-runtime/target/release/nexus-session-runtime"
+DEFAULT_CODEX_HOME_RUNTIME="$SCRIPT_DIR/rust-runtime/target/release/nexus-codex-home"
 DEFAULT_RUST_SERVER_EXECUTABLE="$SCRIPT_DIR/rust-runtime/target/release/nexus-server"
 NEED_TASK_RUNTIME=0
 NEED_PTY_RUNTIME=0
 NEED_WINDOW_LAUNCH_RUNTIME=0
 NEED_SESSION_MANAGEMENT_RUNTIME=0
+NEED_CODEX_HOME_RUNTIME=0
 NEED_RUST_SERVER=0
 
 if [ -z "$SERVER_EXECUTABLE" ]; then
@@ -150,17 +152,21 @@ if [ -n "$SERVER_EXECUTABLE" ]; then
         SESSION_MANAGEMENT_RUST_EXECUTABLE="$DEFAULT_SESSION_MANAGEMENT_RUNTIME"
         mark_default_bin_rebuild_if_needed "$DEFAULT_SESSION_MANAGEMENT_RUNTIME" NEED_SESSION_MANAGEMENT_RUNTIME
     fi
+
+    if [ -z "${NEXUS_CODEX_HOME_EXECUTABLE:-}" ]; then
+        mark_default_bin_rebuild_if_needed "$DEFAULT_CODEX_HOME_RUNTIME" NEED_CODEX_HOME_RUNTIME
+    fi
 fi
 
 if [ -n "$SERVER_EXECUTABLE" ] && [ "$SERVER_EXECUTABLE" = "$DEFAULT_RUST_SERVER_EXECUTABLE" ]; then
     mark_default_bin_rebuild_if_needed "$DEFAULT_RUST_SERVER_EXECUTABLE" NEED_RUST_SERVER
 fi
 
-NEED_RUST_RUNTIME_COUNT=$((NEED_TASK_RUNTIME + NEED_PTY_RUNTIME + NEED_WINDOW_LAUNCH_RUNTIME + NEED_SESSION_MANAGEMENT_RUNTIME))
+NEED_RUST_RUNTIME_COUNT=$((NEED_TASK_RUNTIME + NEED_PTY_RUNTIME + NEED_WINDOW_LAUNCH_RUNTIME + NEED_SESSION_MANAGEMENT_RUNTIME + NEED_CODEX_HOME_RUNTIME))
 
 if [ "$NEED_RUST_RUNTIME_COUNT" -gt 1 ]; then
     echo "构建 Rust runtimes..."
-    build_rust_release_bins --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime
+    build_rust_release_bins --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
 elif [ "$NEED_TASK_RUNTIME" -eq 1 ]; then
     echo "构建 Rust task runtime..."
     build_rust_release_bins --bin nexus-task-runtime
@@ -173,6 +179,9 @@ elif [ "$NEED_WINDOW_LAUNCH_RUNTIME" -eq 1 ]; then
 elif [ "$NEED_SESSION_MANAGEMENT_RUNTIME" -eq 1 ]; then
     echo "构建 Rust session management runtime..."
     build_rust_release_bins --bin nexus-session-runtime
+elif [ "$NEED_CODEX_HOME_RUNTIME" -eq 1 ]; then
+    echo "构建 Rust codex home runtime..."
+    build_rust_release_bins --bin nexus-codex-home
 fi
 
 if [ "$NEED_RUST_SERVER" -eq 1 ]; then

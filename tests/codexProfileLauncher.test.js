@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -31,11 +31,13 @@ test('profile Codex launcher preserves host rust toolchain env after HOME isolat
     mkdirSync(fakeBinDir, { recursive: true })
     mkdirSync(join(homeDir, '.cargo', 'bin'), { recursive: true })
     mkdirSync(join(homeDir, '.rustup'), { recursive: true })
+    mkdirSync(join(homeDir, '.codex', 'skills', 'my-custom-skill'), { recursive: true })
     mkdirSync(join(homeDir, '.config', 'gh'), { recursive: true })
     mkdirSync(join(homeDir, '.subversion'), { recursive: true })
     mkdirSync(pollutedHome, { recursive: true })
     mkdirSync(projectDir, { recursive: true })
     writeFileSync(join(homeDir, '.cargo', 'bin', 'cargo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    writeFileSync(join(homeDir, '.codex', 'skills', 'my-custom-skill', 'SKILL.md'), '# custom skill\n', 'utf8')
     writeFileSync(fakeCodexHome, `#!/bin/sh
 printf 'HOME=%s\\n' "$HOME" > "${codexHomeEnvLog}"
 mkdir -p "$2/.codex"
@@ -80,6 +82,12 @@ exit 0
     assert.match(launcherEnv, new RegExp(`NEXUS_SOURCE_HOME=${escapeForRegExp(homeDir)}`))
     assert.match(launcherEnv, new RegExp(`PATH=.*${escapeForRegExp(homeDir)}/\\.cargo/bin`))
     assert.match(readFileSync(argsLog, 'utf8'), /--dangerously-bypass-approvals-and-sandbox --no-alt-screen/)
+    const runtimeHome = launcherEnv.match(/^HOME=(.*)$/m)?.[1]
+    assert.ok(runtimeHome)
+    assert.equal(
+      readlinkSync(join(runtimeHome, '.codex', 'skills')),
+      join(homeDir, '.codex', 'skills'),
+    )
 
     const ghResult = spawnSync('gh', ['auth', 'status'], {
       cwd: ROOT,
