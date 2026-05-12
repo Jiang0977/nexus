@@ -1,7 +1,9 @@
 import { createInterface } from 'node:readline'
+import { appendFileSync } from 'node:fs'
 
 const mode = process.env.FAKE_SESSION_MANAGEMENT_RUNTIME_MODE || 'normal'
 const workspaceRoot = (process.env.FAKE_SESSION_MANAGEMENT_WORKSPACE_ROOT || '/workspace').replace(/\/+$/, '') || '/'
+const requestLog = process.env.FAKE_SESSION_MANAGEMENT_REQUEST_LOG || ''
 
 function workspacePath(relativePath = '') {
   const relative = String(relativePath || '').replace(/^\/+/, '')
@@ -63,6 +65,9 @@ rl.on('line', (line) => {
   if (message.kind !== 'request') return
 
   const { id, method, params = {} } = message
+  if (requestLog) {
+    appendFileSync(requestLog, `${JSON.stringify({ method, params })}\n`)
+  }
   switch (method) {
     case 'ready':
       if (mode === 'exit-before-ready') process.exit(9)

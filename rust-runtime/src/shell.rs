@@ -1,3 +1,4 @@
+use std::env;
 use std::path::Path;
 
 pub fn normalize_shell_type(raw: Option<&str>) -> String {
@@ -18,6 +19,108 @@ pub fn uses_codex_profile(shell_type: &str) -> bool {
 
 pub fn uses_shell_profile(shell_type: &str) -> bool {
     uses_claude_profile(shell_type) || uses_codex_profile(shell_type)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeShellLaunchPlan {
+    pub program: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub cwd: String,
+}
+
+pub fn build_native_shell_launch_plan(
+    project_root: &Path,
+    proxy_vars: &[(String, String)],
+    shell_type: &str,
+    profile: Option<&str>,
+    cwd: &str,
+    resume_session_id: Option<&str>,
+) -> Option<NativeShellLaunchPlan> {
+    if uses_codex_profile(shell_type) {
+        return Some(NativeShellLaunchPlan {
+            program: "bash".to_string(),
+            args: vec![
+                project_root
+                    .join("nexus-run-codex.sh")
+                    .to_string_lossy()
+                    .to_string(),
+                profile.unwrap_or("").to_string(),
+                cwd.to_string(),
+                resume_session_id.unwrap_or("").to_string(),
+            ],
+            env: proxy_vars.to_vec(),
+            cwd: cwd.to_string(),
+        });
+    }
+
+    if uses_claude_profile(shell_type)
+        && let Some(profile) = profile.filter(|value| !value.is_empty())
+    {
+        return Some(NativeShellLaunchPlan {
+            program: "bash".to_string(),
+            args: vec![
+                project_root
+                    .join("nexus-run-claude.sh")
+                    .to_string_lossy()
+                    .to_string(),
+                profile.to_string(),
+                cwd.to_string(),
+            ],
+            env: proxy_vars.to_vec(),
+            cwd: cwd.to_string(),
+        });
+    }
+
+    if uses_shell_profile(shell_type) {
+        return None;
+    }
+
+    Some(NativeShellLaunchPlan {
+        program: default_native_shell_program(),
+        args: default_native_shell_args(),
+        env: proxy_vars.to_vec(),
+        cwd: cwd.to_string(),
+    })
+}
+
+fn default_native_shell_program() -> String {
+    if let Some(shell) = non_empty_env("NEXUS_NATIVE_SHELL") {
+        return shell;
+    }
+
+    if cfg!(windows) {
+        return non_empty_env("SHELL")
+            .or_else(|| non_empty_env("COMSPEC"))
+            .unwrap_or_else(|| "pwsh".to_string());
+    }
+
+    non_empty_env("SHELL").unwrap_or_else(|| {
+        if cfg!(target_os = "macos") {
+            "/bin/zsh".to_string()
+        } else {
+            "/bin/bash".to_string()
+        }
+    })
+}
+
+fn default_native_shell_args() -> Vec<String> {
+    if cfg!(windows) {
+        let program = default_native_shell_program().to_ascii_lowercase();
+        if program.contains("pwsh") || program.contains("powershell") {
+            return vec!["-NoLogo".to_string()];
+        }
+        return Vec::new();
+    }
+
+    vec!["-i".to_string()]
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub fn build_interactive_shell_command(

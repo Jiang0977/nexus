@@ -12,8 +12,9 @@ use crate::sanitize::{
     truncate_head, truncate_head_with_notice, truncate_tail, truncate_websocket_close_reason,
 };
 use crate::shell::{
-    build_interactive_shell_command, build_window_name, derive_initial_window_name,
-    derive_project_session_name, next_available_name, normalize_shell_type,
+    build_interactive_shell_command, build_native_shell_launch_plan, build_window_name,
+    derive_initial_window_name, derive_project_session_name, next_available_name,
+    normalize_shell_type,
 };
 use axum::Router;
 use axum::body::Body;
@@ -102,6 +103,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         jwt_secret: Arc::new(config.jwt_secret),
         password_hash: Arc::new(config.password_hash),
         default_tmux_session: Arc::new(config.default_tmux_session),
+        session_backend: Arc::new(config.session_backend),
         codex_history_enabled: config.codex_history_enabled,
         ws_connection_counter: Arc::new(AtomicUsize::new(0)),
         github_repo: Arc::new(config.github_repo),
@@ -315,10 +317,71 @@ async fn api_session_scrollback(
         .unwrap_or(3000)
         .min(10_000);
 
+    if state.is_native_session_backend() {
+        return runtime_request_response(
+            state
+                .runtime_manager
+                .pty_broker_request(
+                    "getOutputSnapshot",
+                    json!({
+                        "session": session,
+                        "windowIndex": window_index,
+                    }),
+                )
+                .await
+                .map(|snapshot| {
+                    let content = snapshot
+                        .get("output")
+                        .and_then(Value::as_str)
+                        .map(render_native_scrollback_plain_text)
+                        .map(|output| trim_scrollback_to_lines(&output, lines))
+                        .unwrap_or_default();
+                    json!({ "content": content })
+                }),
+        );
+    }
+
     match capture_tmux_scrollback(&session, window_index, lines).await {
         Ok(content) => Json(json!({ "content": content })).into_response(),
         Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
     }
+}
+
+fn native_launch_plan_json(
+    state: &AppState,
+    shell_type: &str,
+    profile: Option<&str>,
+    cwd: &str,
+    resume_session_id: Option<&str>,
+) -> Option<Value> {
+    if !state.is_native_session_backend() {
+        return None;
+    }
+
+    let plan = build_native_shell_launch_plan(
+        state.project_root.as_ref(),
+        state.proxy_vars.as_ref(),
+        shell_type,
+        profile,
+        cwd,
+        resume_session_id,
+    )?;
+    let env = plan.env.into_iter().collect::<HashMap<_, _>>();
+    Some(json!({
+        "program": plan.program,
+        "args": plan.args,
+        "env": env,
+        "cwd": plan.cwd,
+    }))
+}
+
+fn with_launch_plan(mut payload: Value, launch_plan: Option<Value>) -> Value {
+    if let Some(launch_plan) = launch_plan
+        && let Some(object) = payload.as_object_mut()
+    {
+        object.insert("launchPlan".to_string(), launch_plan);
+    }
+    payload
 }
 
 async fn api_tmux_sessions(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
@@ -530,21 +593,29 @@ async fn api_codex_session_resume(
         Some(&id),
     );
 
+    let request_payload = with_launch_plan(
+        json!({
+            "sessionId": id.clone(),
+            "sessionName": project_name.clone(),
+            "projectName": project_name,
+            "cwd": cwd.clone(),
+            "windowName": "codex-history",
+            "shellCmd": shell_cmd,
+            "proxyVars": proxy_vars_json(&state),
+        }),
+        native_launch_plan_json(
+            &state,
+            "codex",
+            response_profile.as_deref(),
+            &cwd,
+            Some(&id),
+        ),
+    );
+
     runtime_request_response(
         state
             .runtime_manager
-            .session_management_request(
-                "resumeCodexSession",
-                json!({
-                    "sessionId": id,
-                    "sessionName": project_name.clone(),
-                    "projectName": project_name,
-                    "cwd": cwd,
-                    "windowName": "codex-history",
-                    "shellCmd": shell_cmd,
-                    "proxyVars": proxy_vars_json(&state),
-                }),
-            )
+            .session_management_request("resumeCodexSession", request_payload)
             .await,
     )
 }
@@ -622,18 +693,20 @@ async fn api_create_project(
         None,
     );
 
+    let request_payload = with_launch_plan(
+        json!({
+            "sessionName": final_name.clone(),
+            "cwd": cwd.clone(),
+            "initialWindowName": initial_window_name,
+            "shellCmd": shell_cmd,
+            "proxyVars": proxy_vars_json(&state),
+        }),
+        native_launch_plan_json(&state, &shell_type, response_profile.as_deref(), &cwd, None),
+    );
+
     match state
         .runtime_manager
-        .session_management_request(
-            "createProject",
-            json!({
-                "sessionName": final_name.clone(),
-                "cwd": cwd.clone(),
-                "initialWindowName": initial_window_name,
-                "shellCmd": shell_cmd,
-                "proxyVars": proxy_vars_json(&state),
-            }),
-        )
+        .session_management_request("createProject", request_payload)
         .await
     {
         Ok(_) => {}
@@ -697,19 +770,21 @@ async fn api_create_project_channel(
         None,
     );
 
+    let request_payload = with_launch_plan(
+        json!({
+            "sessionName": name.clone(),
+            "cwd": cwd.clone(),
+            "channelName": channel_name.clone(),
+            "shellCmd": shell_cmd,
+            "defaultShellCmd": DEFAULT_INTERACTIVE_SHELL,
+            "proxyVars": proxy_vars_json(&state),
+        }),
+        native_launch_plan_json(&state, &shell_type, response_profile.as_deref(), &cwd, None),
+    );
+
     match state
         .runtime_manager
-        .session_management_request(
-            "createProjectChannel",
-            json!({
-                "sessionName": name.clone(),
-                "cwd": cwd.clone(),
-                "channelName": channel_name.clone(),
-                "shellCmd": shell_cmd,
-                "defaultShellCmd": DEFAULT_INTERACTIVE_SHELL,
-                "proxyVars": proxy_vars_json(&state),
-            }),
-        )
+        .session_management_request("createProjectChannel", request_payload)
         .await
     {
         Ok(_) => {}

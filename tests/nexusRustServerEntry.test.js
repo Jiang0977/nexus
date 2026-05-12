@@ -441,6 +441,7 @@ function spawnRustServer(envOverrides = {}) {
     cwd: ROOT,
     env: {
       ...process.env,
+      NEXUS_SESSION_BACKEND: '',
       ...envOverrides,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -916,6 +917,56 @@ test('rust nexus-server serves pty output snapshot and tmux scrollback routes', 
 
   const log = readFileSync(tmuxFixture.logFile, 'utf8')
   assert.match(log, /capture-pane\|-p -S -10000 -t demo-project:3/)
+})
+
+test('rust nexus-server serves native scrollback from the pty runtime snapshot', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const tmuxFixture = createPtyScrollbackTmuxFixture()
+  const port = await getFreePort()
+  const password = 'native-scrollback-route-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+    PATH: `${tmuxFixture.baseDir}:${process.env.PATH || ''}`,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_PTY_BROKER_RUST_EXECUTABLE: process.execPath,
+    NEXUS_PTY_BROKER_RUST_ARGS: JSON.stringify([PTY_FIXTURE]),
+    FAKE_PTY_RUNTIME_SNAPSHOT_JSON: JSON.stringify({
+      'demo-project:3': {
+        output: '\x1b[31mnative alpha\x1b[0m\r\nprogress 1\rprogress done\n\x1b[?25lCodex text\x1b[?25h\n',
+        clients: 0,
+      },
+    }),
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+    rmSync(tmuxFixture.baseDir, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const { token } = await login(port, password)
+  const headers = { Authorization: `Bearer ${token}` }
+
+  const scrollbackResponse = await fetch(`http://127.0.0.1:${port}/api/sessions/3/scrollback?session=demo-project&lines=100`, {
+    headers,
+  })
+
+  assert.equal(scrollbackResponse.status, 200)
+  assert.deepEqual(await scrollbackResponse.json(), {
+    content: 'native alpha\nprogress done\nCodex text\n',
+  })
+
+  const log = existsSync(tmuxFixture.logFile) ? readFileSync(tmuxFixture.logFile, 'utf8') : ''
+  assert.doesNotMatch(log, /capture-pane/)
 })
 
 test('rust nexus-server falls back to tmux capture-pane when pty snapshot is cold', async (t) => {
@@ -2410,6 +2461,154 @@ test('rust nexus-server proxies session write routes with basic validation', asy
   assert.deepEqual(await renameSessionResponse.json(), {
     ok: true,
     name: 'notes-2',
+  })
+})
+
+test('rust nexus-server sends structured launch plans for native codex project creation', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-server-launch-plan-'))
+  const requestLog = join(baseDir, 'session-requests.jsonl')
+  const dataDir = join(baseDir, 'data')
+  const port = await getFreePort()
+  const password = 'native-server-launch-plan-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+    WORKSPACE_ROOT: '/workspace',
+    HTTPS_PROXY: 'http://proxy.local',
+    HTTP_PROXY: '',
+    ALL_PROXY: '',
+    http_proxy: '',
+    https_proxy: '',
+    NEXUS_DATA_DIR: dataDir,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
+    NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
+    FAKE_SESSION_MANAGEMENT_REQUEST_LOG: requestLog,
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const { token } = await login(port, password)
+  const response = await fetch(`http://127.0.0.1:${port}/api/projects`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      path: 'demo',
+      shell_type: 'codex',
+      profile: 'work',
+    }),
+  })
+
+  assert.equal(response.status, 200)
+
+  const requests = readFileSync(requestLog, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const createProject = requests.find((request) => request.method === 'createProject')
+  assert.ok(createProject)
+  assert.equal(createProject.params.cwd, '/workspace/demo')
+  assert.match(createProject.params.shellCmd, /nexus-run-codex\.sh/)
+  assert.deepEqual(createProject.params.launchPlan, {
+    program: 'bash',
+    args: [
+      join(projectRoot, 'nexus-run-codex.sh'),
+      'work',
+      '/workspace/demo',
+      '',
+    ],
+    env: {
+      HTTPS_PROXY: 'http://proxy.local',
+    },
+    cwd: '/workspace/demo',
+  })
+})
+
+test('rust nexus-server sends structured launch plans for native ordinary shell project creation', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-shell-plan-'))
+  const requestLog = join(baseDir, 'session-requests.jsonl')
+  const dataDir = join(baseDir, 'data')
+  const port = await getFreePort()
+  const password = 'native-shell-plan-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+    WORKSPACE_ROOT: '/workspace',
+    SHELL: '/bin/sh',
+    HTTPS_PROXY: 'http://proxy.local',
+    HTTP_PROXY: '',
+    ALL_PROXY: '',
+    http_proxy: '',
+    https_proxy: '',
+    NEXUS_DATA_DIR: dataDir,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
+    NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
+    FAKE_SESSION_MANAGEMENT_REQUEST_LOG: requestLog,
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const { token } = await login(port, password)
+  const response = await fetch(`http://127.0.0.1:${port}/api/projects`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      path: 'demo',
+      shell_type: 'bash',
+    }),
+  })
+
+  assert.equal(response.status, 200)
+
+  const requests = readFileSync(requestLog, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const createProject = requests.find((request) => request.method === 'createProject')
+  assert.ok(createProject)
+  assert.equal(createProject.params.cwd, '/workspace/demo')
+  assert.deepEqual(createProject.params.launchPlan, {
+    program: '/bin/sh',
+    args: ['-i'],
+    env: {
+      HTTPS_PROXY: 'http://proxy.local',
+    },
+    cwd: '/workspace/demo',
   })
 })
 

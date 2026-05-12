@@ -288,6 +288,7 @@ mod tests {
             jwt_secret: Arc::new("secret".to_string()),
             password_hash: Arc::new("hash".to_string()),
             default_tmux_session: Arc::new("nexus".to_string()),
+            session_backend: Arc::new("tmux".to_string()),
             codex_history_enabled: true,
             ws_connection_counter: Arc::new(AtomicUsize::new(0)),
             github_repo: Arc::new("repo".to_string()),

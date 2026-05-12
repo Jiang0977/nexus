@@ -24,6 +24,20 @@ const RUST_SERVER_BINARY = join(
 
 let buildChecked = false
 
+function resolveChromiumLaunchOptions() {
+  const executablePath = [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ].find((candidate) => candidate && existsSync(candidate))
+
+  return executablePath
+    ? { headless: true, executablePath }
+    : { headless: true }
+}
+
 function ensureRustServerBuilt() {
   if (buildChecked) return
 
@@ -165,7 +179,7 @@ function createBrowserProjectFixture() {
   return { dataDir, projectRoot }
 }
 
-async function launchBrowserApp(t, { extraChannels = [], mobile = false } = {}) {
+async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnapshots = {} } = {}) {
   ensureRustServerBuilt()
 
   const { dataDir, projectRoot } = createBrowserProjectFixture()
@@ -195,6 +209,7 @@ async function launchBrowserApp(t, { extraChannels = [], mobile = false } = {}) 
         output: 'notes ready\n',
         clients: 0,
       },
+      ...ptySnapshots,
     }),
   })
 
@@ -205,7 +220,7 @@ async function launchBrowserApp(t, { extraChannels = [], mobile = false } = {}) 
 
   await waitForHealthyHttp(port, child)
 
-  const browser = await chromium.launch({ headless: true })
+  const browser = await chromium.launch(resolveChromiumLaunchOptions())
   t.after(async () => {
     await browser.close()
   })
@@ -676,6 +691,52 @@ test('browser regression: desktop split pane header opens selectable terminal te
   assert.equal(scrollbackRequests.length, 1)
   assert.match(scrollbackRequests[0], /\/api\/sessions\/1\/scrollback\?/)
   assert.match(scrollbackRequests[0], /session=nexus-preview-rust/)
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: desktop split pane keeps user scroll during streaming output', { timeout: 120000 }, async (t) => {
+  const longOutput = Array.from({ length: 80 }, (_, index) => `line ${String(index + 1).padStart(2, '0')}`).join('\n') + '\n'
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    ptySnapshots: {
+      'nexus-preview-rust:1': {
+        output: longOutput,
+        clients: 0,
+      },
+    },
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const shellSource = page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first()
+  await shellSource.waitFor()
+  await shellSource.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await page.waitForFunction(() => document.body.textContent?.includes('line 80'))
+
+  const pane = page.getByTestId('terminal-pane-pane-1')
+  const viewport = pane.locator('.xterm-viewport').first()
+  const box = await viewport.boundingBox()
+  assert.ok(box, 'expected xterm viewport to be measurable')
+
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.wheel(0, -900)
+  await viewport.evaluate((el) => {
+    el.dispatchEvent(new WheelEvent('wheel', { deltaY: -900, bubbles: true, cancelable: true }))
+  })
+  await pane.getByRole('button', { name: '回到底部' }).waitFor()
+
+  await pane.click({ position: { x: 24, y: 48 } })
+  await page.keyboard.type('streaming output while user reads')
+  await delay(150)
+
+  await pane.getByRole('button', { name: '回到底部' }).waitFor()
 
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),

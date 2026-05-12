@@ -150,6 +150,7 @@ fn start_script_rebuilds_only_binaries_whose_depfile_inputs_are_newer() {
         "nexus-pty-runtime",
         "nexus-window-launch-runtime",
         "nexus-session-runtime",
+        "nexus-codex-home",
         "nexus-server",
     ] {
         let binary_path = release_dir.join(binary);
@@ -243,6 +244,7 @@ fn start_script_ignores_unrelated_rust_sources_when_depfiles_are_present() {
         "nexus-pty-runtime",
         "nexus-window-launch-runtime",
         "nexus-session-runtime",
+        "nexus-codex-home",
         "nexus-server",
     ] {
         let binary_path = release_dir.join(binary);
@@ -413,6 +415,7 @@ fn start_script_keeps_codex_wrapper_ahead_of_real_cli() {
         "nexus-pty-runtime",
         "nexus-window-launch-runtime",
         "nexus-session-runtime",
+        "nexus-codex-home",
     ] {
         write_executable(&bin_dir.join(name), "#!/usr/bin/env bash\nexit 0\n");
     }
@@ -446,6 +449,10 @@ fn start_script_keeps_codex_wrapper_ahead_of_real_cli() {
         .env(
             "NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE",
             bin_dir.join("nexus-session-runtime"),
+        )
+        .env(
+            "NEXUS_CODEX_HOME_EXECUTABLE",
+            bin_dir.join("nexus-codex-home"),
         )
         .output()
         .unwrap();

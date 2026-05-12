@@ -21,6 +21,7 @@ pub struct AppConfig {
     pub jwt_secret: String,
     pub password_hash: String,
     pub default_tmux_session: String,
+    pub session_backend: String,
     pub codex_history_enabled: bool,
     pub github_repo: String,
     pub workspace_root: String,
@@ -64,6 +65,10 @@ impl AppConfig {
             password_hash,
             default_tmux_session: env_or_dotenv("TMUX_SESSION", &dotenv)
                 .unwrap_or_else(|| DEFAULT_TMUX_SESSION.to_string()),
+            session_backend: env_or_dotenv("NEXUS_SESSION_BACKEND", &dotenv)
+                .map(|value| value.trim().to_ascii_lowercase())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "tmux".to_string()),
             codex_history_enabled: env_or_dotenv("NEXUS_CODEX_HISTORY_ENABLED", &dotenv)
                 .map(|value| value != "0")
                 .unwrap_or(true),

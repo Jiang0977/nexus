@@ -21,6 +21,7 @@ pub(super) struct AppState {
     pub(super) jwt_secret: Arc<String>,
     pub(super) password_hash: Arc<String>,
     pub(super) default_tmux_session: Arc<String>,
+    pub(super) session_backend: Arc<String>,
     pub(super) codex_history_enabled: bool,
     pub(super) ws_connection_counter: Arc<AtomicUsize>,
     pub(super) github_repo: Arc<String>,
@@ -42,6 +43,10 @@ pub(super) struct AppState {
 }
 
 impl AppState {
+    pub(super) fn is_native_session_backend(&self) -> bool {
+        self.session_backend.eq_ignore_ascii_case("native")
+    }
+
     pub(super) fn find_static_file(&self, request_path: &str) -> Option<PathBuf> {
         let safe_path = sanitize_request_path(request_path)?;
         if safe_path.as_os_str().is_empty() {
@@ -1189,6 +1194,171 @@ pub(super) async fn capture_tmux_scrollback(
         .collect::<Vec<_>>()
         .join("\n");
     Ok(content)
+}
+
+pub(super) fn trim_scrollback_to_lines(content: &str, lines: u32) -> String {
+    if lines == 0 {
+        return String::new();
+    }
+
+    let parts = content.split_inclusive('\n').collect::<Vec<_>>();
+    let max_lines = lines as usize;
+    if parts.len() <= max_lines {
+        return content.to_string();
+    }
+    parts[parts.len().saturating_sub(max_lines)..].concat()
+}
+
+pub(super) fn render_native_scrollback_plain_text(content: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum ParserState {
+        Ground,
+        Escape,
+        Csi,
+        Osc,
+        OscEscape,
+        StringControl,
+        StringControlEscape,
+    }
+
+    fn flush_line(output: &mut String, line: &mut Vec<char>, column: &mut usize) {
+        while matches!(line.last(), Some(' ' | '\t')) {
+            line.pop();
+        }
+        output.extend(line.iter());
+        output.push('\n');
+        line.clear();
+        *column = 0;
+    }
+
+    fn write_char(line: &mut Vec<char>, column: &mut usize, ch: char) {
+        while line.len() < *column {
+            line.push(' ');
+        }
+        if *column < line.len() {
+            line[*column] = ch;
+        } else {
+            line.push(ch);
+        }
+        *column += 1;
+    }
+
+    fn parse_csi_count(sequence: &str, default_value: usize) -> usize {
+        let numeric = sequence
+            .trim_start_matches('?')
+            .split(';')
+            .next()
+            .unwrap_or_default();
+        numeric
+            .parse::<usize>()
+            .ok()
+            .filter(|value| *value > 0)
+            .unwrap_or(default_value)
+    }
+
+    fn apply_csi(sequence: &str, line: &mut Vec<char>, column: &mut usize) {
+        let Some(command) = sequence.chars().last() else {
+            return;
+        };
+        let params = &sequence[..sequence.len().saturating_sub(command.len_utf8())];
+
+        match command {
+            'C' => {
+                *column = column.saturating_add(parse_csi_count(params, 1));
+            }
+            'D' => {
+                *column = column.saturating_sub(parse_csi_count(params, 1));
+            }
+            'G' | '`' => {
+                *column = parse_csi_count(params, 1).saturating_sub(1);
+            }
+            'K' => {
+                let mode = parse_csi_count(params, 0);
+                match mode {
+                    0 => line.truncate((*column).min(line.len())),
+                    1 => {
+                        let end = (*column).saturating_add(1).min(line.len());
+                        for ch in line.iter_mut().take(end) {
+                            *ch = ' ';
+                        }
+                    }
+                    2 => {
+                        line.clear();
+                        *column = 0;
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut output = String::new();
+    let mut line = Vec::new();
+    let mut column = 0usize;
+    let mut state = ParserState::Ground;
+    let mut csi_sequence = String::new();
+
+    for ch in content.chars() {
+        match state {
+            ParserState::Ground => match ch {
+                '\x1b' => state = ParserState::Escape,
+                '\n' => flush_line(&mut output, &mut line, &mut column),
+                '\r' => column = 0,
+                '\x08' => column = column.saturating_sub(1),
+                '\t' => {
+                    let next_tab = ((column / 8) + 1) * 8;
+                    while column < next_tab {
+                        write_char(&mut line, &mut column, ' ');
+                    }
+                }
+                '\x00'..='\x07' | '\x0b'..='\x1f' | '\x7f' => {}
+                _ => write_char(&mut line, &mut column, ch),
+            },
+            ParserState::Escape => match ch {
+                '[' => {
+                    csi_sequence.clear();
+                    state = ParserState::Csi;
+                }
+                ']' => state = ParserState::Osc,
+                'P' | '^' | '_' | 'X' => state = ParserState::StringControl,
+                _ => state = ParserState::Ground,
+            },
+            ParserState::Csi => {
+                csi_sequence.push(ch);
+                if ('@'..='~').contains(&ch) {
+                    apply_csi(&csi_sequence, &mut line, &mut column);
+                    csi_sequence.clear();
+                    state = ParserState::Ground;
+                }
+            }
+            ParserState::Osc => match ch {
+                '\x07' => state = ParserState::Ground,
+                '\x1b' => state = ParserState::OscEscape,
+                _ => {}
+            },
+            ParserState::OscEscape => {
+                state = ParserState::Ground;
+            }
+            ParserState::StringControl => {
+                if ch == '\x1b' {
+                    state = ParserState::StringControlEscape;
+                }
+            }
+            ParserState::StringControlEscape => {
+                state = ParserState::Ground;
+            }
+        }
+    }
+
+    if !line.is_empty() {
+        while matches!(line.last(), Some(' ' | '\t')) {
+            line.pop();
+        }
+        output.extend(line.iter());
+    }
+
+    output
 }
 
 pub(super) async fn read_toolbar_config_file(file_path: &Path) -> Value {
