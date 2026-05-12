@@ -7,8 +7,10 @@ import { tmpdir } from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createInterface } from 'node:readline'
+import { DatabaseSync } from 'node:sqlite'
 
 import { createPtyBrokerRustClient } from './helpers/ptyBrokerRustClient.js'
+import { createSessionManagementRustClient } from './helpers/sessionManagementRustClient.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const RUNTIME = join(
@@ -18,7 +20,15 @@ const RUNTIME = join(
   'release',
   process.platform === 'win32' ? 'nexus-pty-runtime.exe' : 'nexus-pty-runtime',
 )
+const SESSION_RUNTIME = join(
+  ROOT,
+  'rust-runtime',
+  'target',
+  'release',
+  process.platform === 'win32' ? 'nexus-session-runtime.exe' : 'nexus-session-runtime',
+)
 let buildChecked = false
+let sessionBuildChecked = false
 
 function ensureBuilt() {
   if (buildChecked && existsSync(RUNTIME)) return
@@ -30,6 +40,18 @@ function ensureBuilt() {
   assert.equal(build.status, 0, build.stderr || build.stdout)
   assert.equal(existsSync(RUNTIME), true)
   buildChecked = true
+}
+
+function ensureSessionRuntimeBuilt() {
+  if (sessionBuildChecked && existsSync(SESSION_RUNTIME)) return
+  const build = spawnSync('npm', ['run', 'build:rust-session-runtime'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  })
+
+  assert.equal(build.status, 0, build.stderr || build.stdout)
+  assert.equal(existsSync(SESSION_RUNTIME), true)
+  sessionBuildChecked = true
 }
 
 function createFakeTmuxBin() {
@@ -84,6 +106,14 @@ exec "${realTmux}" -L "${socketName}" -f /dev/null "$@"
   return { baseDir, tmuxPath }
 }
 
+function tmuxTestEnv(extra = {}) {
+  return {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: '',
+    ...extra,
+  }
+}
+
 function listRealTmuxSessions(tmuxPath, env) {
   const result = spawnSync(tmuxPath, ['list-sessions', '-F', '#{session_name}|#{session_attached}'], {
     encoding: 'utf8',
@@ -94,6 +124,65 @@ function listRealTmuxSessions(tmuxPath, env) {
     .trim()
     .split('\n')
     .filter(Boolean)
+}
+
+function latestNativeProcessInstance(dbPath, projectName, channelIndex) {
+  const db = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    return db
+      .prepare(`
+        SELECT project_name, channel_index, status, os_pid, platform_handle, started_at, ended_at, exit_code, start_fingerprint
+        FROM process_instances
+        WHERE project_name = ? AND channel_index = ?
+        ORDER BY id DESC
+        LIMIT 1
+      `)
+      .get(projectName, channelIndex)
+  } catch (error) {
+    if (String(error?.message || '').includes('database is locked')) return null
+    throw error
+  } finally {
+    db.close()
+  }
+}
+
+function insertNativeProcessInstance(dbPath, {
+  projectName,
+  channelIndex,
+  status = 'running',
+  osPid = null,
+  startedAt = '12345',
+  startFingerprint = 'seeded',
+}) {
+  const db = new DatabaseSync(dbPath)
+  try {
+    db
+      .prepare(`
+        INSERT INTO process_instances
+          (project_name, channel_index, status, os_pid, started_at, start_fingerprint)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `)
+      .run(projectName, channelIndex, status, osPid, startedAt, startFingerprint)
+  } finally {
+    db.close()
+  }
+}
+
+function processAlive(pid) {
+  if (typeof pid !== 'number' || pid <= 0) return false
+  if (process.platform !== 'win32') {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+      const state = stat.split(' ')[2]
+      if (state === 'Z') return false
+    } catch {}
+  }
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function spawnRawPtyRuntime(env) {
@@ -159,10 +248,9 @@ test('real rust pty runtime speaks the broker contract through a fake tmux backe
   const { baseDir } = createFakeTmuxBin()
   const client = createPtyBrokerRustClient({
     runtimeExecutable: RUNTIME,
-    env: {
-      ...process.env,
+    env: tmuxTestEnv({
       PATH: `${baseDir}:${process.env.PATH || ''}`,
-    },
+    }),
     readyTimeoutMs: 1000,
     log: { log() {}, error() {} },
   })
@@ -220,15 +308,649 @@ test('real rust pty runtime speaks the broker contract through a fake tmux backe
   assert.equal(status.runningPtys, 0)
 })
 
+test('real rust pty runtime can attach to an opt-in native foreground PTY', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const client = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env: {
+      ...process.env,
+      NEXUS_SESSION_BACKEND: 'native',
+      NEXUS_NATIVE_PTY_PROGRAM: 'cat',
+    },
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await client.close()
+  })
+
+  const events = []
+  client.onEvent((event) => {
+    events.push(event)
+  })
+
+  await client.ready()
+  const first = await client.attachConnection({
+    connectionId: 'native-conn-1',
+    session: 'native-project',
+    windowIndex: 0,
+  })
+  assert.deepEqual(first, { key: 'native-project:0' })
+
+  client.handleConnectionMessage({
+    connectionId: 'native-conn-1',
+    key: 'native-project:0',
+    rawMessage: 'native one\n',
+  })
+
+  let firstOutput = ''
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    firstOutput = events
+      .filter((event) => event.type === 'output' && event.connectionId === 'native-conn-1')
+      .map((event) => event.data)
+      .join('')
+    if (firstOutput.includes('native one')) break
+    await delay(20)
+  }
+  assert.match(firstOutput, /native one\r?\n/)
+
+  const snapshot = await client.getOutputSnapshot({ session: 'native-project', windowIndex: 0 })
+  assert.equal(snapshot.connected, true)
+  assert.match(snapshot.output, /native one\r?\n/)
+  assert.equal(snapshot.clients, 1)
+
+  const second = await client.attachConnection({
+    connectionId: 'native-conn-2',
+    session: 'native-project',
+    windowIndex: 0,
+  })
+  assert.deepEqual(second, { key: 'native-project:0' })
+
+  let replay = ''
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    replay = events
+      .filter((event) => event.type === 'output' && event.connectionId === 'native-conn-2')
+      .map((event) => event.data)
+      .join('')
+    if (replay.includes('native one')) break
+    await delay(20)
+  }
+  assert.match(replay, /native one\r?\n/)
+
+  client.handleConnectionMessage({
+    connectionId: 'native-conn-1',
+    key: 'native-project:0',
+    rawMessage: 'native two\n',
+  })
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const conn1 = events
+      .filter((event) => event.type === 'output' && event.connectionId === 'native-conn-1')
+      .map((event) => event.data)
+      .join('')
+    const conn2 = events
+      .filter((event) => event.type === 'output' && event.connectionId === 'native-conn-2')
+      .map((event) => event.data)
+      .join('')
+    if (conn1.includes('native two') && conn2.includes('native two')) break
+    await delay(20)
+  }
+
+  const conn1Output = events
+    .filter((event) => event.type === 'output' && event.connectionId === 'native-conn-1')
+    .map((event) => event.data)
+    .join('')
+  const conn2Output = events
+    .filter((event) => event.type === 'output' && event.connectionId === 'native-conn-2')
+    .map((event) => event.data)
+    .join('')
+  assert.match(conn1Output, /native two\r?\n/)
+  assert.match(conn2Output, /native two\r?\n/)
+
+  client.closeConnection({ connectionId: 'native-conn-1', key: 'native-project:0' })
+  client.closeConnection({ connectionId: 'native-conn-2', key: 'native-project:0' })
+
+  let status = await client.getStatus()
+  for (let attempt = 0; attempt < 20 && status.runningPtys !== 0; attempt += 1) {
+    await delay(20)
+    status = await client.getStatus()
+  }
+  assert.equal(status.runningPtys, 0)
+})
+
+test('real rust pty runtime launches an opt-in native channel from the session registry', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-pty-registry-'))
+  const dbPath = join(baseDir, 'session.db')
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  const ptyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await ptyClient.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await sessionClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-registry-project',
+    cwd: ROOT,
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: {},
+  })
+
+  const events = []
+  ptyClient.onEvent((event) => {
+    events.push(event)
+  })
+
+  await ptyClient.ready()
+  const attached = await ptyClient.attachConnection({
+    connectionId: 'native-registry-conn',
+    session: 'native-registry-project',
+    windowIndex: 0,
+  })
+  assert.deepEqual(attached, { key: 'native-registry-project:0' })
+
+  ptyClient.handleConnectionMessage({
+    connectionId: 'native-registry-conn',
+    key: 'native-registry-project:0',
+    rawMessage: 'registry native channel\n',
+  })
+
+  let output = ''
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    output = events
+      .filter((event) => event.type === 'output')
+      .map((event) => event.data)
+      .join('')
+    if (output.includes('registry native channel')) break
+    await delay(20)
+  }
+  assert.match(output, /registry native channel\r?\n/)
+
+  const snapshot = await ptyClient.getOutputSnapshot({
+    session: 'native-registry-project',
+    windowIndex: 0,
+  })
+  assert.equal(snapshot.connected, true)
+  assert.match(snapshot.output, /registry native channel\r?\n/)
+})
+
+test('real rust pty runtime detaches native registry channels without exiting them', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-pty-detach-'))
+  const dbPath = join(baseDir, 'session.db')
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  const ptyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await ptyClient.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await sessionClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-detach-project',
+    cwd: ROOT,
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: {},
+  })
+
+  await ptyClient.ready()
+  assert.deepEqual(await ptyClient.attachConnection({
+    connectionId: 'native-detach-conn-1',
+    session: 'native-detach-project',
+    windowIndex: 0,
+  }), { key: 'native-detach-project:0' })
+
+  ptyClient.closeConnection({
+    connectionId: 'native-detach-conn-1',
+    key: 'native-detach-project:0',
+  })
+
+  let status = await ptyClient.getStatus()
+  for (let attempt = 0; attempt < 20 && status.runningPtys !== 1; attempt += 1) {
+    await delay(20)
+    status = await ptyClient.getStatus()
+  }
+  assert.equal(status.runningPtys, 1)
+
+  const instance = latestNativeProcessInstance(dbPath, 'native-detach-project', 0)
+  assert.equal(instance.status, 'running')
+
+  assert.deepEqual(await ptyClient.attachConnection({
+    connectionId: 'native-detach-conn-2',
+    session: 'native-detach-project',
+    windowIndex: 0,
+  }), { key: 'native-detach-project:0' })
+})
+
+test('real rust pty runtime launches native channels from a structured launch plan', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-launch-plan-'))
+  const dbPath = join(baseDir, 'session.db')
+  const scriptPath = join(baseDir, 'print-launch-plan.js')
+  writeFileSync(
+    scriptPath,
+    'process.stdout.write(`${process.argv[2]}|${process.env.NEXUS_PLAN_TOKEN}\\n`);\n',
+  )
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  const ptyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await ptyClient.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await sessionClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-launch-plan',
+    cwd: ROOT,
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    launchPlan: {
+      program: process.execPath,
+      args: [scriptPath, 'two words'],
+      env: {
+        NEXUS_PLAN_TOKEN: 'env value',
+      },
+      cwd: ROOT,
+    },
+    proxyVars: {},
+  })
+
+  await ptyClient.ready()
+  await ptyClient.attachConnection({
+    connectionId: 'native-launch-plan-conn',
+    session: 'native-launch-plan',
+    windowIndex: 0,
+  })
+
+  let snapshot = null
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    snapshot = await ptyClient.getOutputSnapshot({
+      session: 'native-launch-plan',
+      windowIndex: 0,
+    })
+    if (snapshot.output.includes('two words|env value')) break
+    await delay(20)
+  }
+
+  assert.match(snapshot.output, /two words\|env value\r?\n/)
+})
+
+test('real rust pty runtime records native process lifecycle in the registry', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-process-lifecycle-'))
+  const dbPath = join(baseDir, 'session.db')
+  const exitScript = join(baseDir, 'exit-seven.sh')
+  writeFileSync(exitScript, '#!/bin/sh\nprintf lifecycle-ready\nexit 7\n', { mode: 0o755 })
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  const ptyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await ptyClient.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await sessionClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-process-project',
+    cwd: ROOT,
+    initialWindowName: 'shell',
+    shellCmd: exitScript,
+    proxyVars: {},
+  })
+
+  await ptyClient.ready()
+  await ptyClient.attachConnection({
+    connectionId: 'native-process-conn',
+    session: 'native-process-project',
+    windowIndex: 0,
+  })
+
+  let instance = null
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    instance = latestNativeProcessInstance(dbPath, 'native-process-project', 0)
+    if (instance?.status === 'exited') break
+    await delay(20)
+  }
+
+  assert.equal(instance.project_name, 'native-process-project')
+  assert.equal(instance.channel_index, 0)
+  assert.equal(instance.status, 'exited')
+  assert.equal(instance.exit_code, 7)
+  assert.equal(typeof instance.os_pid, 'number')
+  assert.notEqual(instance.started_at, '')
+  assert.notEqual(instance.ended_at, '')
+  assert.notEqual(instance.start_fingerprint, '')
+
+  await assert.rejects(
+    () => ptyClient.attachConnection({
+      connectionId: 'native-process-conn-again',
+      session: 'native-process-project',
+      windowIndex: 0,
+    }),
+    /native channel process exited/,
+  )
+})
+
+test('real rust session runtime terminates native channel process before deleting the channel', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-delete-process-'))
+  const dbPath = join(baseDir, 'session.db')
+  const runScript = join(baseDir, 'run-until-term.sh')
+  writeFileSync(runScript, '#!/bin/sh\nexec sleep 1000\n', { mode: 0o755 })
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  const ptyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await ptyClient.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await sessionClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-delete-process',
+    cwd: ROOT,
+    initialWindowName: 'shell',
+    shellCmd: runScript,
+    proxyVars: {},
+  })
+  await sessionClient.createProjectChannel({
+    sessionName: 'native-delete-process',
+    cwd: ROOT,
+    channelName: 'spare',
+    shellCmd: 'cat',
+    defaultShellCmd: 'cat',
+    proxyVars: {},
+  })
+
+  await ptyClient.ready()
+  await ptyClient.attachConnection({
+    connectionId: 'native-delete-process-conn',
+    session: 'native-delete-process',
+    windowIndex: 0,
+  })
+
+  let instance = null
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    instance = latestNativeProcessInstance(dbPath, 'native-delete-process', 0)
+    if (instance?.status === 'running' && typeof instance.os_pid === 'number') break
+    await delay(20)
+  }
+  assert.equal(instance.status, 'running')
+  assert.equal(processAlive(instance.os_pid), true)
+
+  await sessionClient.deleteSessionWindow({
+    sessionName: 'native-delete-process',
+    index: 0,
+    defaultShellCmd: 'cat',
+  })
+
+  let stillAlive = true
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    stillAlive = processAlive(instance.os_pid)
+    if (!stillAlive) break
+    await delay(20)
+  }
+  assert.equal(stillAlive, false)
+})
+
+test('real rust pty runtime reconciles old native running processes on startup', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-reconcile-'))
+  const dbPath = join(baseDir, 'session.db')
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  let ptyClient = null
+
+  t.after(async () => {
+    await ptyClient?.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await sessionClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-reconcile',
+    cwd: ROOT,
+    initialWindowName: 'live-old',
+    shellCmd: 'cat',
+    proxyVars: {},
+  })
+  await sessionClient.createProjectChannel({
+    sessionName: 'native-reconcile',
+    cwd: ROOT,
+    channelName: 'dead-old',
+    shellCmd: 'cat',
+    defaultShellCmd: 'cat',
+    proxyVars: {},
+  })
+
+  insertNativeProcessInstance(dbPath, {
+    projectName: 'native-reconcile',
+    channelIndex: 0,
+    osPid: process.pid,
+    startFingerprint: 'live-old',
+  })
+  insertNativeProcessInstance(dbPath, {
+    projectName: 'native-reconcile',
+    channelIndex: 1,
+    osPid: 99999999,
+    startFingerprint: 'dead-old',
+  })
+
+  ptyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  await ptyClient.ready()
+
+  assert.equal(latestNativeProcessInstance(dbPath, 'native-reconcile', 0).status, 'orphaned')
+  assert.equal(latestNativeProcessInstance(dbPath, 'native-reconcile', 1).status, 'stale')
+
+  await assert.rejects(
+    () => ptyClient.attachConnection({
+      connectionId: 'native-reconcile-conn',
+      session: 'native-reconcile',
+      windowIndex: 0,
+    }),
+    /native channel process orphaned/,
+  )
+})
+
+test('real rust pty runtime returns native cold snapshot from durable scrollback', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-scrollback-'))
+  const dbPath = join(baseDir, 'session.db')
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_SCROLLBACK_DIR: join(baseDir, 'scrollback'),
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  const firstPtyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  let secondPtyClient = null
+
+  t.after(async () => {
+    await secondPtyClient?.close()
+    await firstPtyClient.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await sessionClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-scrollback',
+    cwd: ROOT,
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: {},
+  })
+
+  await firstPtyClient.ready()
+  await firstPtyClient.attachConnection({
+    connectionId: 'native-scrollback-writer',
+    session: 'native-scrollback',
+    windowIndex: 0,
+  })
+  firstPtyClient.handleConnectionMessage({
+    connectionId: 'native-scrollback-writer',
+    key: 'native-scrollback:0',
+    rawMessage: 'durable native line\n',
+  })
+
+  let warmSnapshot = null
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    warmSnapshot = await firstPtyClient.getOutputSnapshot({
+      session: 'native-scrollback',
+      windowIndex: 0,
+    })
+    if (warmSnapshot.output.includes('durable native line')) break
+    await delay(20)
+  }
+  assert.match(warmSnapshot.output, /durable native line\r?\n/)
+
+  await firstPtyClient.close()
+
+  secondPtyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  await secondPtyClient.ready()
+
+  const coldSnapshot = await secondPtyClient.getOutputSnapshot({
+    session: 'native-scrollback',
+    windowIndex: 0,
+  })
+  assert.equal(coldSnapshot.connected, false)
+  assert.match(coldSnapshot.output, /durable native line\r?\n/)
+  assert.equal(coldSnapshot.clients, 0)
+})
+
 test('real rust pty runtime isolates same-session windows with grouped tmux sessions', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
   const { baseDir, logFile } = createFakeTmuxBin()
   const client = createPtyBrokerRustClient({
     runtimeExecutable: RUNTIME,
-    env: {
-      ...process.env,
+    env: tmuxTestEnv({
       PATH: `${baseDir}:${process.env.PATH || ''}`,
-    },
+    }),
     readyTimeoutMs: 1000,
     log: { log() {}, error() {} },
   })
@@ -267,10 +989,9 @@ test('real rust pty runtime refuses missing requested windows instead of reusing
   const { baseDir, logFile } = createFakeTmuxBin()
   const client = createPtyBrokerRustClient({
     runtimeExecutable: RUNTIME,
-    env: {
-      ...process.env,
+    env: tmuxTestEnv({
       PATH: `${baseDir}:${process.env.PATH || ''}`,
-    },
+    }),
     readyTimeoutMs: 1000,
     log: { log() {}, error() {} },
   })
@@ -308,20 +1029,18 @@ test('real rust pty runtime forces an xterm TERM when parent env is dumb', { ski
   const { baseDir, tmuxPath } = createRealTmuxBin(realTmux)
   const createSession = spawnSync(tmuxPath, ['new-session', '-d', '-s', 'main', '-n', 'shell', 'cat'], {
     encoding: 'utf8',
-    env: {
-      ...process.env,
+    env: tmuxTestEnv({
       TERM: 'xterm-256color',
-    },
+    }),
   })
   assert.equal(createSession.status, 0, createSession.stderr || createSession.stdout)
 
   const client = createPtyBrokerRustClient({
     runtimeExecutable: RUNTIME,
-    env: {
-      ...process.env,
+    env: tmuxTestEnv({
       PATH: `${baseDir}:${process.env.PATH || ''}`,
       TERM: 'dumb',
-    },
+    }),
     readyTimeoutMs: 1000,
     log: { log() {}, error() {} },
   })
@@ -384,11 +1103,10 @@ test('real rust pty runtime clears stale grouped tmux sessions left by an ungrac
   }
 
   const { baseDir, tmuxPath } = createRealTmuxBin(realTmux)
-  const env = {
-    ...process.env,
+  const env = tmuxTestEnv({
     PATH: `${baseDir}:${process.env.PATH || ''}`,
     TERM: 'xterm-256color',
-  }
+  })
 
   const createSession = spawnSync(tmuxPath, ['new-session', '-d', '-s', 'main', '-n', 'shell', 'cat'], {
     encoding: 'utf8',

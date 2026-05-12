@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod config;
 pub mod codex_replay;
+pub mod native_session_registry;
 pub mod path_utils;
 pub mod project_defaults;
 pub mod runtime_config;

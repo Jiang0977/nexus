@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
+import { DatabaseSync } from 'node:sqlite'
 
 import { createSessionManagementRustClient } from './helpers/sessionManagementRustClient.js'
 
@@ -42,6 +43,13 @@ function createSessionFile(baseDir, { id, datePath, cwd, timestamp = '2026-04-14
   return filePath
 }
 
+function countLogMatches(log, pattern) {
+  return log
+    .split('\n')
+    .filter((line) => pattern.test(line))
+    .length
+}
+
 function ensureBuilt() {
   if (buildChecked && existsSync(RUNTIME)) return
   const build = spawnSync('npm', ['run', 'build:rust-session-runtime'], {
@@ -76,6 +84,9 @@ case "$cmd" in
     exit 1
     ;;
   list-sessions)
+    if [ "\${FAKE_TMUX_LIST_SESSIONS_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
     printf '%s\n' \
       'nexus-preview-rust|1|1' \
       'legacy-preview|2|0' \
@@ -132,7 +143,7 @@ case "$cmd" in
     if [ "$1" = "-t" ] && [ "$3" = "NEXUS_LAST_CHANNEL" ]; then
       case "$2" in
         legacy-preview)
-          printf 'NEXUS_LAST_CHANNEL=4\n'
+          printf 'NEXUS_LAST_CHANNEL=%s\n' "\${FAKE_TMUX_LEGACY_LAST_CHANNEL:-4}"
           exit 0
           ;;
       esac
@@ -198,6 +209,10 @@ case "$cmd" in
           exit 0
           ;;
         '#I')
+          if [ -n "\${FAKE_TMUX_LEGACY_WINDOW_INDEXES:-}" ]; then
+            printf '%s\n' "$FAKE_TMUX_LEGACY_WINDOW_INDEXES"
+            exit 0
+          fi
           printf '%s\n' \
             '1' \
             '4'
@@ -302,6 +317,7 @@ test('real rust session runtime creates project/channel and returns resume windo
   assert.match(log, /new-session\|-d -s workspace-demo -n demo-work -c \/workspace\/demo shell:codex:work:\/workspace\/demo/)
   assert.match(log, /set-environment\|-t workspace-demo NEXUS_CWD \/workspace\/demo/)
   assert.match(log, /has-session\|-t workspace-demo/)
+  assert.equal(countLogMatches(log, /^has-session\|-t workspace-demo$/), 2)
   assert.match(log, /new-window\|-t workspace-demo -c \/workspace\/demo -n review exec zsh -i/)
   assert.match(log, /new-window\|-P -F #\{window_id\}\|#\{window_index\}\|#\{window_name\} -t workspace-demo -c \/workspace\/demo -n codex-history shell:codex::\/workspace\/demo:\[object Object\]/)
 })
@@ -396,6 +412,8 @@ test('real rust session runtime creates a missing session before project channel
 
   const log = readFileSync(logFile, 'utf8')
   assert.match(log, /has-session\|-t missing-project/)
+  assert.equal(countLogMatches(log, /^has-session\|-t missing-project$/), 1)
+  assert.equal(countLogMatches(log, /^new-session\|-d -s missing-project -n shell exec zsh -i$/), 1)
   assert.match(log, /new-session\|-d -s missing-project -n shell exec zsh -i/)
   assert.match(log, /new-window\|-t missing-project -c \/workspace\/demo -n review exec zsh -i/)
 })
@@ -465,6 +483,54 @@ test('real rust session runtime exposes all tmux-backed sessions and projects th
   assert.match(log, /display-message\|-t demo-fallback -p #\{pane_current_path\}/)
   assert.match(log, /list-windows\|-t legacy-preview -F #\{window_index\}\|#\{window_name\}\|#\{window_active\}\|#\{pane_current_path\}/)
   assert.match(log, /list-windows\|-t legacy-preview -F #I/)
+})
+
+test('real rust session runtime falls back to current project when tmux discovery fails', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const { baseDir } = createFakeTmuxBin()
+  const client = createClient(baseDir, {
+    TMUX_SESSION: 'nexus-preview-rust',
+    WORKSPACE_ROOT: '/tmp/nexus-preview-workspace',
+    FAKE_TMUX_LIST_SESSIONS_FAIL: '1',
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await client.ready()
+
+  assert.deepEqual(await client.listTmuxSessions(), [
+    { name: 'nexus-preview-rust', windows: 0, attached: false },
+  ])
+
+  assert.deepEqual(await client.listProjects(), [
+    { name: 'nexus-preview-rust', path: '/tmp/nexus-preview-workspace', active: true, channelCount: 0 },
+  ])
+})
+
+test('real rust session runtime drops invalid last channel metadata on activate', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const { baseDir } = createFakeTmuxBin()
+  const client = createClient(baseDir, {
+    FAKE_TMUX_HAS_SESSION: '1',
+    FAKE_TMUX_LEGACY_LAST_CHANNEL: '99',
+    FAKE_TMUX_LEGACY_WINDOW_INDEXES: '1\n4',
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await client.ready()
+
+  assert.deepEqual(await client.activateProject({ projectName: 'legacy-preview' }), {
+    active: true,
+    project: 'legacy-preview',
+    lastChannel: null,
+  })
 })
 
 test('real rust session runtime hides internal nexus-pty sessions from discoverable workspaces', { skip: process.platform === 'win32' }, async (t) => {
@@ -623,4 +689,385 @@ test('real rust session runtime handles codex history listing, detail, resume, a
   assert.match(log, /list-windows\|-t demo-project -F #\{window_id\}\|#\{window_index\}\|#\{@nexus_codex_resume_session_id\}/)
   assert.match(log, /new-window\|-t demo-project -n shell exec zsh -i/)
   assert.match(log, /kill-window\|-t @9/)
+})
+
+test('real rust session runtime creates and lists native registry projects and channels', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-session-registry-'))
+  const dbPath = join(baseDir, 'session.db')
+  const client = createSessionManagementRustClient({
+    runtimeExecutable: RUNTIME,
+    env: {
+      ...process.env,
+      NEXUS_SESSION_BACKEND: 'native',
+      NEXUS_NATIVE_SESSION_DB: dbPath,
+      WORKSPACE_ROOT: '/workspace',
+    },
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await client.ready()
+
+  assert.deepEqual(await client.createProject({
+    sessionName: 'native-demo',
+    cwd: '/workspace/native-demo',
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: { HTTPS_PROXY: 'http://proxy.local' },
+  }), { ok: true })
+
+  assert.deepEqual(await client.createProjectChannel({
+    sessionName: 'native-demo',
+    cwd: '/workspace/native-demo/review',
+    channelName: 'review',
+    shellCmd: 'cat',
+    defaultShellCmd: 'ignored',
+    proxyVars: {},
+  }), { ok: true })
+
+  assert.deepEqual(await client.listTmuxSessions(), [
+    { name: 'native-demo', windows: 2, attached: false },
+  ])
+
+  assert.deepEqual(await client.listProjects(), [
+    { name: 'native-demo', path: '/workspace/native-demo', active: false, channelCount: 2 },
+  ])
+
+  assert.deepEqual(await client.getSessionCwd({ sessionName: 'native-demo' }), {
+    cwd: '/workspace/native-demo',
+    relative: 'native-demo',
+  })
+
+  assert.deepEqual(await client.listProjectChannels({ projectName: 'native-demo' }), {
+    project: 'native-demo',
+    channels: [
+      { index: 1, name: 'review', active: true, cwd: '/workspace/native-demo/review' },
+      { index: 0, name: 'shell', active: false, cwd: '/workspace/native-demo' },
+    ],
+  })
+
+  assert.deepEqual(await client.listSessionWindows({ sessionName: 'native-demo' }), {
+    session: 'native-demo',
+    windows: [
+      { index: 0, name: 'shell', active: false },
+      { index: 1, name: 'review', active: true },
+    ],
+  })
+
+  assert.deepEqual(await client.activateProject({ projectName: 'native-demo' }), {
+    active: true,
+    project: 'native-demo',
+    lastChannel: 1,
+  })
+})
+
+test('real rust session runtime stores native codex resume metadata in the registry', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-codex-resume-'))
+  const dbPath = join(baseDir, 'session.db')
+  const client = createSessionManagementRustClient({
+    runtimeExecutable: RUNTIME,
+    env: {
+      ...process.env,
+      NEXUS_SESSION_BACKEND: 'native',
+      NEXUS_NATIVE_SESSION_DB: dbPath,
+      WORKSPACE_ROOT: '/workspace',
+    },
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await client.ready()
+
+  assert.deepEqual(await client.createProject({
+    sessionName: 'native-codex',
+    cwd: '/workspace/native-codex',
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: {},
+  }), { ok: true })
+
+  assert.deepEqual(await client.resumeCodexSession({
+    sessionName: 'native-codex',
+    projectName: 'native-codex',
+    sessionId: 'session-1',
+    cwd: '/workspace/native-codex',
+    windowName: 'codex-history',
+    shellCmd: 'cat',
+    launchPlan: {
+      program: 'cat',
+      args: [],
+      env: {},
+      cwd: '/workspace/native-codex',
+    },
+    proxyVars: {},
+  }), {
+    ok: true,
+    project: 'native-codex',
+    channelIndex: 1,
+    channelName: 'codex-history',
+    sessionId: 'session-1',
+  })
+
+  assert.deepEqual(await client.listProjectChannels({ projectName: 'native-codex' }), {
+    project: 'native-codex',
+    channels: [
+      { index: 1, name: 'codex-history', active: true, cwd: '/workspace/native-codex' },
+      { index: 0, name: 'shell', active: false, cwd: '/workspace/native-codex' },
+    ],
+  })
+
+  const db = new DatabaseSync(dbPath)
+  try {
+    const row = db.prepare(`
+      SELECT value
+      FROM channel_metadata
+      WHERE project_name = ? AND channel_index = ? AND key = ?
+    `).get('native-codex', 1, '@nexus_codex_resume_session_id')
+    assert.equal(row.value, 'session-1')
+  } finally {
+    db.close()
+  }
+})
+
+test('real rust session runtime deletes native codex sessions and closes metadata channels', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-codex-delete-'))
+  const dbPath = join(baseDir, 'session.db')
+  const codexHome = join(baseDir, '.codex')
+  writeJsonl(join(codexHome, 'session_index.jsonl'), [
+    JSON.stringify({
+      id: 'session-1',
+      thread_name: 'Fix bug',
+      updated_at: '2026-04-14T12:00:00.000Z',
+    }),
+  ])
+  createSessionFile(codexHome, {
+    id: 'session-1',
+    datePath: '2026/04/14',
+    cwd: '/workspace/native-codex',
+    metaFields: {
+      originator: 'codex_cli_rs',
+      cli_version: '0.117.0',
+      source: 'cli',
+      model_provider: 'openai',
+    },
+  })
+
+  const client = createSessionManagementRustClient({
+    runtimeExecutable: RUNTIME,
+    env: {
+      ...process.env,
+      NEXUS_SESSION_BACKEND: 'native',
+      NEXUS_NATIVE_SESSION_DB: dbPath,
+      NEXUS_SESSION_MANAGEMENT_CODEX_HOME: codexHome,
+      NEXUS_DATA_DIR: baseDir,
+      WORKSPACE_ROOT: '/workspace',
+    },
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await client.ready()
+
+  assert.deepEqual(await client.createProject({
+    sessionName: 'native-codex',
+    cwd: '/workspace/native-codex',
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: {},
+  }), { ok: true })
+
+  assert.deepEqual(await client.resumeCodexSession({
+    sessionName: 'native-codex',
+    projectName: 'native-codex',
+    sessionId: 'session-1',
+    cwd: '/workspace/native-codex',
+    windowName: 'codex-history',
+    shellCmd: 'cat',
+    launchPlan: {
+      program: 'cat',
+      args: [],
+      env: {},
+      cwd: '/workspace/native-codex',
+    },
+    proxyVars: {},
+  }), {
+    ok: true,
+    project: 'native-codex',
+    channelIndex: 1,
+    channelName: 'codex-history',
+    sessionId: 'session-1',
+  })
+
+  assert.deepEqual(await client.deleteSessionWindow({
+    sessionName: 'native-codex',
+    index: '0',
+    defaultShellCmd: 'cat',
+  }), { ok: true })
+  mkdirSync(join(baseDir, 'codex-runtime', 'native-native-codex-1'), { recursive: true })
+  writeFileSync(join(baseDir, 'codex-runtime', 'native-native-codex-1', 'marker.txt'), 'runtime', 'utf8')
+
+  assert.deepEqual(await client.deleteProjectCodexSession({
+    projectName: 'native-codex',
+    sessionId: 'session-1',
+    defaultShellCmd: 'cat',
+  }), {
+    ok: true,
+    sessionId: 'session-1',
+    closedWindowIndexes: [1],
+  })
+
+  assert.equal(existsSync(join(codexHome, 'sessions', '2026', '04', '14', 'rollout-2026-04-14-session-1.jsonl')), false)
+  assert.equal(readFileSync(join(codexHome, 'session_index.jsonl'), 'utf8').includes('session-1'), false)
+  assert.equal(existsSync(join(baseDir, 'codex-runtime', 'native-native-codex-1')), false)
+  assert.deepEqual(await client.listProjectChannels({ projectName: 'native-codex' }), {
+    project: 'native-codex',
+    channels: [
+      { index: 2, name: 'shell', active: true, cwd: '/workspace/native-codex' },
+    ],
+  })
+
+  const db = new DatabaseSync(dbPath)
+  try {
+    const row = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM channel_metadata
+      WHERE project_name = ? AND key = ? AND value = ?
+    `).get('native-codex', '@nexus_codex_resume_session_id', 'session-1')
+    assert.equal(row.count, 0)
+  } finally {
+    db.close()
+  }
+})
+
+test('real rust session runtime handles native lifecycle parity through registry', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-session-lifecycle-'))
+  const dbPath = join(baseDir, 'session.db')
+  const client = createSessionManagementRustClient({
+    runtimeExecutable: RUNTIME,
+    env: {
+      ...process.env,
+      NEXUS_SESSION_BACKEND: 'native',
+      NEXUS_NATIVE_SESSION_DB: dbPath,
+      WORKSPACE_ROOT: '/workspace',
+    },
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await client.ready()
+
+  assert.deepEqual(await client.createProject({
+    sessionName: 'native-lifecycle',
+    cwd: '/workspace/native-lifecycle',
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: {},
+  }), { ok: true })
+
+  assert.deepEqual(await client.createProjectChannel({
+    sessionName: 'native-lifecycle',
+    cwd: '/workspace/native-lifecycle/review',
+    channelName: 'review',
+    shellCmd: 'cat',
+    defaultShellCmd: 'ignored',
+    proxyVars: {},
+  }), { ok: true })
+
+  assert.deepEqual(await client.renameProject({
+    oldName: 'native-lifecycle',
+    newName: 'native-lifecycle-renamed',
+  }), {
+    ok: true,
+    oldName: 'native-lifecycle',
+    newName: 'native-lifecycle-renamed',
+  })
+
+  assert.deepEqual(await client.attachSessionWindow({
+    sessionName: 'native-lifecycle-renamed',
+    index: 0,
+  }), { ok: true })
+
+  assert.deepEqual(await client.renameSessionWindow({
+    sessionName: 'native-lifecycle-renamed',
+    index: 0,
+    name: 'main-shell',
+  }), { ok: true, name: 'main-shell' })
+
+  assert.deepEqual(await client.listProjectChannels({ projectName: 'native-lifecycle-renamed' }), {
+    project: 'native-lifecycle-renamed',
+    channels: [
+      { index: 1, name: 'review', active: false, cwd: '/workspace/native-lifecycle/review' },
+      { index: 0, name: 'main-shell', active: true, cwd: '/workspace/native-lifecycle' },
+    ],
+  })
+
+  assert.deepEqual(await client.deleteSessionWindow({
+    sessionName: 'native-lifecycle-renamed',
+    index: 1,
+    defaultShellCmd: 'ignored',
+  }), { ok: true })
+
+  assert.deepEqual(await client.listSessionWindows({ sessionName: 'native-lifecycle-renamed' }), {
+    session: 'native-lifecycle-renamed',
+    windows: [
+      { index: 0, name: 'main-shell', active: true },
+    ],
+  })
+
+  await assert.rejects(
+    () => client.deleteSessionWindow({
+      sessionName: 'native-lifecycle-renamed',
+      index: 0,
+      defaultShellCmd: '',
+    }),
+    /cannot delete last native channel/,
+  )
+
+  assert.deepEqual(await client.deleteSessionWindow({
+    sessionName: 'native-lifecycle-renamed',
+    index: 0,
+    createFallbackShell: true,
+    defaultShellCmd: 'cat',
+  }), { ok: true })
+
+  assert.deepEqual(await client.listSessionWindows({ sessionName: 'native-lifecycle-renamed' }), {
+    session: 'native-lifecycle-renamed',
+    windows: [
+      { index: 1, name: 'shell', active: true },
+    ],
+  })
+
+  assert.deepEqual(await client.deleteProject({
+    sessionName: 'native-lifecycle-renamed',
+  }), { ok: true })
+
+  assert.deepEqual(await client.listProjects(), [])
+  await assert.rejects(
+    () => client.listProjectChannels({ projectName: 'native-lifecycle-renamed' }),
+    /project not found/,
+  )
 })

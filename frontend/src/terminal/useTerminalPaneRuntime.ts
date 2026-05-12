@@ -7,6 +7,7 @@ import { THEMES, type ThemeMode } from './theme'
 import type { PaneTarget } from './splitLayoutTypes'
 
 const FONT_SIZE_KEY = 'nexus_font_size'
+const USER_SCROLL_HOLD_MS = 1200
 
 export type PaneConnectionState = 'empty' | 'loading' | 'live' | 'error'
 
@@ -30,10 +31,25 @@ export function useTerminalPaneRuntime({
   const termRef = useRef<XTerm | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const userScrolledRef = useRef(false)
+  const userScrollHoldUntilRef = useRef(0)
   const lastContainerSizeRef = useRef({ w: 0, h: 0 })
   const [connectionState, setConnectionState] = useState<PaneConnectionState>(target ? 'loading' : 'empty')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
+
+  const updateScrolledState = useCallback((scrolledUp: boolean) => {
+    userScrolledRef.current = scrolledUp
+    setIsScrolledUp(scrolledUp)
+  }, [])
+
+  const markUserScrolled = useCallback(() => {
+    userScrollHoldUntilRef.current = Date.now() + USER_SCROLL_HOLD_MS
+    updateScrolledState(true)
+  }, [updateScrolledState])
+
+  const shouldAutoScroll = useCallback(() => {
+    return !userScrolledRef.current && Date.now() >= userScrollHoldUntilRef.current
+  }, [])
 
   const sendToWs = useCallback((data: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -52,16 +68,17 @@ export function useTerminalPaneRuntime({
       wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
     }
     if (wasAtBottom) {
-      userScrolledRef.current = false
+      userScrollHoldUntilRef.current = 0
+      updateScrolledState(false)
       term.scrollToBottom()
     }
-  }, [])
+  }, [updateScrolledState])
 
   const scrollToBottom = useCallback(() => {
     termRef.current?.scrollToBottom()
-    userScrolledRef.current = false
-    setIsScrolledUp(false)
-  }, [])
+    userScrollHoldUntilRef.current = 0
+    updateScrolledState(false)
+  }, [updateScrolledState])
 
   useEffect(() => {
     const term = termRef.current
@@ -151,6 +168,9 @@ export function useTerminalPaneRuntime({
 
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type !== 'keydown') return true
+      if (['PageUp', 'Home'].includes(event.key)) {
+        markUserScrolled()
+      }
       const clipboardMod = event.ctrlKey || event.metaKey
       const clipboardKey = event.key.toLowerCase()
       const noOtherMod = !event.shiftKey && !event.altKey
@@ -169,20 +189,33 @@ export function useTerminalPaneRuntime({
       const buffer = (term as any).buffer?.active
       if (!buffer) return
       const scrolledUp = buffer.viewportY < buffer.baseY
-      userScrolledRef.current = scrolledUp
-      setIsScrolledUp(scrolledUp)
+      if (!scrolledUp && Date.now() < userScrollHoldUntilRef.current) return
+      if (!scrolledUp) userScrollHoldUntilRef.current = 0
+      updateScrolledState(scrolledUp)
     })
+
+    function onWheel(event: WheelEvent) {
+      if (event.deltaY < 0) {
+        markUserScrolled()
+      }
+    }
+
+    container.addEventListener('wheel', onWheel, { passive: true })
+    viewport?.addEventListener('wheel', onWheel, { passive: true })
 
     requestAnimationFrame(() => fitAddon.fit())
 
     return () => {
+      container.removeEventListener('wheel', onWheel)
+      viewport?.removeEventListener('wheel', onWheel)
       term.dispose()
       termRef.current = null
       fitAddonRef.current = null
       userScrolledRef.current = false
-      setIsScrolledUp(false)
+      userScrollHoldUntilRef.current = 0
+      updateScrolledState(false)
     }
-  }, [compact, enabled, sendToWs, target?.session, target?.windowIndex, themeMode])
+  }, [compact, enabled, markUserScrolled, sendToWs, target?.session, target?.windowIndex, themeMode, updateScrolledState])
 
   useEffect(() => {
     if (!enabled || !target) {
@@ -249,7 +282,7 @@ export function useTerminalPaneRuntime({
 
       nextWs.onmessage = (event) => {
         writeTerm(event.data)
-        if (!userScrolledRef.current) termRef.current?.scrollToBottom()
+        if (shouldAutoScroll()) termRef.current?.scrollToBottom()
       }
 
       nextWs.onclose = (event) => {
@@ -296,7 +329,7 @@ export function useTerminalPaneRuntime({
       wsRef.current?.close()
       wsRef.current = null
     }
-  }, [enabled, target?.session, target?.windowIndex, token])
+  }, [enabled, shouldAutoScroll, target?.session, target?.windowIndex, token])
 
   return {
     connectionState,

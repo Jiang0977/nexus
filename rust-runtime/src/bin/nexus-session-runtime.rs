@@ -11,6 +11,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
+use nexus_rust_runtime::native_session_registry::{
+    NativeLaunchPlan, NativeProcessInstance, NativeSessionRegistry,
+};
+
+#[path = "nexus_session_runtime/tmux_backend.rs"]
+mod tmux_backend;
+
+use tmux_backend::TmuxSessionBackend;
+
+const CODEX_RESUME_SESSION_METADATA_KEY: &str = "@nexus_codex_resume_session_id";
+
 #[derive(Deserialize)]
 struct Message {
     kind: String,
@@ -27,6 +38,7 @@ struct CreateProjectParams {
     cwd: String,
     initial_window_name: String,
     shell_cmd: String,
+    launch_plan: Option<NativeLaunchPlan>,
     #[serde(default)]
     proxy_vars: HashMap<String, String>,
 }
@@ -39,6 +51,7 @@ struct CreateProjectChannelParams {
     channel_name: String,
     shell_cmd: String,
     default_shell_cmd: String,
+    launch_plan: Option<NativeLaunchPlan>,
     #[serde(default)]
     proxy_vars: HashMap<String, String>,
 }
@@ -51,6 +64,7 @@ struct CreateResumeWindowParams {
     window_name: String,
     shell_cmd: String,
     default_shell_cmd: String,
+    launch_plan: Option<NativeLaunchPlan>,
     #[serde(default)]
     proxy_vars: HashMap<String, String>,
 }
@@ -161,6 +175,7 @@ struct ResumeCodexSessionParams {
     cwd: String,
     window_name: String,
     shell_cmd: String,
+    launch_plan: Option<NativeLaunchPlan>,
     #[serde(default)]
     proxy_vars: HashMap<String, String>,
 }
@@ -243,13 +258,6 @@ impl SharedState {
     }
 }
 
-struct DiscoverableSession {
-    name: String,
-    windows: usize,
-    attached: bool,
-    path: String,
-}
-
 #[derive(Clone)]
 struct CodexSessionIndexEntry {
     id: String,
@@ -283,12 +291,6 @@ struct CodexCollectionResult {
     warning: Value,
 }
 
-struct TmuxCodexResumeWindow {
-    window_id: String,
-    index: usize,
-    resume_session_id: String,
-}
-
 fn send_response<T>(
     state: &SharedState,
     id: String,
@@ -307,51 +309,6 @@ fn send_response<T>(
     });
 }
 
-fn tmux_session_exists(session: &str) -> bool {
-    Command::new("tmux")
-        .args(["has-session", "-t", session])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
-fn run_tmux(args: &[String]) -> Result<(), String> {
-    let output = Command::new("tmux")
-        .args(args)
-        .output()
-        .map_err(|error| error.to_string())?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if !stderr.is_empty() {
-        Err(stderr)
-    } else {
-        Err(format!("tmux command failed: {}", args.join(" ")))
-    }
-}
-
-fn run_tmux_capture(args: &[String]) -> Result<String, String> {
-    let output = Command::new("tmux")
-        .args(args)
-        .output()
-        .map_err(|error| error.to_string())?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if !stderr.is_empty() {
-        Err(stderr)
-    } else {
-        Err(format!("tmux command failed: {}", args.join(" ")))
-    }
-}
-
 fn env_or_default(key: &str, default: &str) -> String {
     env::var(key)
         .ok()
@@ -368,65 +325,36 @@ fn current_workspace_root() -> String {
     env_or_default("WORKSPACE_ROOT", "")
 }
 
-fn is_internal_tmux_session(session: &str) -> bool {
-    session.trim().starts_with("nexus-pty-")
+fn native_backend_enabled() -> bool {
+    env::var("NEXUS_SESSION_BACKEND")
+        .ok()
+        .map(|value| value.trim().eq_ignore_ascii_case("native"))
+        .unwrap_or(false)
 }
 
-fn read_tmux_env_value(session: &str, key: &str) -> String {
-    match run_tmux_capture(&[
-        "show-environment".to_string(),
-        "-t".to_string(),
-        session.to_string(),
-        key.to_string(),
-    ]) {
-        Ok(output) => output
-            .strip_prefix(&format!("{}=", key))
-            .unwrap_or("")
-            .trim()
-            .to_string(),
-        Err(_) => String::new(),
-    }
-}
-
-fn read_session_discovery_path(session: &str, windows_count: usize) -> String {
-    let session_path = read_tmux_env_value(session, "NEXUS_CWD");
-    if !session_path.is_empty() {
-        return session_path;
-    }
-    if windows_count == 0 {
-        return String::new();
-    }
-    match run_tmux_capture(&[
-        "list-windows".to_string(),
-        "-t".to_string(),
-        session.to_string(),
-        "-F".to_string(),
-        "#{pane_current_path}".to_string(),
-    ]) {
-        Ok(output) => output.lines().next().unwrap_or("").trim().to_string(),
-        Err(_) => String::new(),
-    }
+fn native_registry() -> Result<NativeSessionRegistry, String> {
+    NativeSessionRegistry::open_default()
 }
 
 fn resolve_project_path(session_name: &str) -> String {
     let workspace_root = current_workspace_root();
-    let env_cwd = read_tmux_env_value(session_name, "NEXUS_CWD");
-    if !env_cwd.is_empty() {
-        return env_cwd;
+    TmuxSessionBackend::new().resolve_project_path(session_name, &workspace_root)
+}
+
+fn resolve_existing_project_path(project_name: &str) -> Result<String, String> {
+    let project_name = project_name.trim();
+    if project_name.is_empty() {
+        return Err("project not found".to_string());
     }
 
-    if let Ok(pane_path) = run_tmux_capture(&[
-        "display-message".to_string(),
-        "-t".to_string(),
-        session_name.to_string(),
-        "-p".to_string(),
-        "#{pane_current_path}".to_string(),
-    ]) && !pane_path.is_empty()
-    {
-        return pane_path;
+    if native_backend_enabled() {
+        return native_registry()?.get_project_cwd(project_name);
     }
 
-    workspace_root
+    if !TmuxSessionBackend::new().session_exists(project_name) {
+        return Err("project not found".to_string());
+    }
+    Ok(resolve_project_path(project_name))
 }
 
 fn current_codex_home() -> String {
@@ -882,12 +810,8 @@ fn collect_project_codex_sessions(
 
 fn list_project_codex_sessions(params: ListCodexSessionsParams) -> Result<Value, String> {
     let project_name = params.project_name.trim().to_string();
-    if project_name.is_empty() || !tmux_session_exists(&project_name) {
-        return Err("project not found".to_string());
-    }
-
     let codex_home = current_codex_home();
-    let project_path = resolve_project_path(&project_name);
+    let project_path = resolve_existing_project_path(&project_name)?;
     let page_size = parse_limit_value(&params.limit);
     let offset = parse_cursor_value(&params.cursor);
     let result = collect_project_codex_sessions(&project_name, &project_path, &codex_home);
@@ -923,15 +847,12 @@ fn list_project_codex_sessions(params: ListCodexSessionsParams) -> Result<Value,
 fn get_project_codex_session_detail(params: GetCodexSessionDetailParams) -> Result<Value, String> {
     let project_name = params.project_name.trim().to_string();
     let session_id = params.session_id.trim().to_string();
-    if project_name.is_empty() || !tmux_session_exists(&project_name) {
-        return Err("project not found".to_string());
-    }
     if session_id.is_empty() {
         return Err("session id required".to_string());
     }
 
     let codex_home = current_codex_home();
-    let project_path = resolve_project_path(&project_name);
+    let project_path = resolve_existing_project_path(&project_name)?;
     let result = collect_project_codex_sessions(&project_name, &project_path, &codex_home);
     let summary = match result.items.iter().find(|item| item.id == session_id) {
         Some(summary) => summary,
@@ -1017,48 +938,6 @@ fn delete_codex_session_file(session_id: &str, codex_home: &str) -> Result<PathB
     Ok(meta.file_path.clone())
 }
 
-fn parse_tmux_codex_resume_windows(output: &str) -> Vec<TmuxCodexResumeWindow> {
-    output
-        .lines()
-        .filter_map(|raw_line| {
-            let line = raw_line.trim();
-            if line.is_empty() {
-                return None;
-            }
-            let mut parts = line.splitn(3, '|');
-            let window_id = parts.next().unwrap_or("").to_string();
-            let index = parts.next().unwrap_or("").parse::<usize>().ok()?;
-            let resume_session_id = parts.next().unwrap_or("").to_string();
-            if window_id.is_empty() {
-                return None;
-            }
-            Some(TmuxCodexResumeWindow {
-                window_id,
-                index,
-                resume_session_id,
-            })
-        })
-        .collect()
-}
-
-fn mark_tmux_window_as_codex_resume_session(
-    window_target: &str,
-    session_id: &str,
-) -> Result<(), String> {
-    if window_target.is_empty() || session_id.is_empty() {
-        return Ok(());
-    }
-
-    run_tmux(&[
-        "set-option".to_string(),
-        "-w".to_string(),
-        "-t".to_string(),
-        window_target.to_string(),
-        "@nexus_codex_resume_session_id".to_string(),
-        session_id.to_string(),
-    ])
-}
-
 fn resolve_codex_runtime_dir(window_id: &str) -> PathBuf {
     let safe_window_id = if window_id.trim().is_empty() {
         "window-unknown".to_string()
@@ -1082,20 +961,13 @@ fn close_tmux_windows_for_codex_session(
     session_name: &str,
     session_id: &str,
     default_shell_cmd: &str,
-) -> Result<Vec<TmuxCodexResumeWindow>, String> {
+) -> Result<Vec<tmux_backend::CodexResumeWindow>, String> {
     if session_name.is_empty() || session_id.is_empty() {
         return Ok(vec![]);
     }
 
-    let output = run_tmux_capture(&[
-        "list-windows".to_string(),
-        "-t".to_string(),
-        session_name.to_string(),
-        "-F".to_string(),
-        "#{window_id}|#{window_index}|#{@nexus_codex_resume_session_id}".to_string(),
-    ])
-    .unwrap_or_default();
-    let windows = parse_tmux_codex_resume_windows(&output);
+    let backend = TmuxSessionBackend::new();
+    let (windows, total_windows) = backend.list_codex_resume_windows_with_total(session_name);
     let matched_windows = windows
         .into_iter()
         .filter(|window| window.resume_session_id == session_id)
@@ -1104,13 +976,8 @@ fn close_tmux_windows_for_codex_session(
         return Ok(vec![]);
     }
 
-    if output
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .count()
-        <= matched_windows.len()
-    {
-        run_tmux(&[
+    if total_windows <= matched_windows.len() {
+        backend.run(&[
             "new-window".to_string(),
             "-t".to_string(),
             session_name.to_string(),
@@ -1121,7 +988,7 @@ fn close_tmux_windows_for_codex_session(
     }
 
     for window in &matched_windows {
-        run_tmux(&[
+        backend.run(&[
             "kill-window".to_string(),
             "-t".to_string(),
             window.window_id.clone(),
@@ -1132,24 +999,68 @@ fn close_tmux_windows_for_codex_session(
     Ok(matched_windows)
 }
 
+fn close_native_channels_for_codex_session(
+    project_name: &str,
+    session_id: &str,
+    default_shell_cmd: &str,
+) -> Result<Vec<u32>, String> {
+    if project_name.is_empty() || session_id.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let registry = native_registry()?;
+    let matched_channels = registry.list_channels_by_metadata(
+        project_name,
+        CODEX_RESUME_SESSION_METADATA_KEY,
+        session_id,
+    )?;
+    let channel_count = registry.list_channels(project_name)?.len();
+    if channel_count <= matched_channels.len() && !default_shell_cmd.trim().is_empty() {
+        let cwd = registry.get_project_cwd(project_name)?;
+        registry.create_channel(project_name, &cwd, "shell", default_shell_cmd)?;
+    }
+
+    let mut closed_indexes = Vec::with_capacity(matched_channels.len());
+
+    for channel in matched_channels {
+        let processes = registry.running_processes_for_channel(project_name, channel.index)?;
+        terminate_native_processes(&processes)?;
+        registry.delete_channel(project_name, channel.index)?;
+        cleanup_codex_runtime(&native_window_id(project_name, channel.index));
+        closed_indexes.push(channel.index);
+    }
+
+    Ok(closed_indexes)
+}
+
 fn delete_project_codex_session(params: DeleteProjectCodexSessionParams) -> Result<Value, String> {
     let project_name = params.project_name.trim().to_string();
     let session_id = params.session_id.trim().to_string();
-    if project_name.is_empty() || !tmux_session_exists(&project_name) {
-        return Err("project not found".to_string());
-    }
     if session_id.is_empty() {
         return Err("session id required".to_string());
     }
 
     let codex_home = current_codex_home();
-    let project_path = resolve_project_path(&project_name);
+    let project_path = resolve_existing_project_path(&project_name)?;
     let result = collect_project_codex_sessions(&project_name, &project_path, &codex_home);
     if !result.items.iter().any(|item| item.id == session_id) {
         return Err("codex session not found in project".to_string());
     }
 
     delete_codex_session_file(&session_id, &codex_home)?;
+    if native_backend_enabled() {
+        let closed_window_indexes = close_native_channels_for_codex_session(
+            &project_name,
+            &session_id,
+            &params.default_shell_cmd,
+        )?;
+        return Ok(json!({
+            "ok": true,
+            "sessionId": session_id,
+            "closedWindowIndexes": closed_window_indexes,
+        }));
+    }
+
     let closed_windows = close_tmux_windows_for_codex_session(
         &project_name,
         &session_id,
@@ -1163,56 +1074,28 @@ fn delete_project_codex_session(params: DeleteProjectCodexSessionParams) -> Resu
     }))
 }
 
-fn list_discoverable_sessions() -> Vec<DiscoverableSession> {
+fn list_discoverable_sessions() -> Vec<tmux_backend::DiscoverableSession> {
     let tmux_session = current_tmux_session();
     let workspace_root = current_workspace_root();
-
-    match run_tmux_capture(&[
-        "list-sessions".to_string(),
-        "-F".to_string(),
-        "#{session_name}|#{session_windows}|#{session_attached}".to_string(),
-    ]) {
-        Ok(stdout) => stdout
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .filter_map(|line| {
-                let mut parts = line.splitn(3, '|');
-                let name = parts.next().unwrap_or("").trim().to_string();
-                if name.is_empty() || is_internal_tmux_session(&name) {
-                    return None;
-                }
-                let windows = parts
-                    .next()
-                    .unwrap_or("0")
-                    .trim()
-                    .parse::<usize>()
-                    .unwrap_or(0);
-                let attached = parts
-                    .next()
-                    .unwrap_or("0")
-                    .trim()
-                    .parse::<usize>()
-                    .unwrap_or(0)
-                    > 0;
-                let path = read_session_discovery_path(&name, windows);
-                Some(DiscoverableSession {
-                    name,
-                    windows,
-                    attached,
-                    path,
-                })
-            })
-            .collect(),
-        Err(_) => vec![DiscoverableSession {
-            name: tmux_session,
-            windows: 0,
-            attached: false,
-            path: workspace_root,
-        }],
-    }
+    TmuxSessionBackend::new().list_discoverable_sessions(&tmux_session, &workspace_root)
 }
 
 fn list_tmux_sessions() -> Result<Value, String> {
+    if native_backend_enabled() {
+        let sessions = native_registry()?
+            .list_projects()?
+            .into_iter()
+            .map(|project| {
+                json!({
+                    "name": project.name,
+                    "windows": project.channel_count,
+                    "attached": false,
+                })
+            })
+            .collect::<Vec<_>>();
+        return Ok(Value::Array(sessions));
+    }
+
     let sessions = list_discoverable_sessions()
         .into_iter()
         .map(|session| {
@@ -1227,21 +1110,41 @@ fn list_tmux_sessions() -> Result<Value, String> {
 }
 
 fn list_all_session_names() -> Result<Value, String> {
-    let sessions = run_tmux_capture(&[
-        "list-sessions".to_string(),
-        "-F".to_string(),
-        "#{session_name}".to_string(),
-    ])?
-    .lines()
-    .map(|line| line.trim().to_string())
-    .filter(|line| !line.is_empty())
-    .map(Value::String)
-    .collect::<Vec<_>>();
+    if native_backend_enabled() {
+        let sessions = native_registry()?
+            .list_projects()?
+            .into_iter()
+            .map(|project| Value::String(project.name))
+            .collect::<Vec<_>>();
+        return Ok(Value::Array(sessions));
+    }
+
+    let sessions = TmuxSessionBackend::new()
+        .list_all_session_names()?
+        .into_iter()
+        .map(Value::String)
+        .collect::<Vec<_>>();
 
     Ok(Value::Array(sessions))
 }
 
 fn list_projects() -> Result<Value, String> {
+    if native_backend_enabled() {
+        let projects = native_registry()?
+            .list_projects()?
+            .into_iter()
+            .map(|project| {
+                json!({
+                    "name": project.name,
+                    "path": project.cwd,
+                    "active": false,
+                    "channelCount": project.channel_count,
+                })
+            })
+            .collect::<Vec<_>>();
+        return Ok(Value::Array(projects));
+    }
+
     let tmux_session = current_tmux_session();
     let workspace_root = current_workspace_root();
     let mut projects = list_discoverable_sessions()
@@ -1273,11 +1176,28 @@ fn get_session_cwd(params: GetSessionCwdParams) -> Result<Value, String> {
     };
     let workspace_root = current_workspace_root();
 
+    if native_backend_enabled() {
+        let cwd = native_registry()?.get_project_cwd(&session_name)?;
+        let relative = if !workspace_root.is_empty() && cwd.starts_with(&workspace_root) {
+            cwd[workspace_root.len()..]
+                .trim_start_matches('/')
+                .to_string()
+        } else {
+            String::new()
+        };
+        return Ok(json!({
+            "cwd": cwd,
+            "relative": relative,
+        }));
+    }
+
+    let backend = TmuxSessionBackend::new();
+
     let mut cwd = workspace_root.clone();
-    let env_cwd = read_tmux_env_value(&session_name, "NEXUS_CWD");
+    let env_cwd = backend.read_env_value(&session_name, "NEXUS_CWD");
     if !env_cwd.is_empty() {
         cwd = env_cwd;
-    } else if let Ok(pane_path) = run_tmux_capture(&[
+    } else if let Ok(pane_path) = backend.capture(&[
         "display-message".to_string(),
         "-t".to_string(),
         session_name.clone(),
@@ -1304,7 +1224,26 @@ fn get_session_cwd(params: GetSessionCwdParams) -> Result<Value, String> {
 
 fn list_project_channels(params: ListProjectChannelsParams) -> Result<Value, String> {
     let project_name = params.project_name.trim().to_string();
-    let stdout = run_tmux_capture(&[
+    if native_backend_enabled() {
+        let channels = native_registry()?
+            .list_channels(&project_name)?
+            .into_iter()
+            .map(|channel| {
+                json!({
+                    "index": channel.index,
+                    "name": channel.name,
+                    "active": channel.active,
+                    "cwd": channel.cwd,
+                })
+            })
+            .collect::<Vec<_>>();
+        return Ok(json!({
+            "project": project_name,
+            "channels": channels,
+        }));
+    }
+
+    let stdout = TmuxSessionBackend::new().capture(&[
         "list-windows".to_string(),
         "-t".to_string(),
         project_name.clone(),
@@ -1355,7 +1294,26 @@ fn list_session_windows(params: ListSessionWindowsParams) -> Result<Value, Strin
         session_name
     };
 
-    let stdout = run_tmux_capture(&[
+    if native_backend_enabled() {
+        let windows = native_registry()?
+            .list_channels(&session_name)?
+            .into_iter()
+            .rev()
+            .map(|channel| {
+                json!({
+                    "index": channel.index,
+                    "name": channel.name,
+                    "active": channel.active,
+                })
+            })
+            .collect::<Vec<_>>();
+        return Ok(json!({
+            "session": session_name,
+            "windows": windows,
+        }));
+    }
+
+    let stdout = TmuxSessionBackend::new().capture(&[
         "list-windows".to_string(),
         "-t".to_string(),
         session_name.clone(),
@@ -1392,16 +1350,31 @@ fn list_session_windows(params: ListSessionWindowsParams) -> Result<Value, Strin
 
 fn activate_project(params: ActivateProjectParams) -> Result<Value, String> {
     let project_name = params.project_name.trim().to_string();
-    if project_name.is_empty() || !tmux_session_exists(&project_name) {
+    if native_backend_enabled() {
+        let channels = native_registry()?.list_channels(&project_name)?;
+        let last_channel = channels
+            .iter()
+            .find(|channel| channel.active)
+            .map(|channel| channel.index);
+        return Ok(json!({
+            "active": true,
+            "project": project_name,
+            "lastChannel": last_channel,
+        }));
+    }
+
+    let backend = TmuxSessionBackend::new();
+    if project_name.is_empty() || !backend.session_exists(&project_name) {
         return Err("project not found".to_string());
     }
 
-    let mut last_channel = read_tmux_env_value(&project_name, "NEXUS_LAST_CHANNEL")
+    let mut last_channel = backend
+        .read_env_value(&project_name, "NEXUS_LAST_CHANNEL")
         .parse::<usize>()
         .ok();
 
     if let Some(candidate) = last_channel {
-        match run_tmux_capture(&[
+        match backend.capture(&[
             "list-windows".to_string(),
             "-t".to_string(),
             project_name.clone(),
@@ -1431,94 +1404,28 @@ fn activate_project(params: ActivateProjectParams) -> Result<Value, String> {
     }))
 }
 
-fn ensure_tmux_session(session: &str, default_shell_cmd: &str) -> Result<(), String> {
-    if tmux_session_exists(session) {
-        return Ok(());
-    }
-
-    run_tmux(&[
-        "new-session".to_string(),
-        "-d".to_string(),
-        "-s".to_string(),
-        session.to_string(),
-        "-n".to_string(),
-        "shell".to_string(),
-        default_shell_cmd.to_string(),
-    ])
-}
-
-fn set_tmux_env(session: &str, key: &str, value: &str) -> Result<(), String> {
-    run_tmux(&[
-        "set-environment".to_string(),
-        "-t".to_string(),
-        session.to_string(),
-        key.to_string(),
-        value.to_string(),
-    ])
-}
-
 fn mark_session_owned_by_current_instance(session: &str) {
     let owner_session = current_tmux_session();
-    if owner_session.trim().is_empty() {
-        return;
-    }
-    let _ = set_tmux_env(session, "NEXUS_OWNER_SESSION", &owner_session);
-}
-
-fn apply_proxy_vars(session: &str, proxy_vars: HashMap<String, String>) -> Result<(), String> {
-    for (key, value) in proxy_vars {
-        set_tmux_env(session, &key, &value)?;
-    }
-    Ok(())
+    TmuxSessionBackend::new().mark_session_owned_by_current_instance(session, &owner_session);
 }
 
 fn session_window_target(session: &str, index: &WindowIndex) -> String {
     format!("{}:{}", session, index.as_string())
 }
 
+fn native_window_index(index: &WindowIndex) -> Result<u32, String> {
+    index
+        .as_string()
+        .parse::<u32>()
+        .map_err(|_| "invalid native window index".to_string())
+}
+
+fn native_window_id(session_name: &str, channel_index: u32) -> String {
+    format!("native:{}:{}", session_name, channel_index)
+}
+
 fn get_tmux_window_id(session: &str, index: &WindowIndex) -> String {
-    run_tmux_capture(&[
-        "display-message".to_string(),
-        "-t".to_string(),
-        session_window_target(session, index),
-        "-p".to_string(),
-        "#{window_id}".to_string(),
-    ])
-    .unwrap_or_default()
-}
-
-fn list_tmux_window_ids(session: &str) -> Vec<String> {
-    run_tmux_capture(&[
-        "list-windows".to_string(),
-        "-t".to_string(),
-        session.to_string(),
-        "-F".to_string(),
-        "#{window_id}".to_string(),
-    ])
-    .map(|output| {
-        output
-            .lines()
-            .map(|line| line.trim().to_string())
-            .filter(|line| !line.is_empty())
-            .collect::<Vec<_>>()
-    })
-    .unwrap_or_default()
-}
-
-fn count_tmux_windows(session: &str) -> Result<usize, String> {
-    run_tmux_capture(&[
-        "list-windows".to_string(),
-        "-t".to_string(),
-        session.to_string(),
-        "-F".to_string(),
-        "#{window_index}".to_string(),
-    ])
-    .map(|output| {
-        output
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .count()
-    })
+    TmuxSessionBackend::new().window_id(&session_window_target(session, index))
 }
 
 fn cleanup_codex_runtime(window_id: &str) {
@@ -1528,8 +1435,95 @@ fn cleanup_codex_runtime(window_id: &str) {
     let _ = fs::remove_dir_all(resolve_codex_runtime_dir(window_id));
 }
 
+fn native_pid_alive(pid: u32) -> bool {
+    if cfg!(windows) {
+        let filter = format!("PID eq {pid}");
+        return Command::new("tasklist")
+            .args(["/FI", &filter])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .map(|output| {
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
+            })
+            .unwrap_or(false);
+    }
+
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn terminate_native_process(process: &NativeProcessInstance) -> Result<(), String> {
+    let Some(pid) = process.os_pid else {
+        return Ok(());
+    };
+
+    let status = if cfg!(windows) {
+        Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .status()
+    } else {
+        Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .status()
+    }
+    .map_err(|error| error.to_string())?;
+
+    if status.success() || !native_pid_alive(pid) {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to terminate native process pid {} for {}:{}",
+            pid, process.project_name, process.channel_index
+        ))
+    }
+}
+
+fn terminate_native_processes(processes: &[NativeProcessInstance]) -> Result<(), String> {
+    let errors = processes
+        .iter()
+        .filter_map(|process| terminate_native_process(process).err())
+        .collect::<Vec<_>>();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "native process cleanup failed: {}",
+            errors.join("; ")
+        ))
+    }
+}
+
 fn create_project(state: &SharedState, params: CreateProjectParams) -> Result<Value, String> {
-    run_tmux(&[
+    if native_backend_enabled() {
+        native_registry()?.create_project_with_launch_plan(
+            &params.session_name,
+            &params.cwd,
+            &params.initial_window_name,
+            &params.shell_cmd,
+            params.launch_plan.as_ref(),
+        )?;
+        state.projects_created.fetch_add(1, Ordering::SeqCst);
+        state.windows_created.fetch_add(1, Ordering::SeqCst);
+        return Ok(serde_json::json!({ "ok": true }));
+    }
+
+    let backend = TmuxSessionBackend::new();
+    backend.run(&[
         "new-session".to_string(),
         "-d".to_string(),
         "-s".to_string(),
@@ -1540,8 +1534,8 @@ fn create_project(state: &SharedState, params: CreateProjectParams) -> Result<Va
         params.cwd.clone(),
         params.shell_cmd,
     ])?;
-    set_tmux_env(&params.session_name, "NEXUS_CWD", &params.cwd)?;
-    apply_proxy_vars(&params.session_name, params.proxy_vars)?;
+    backend.set_env(&params.session_name, "NEXUS_CWD", &params.cwd)?;
+    backend.apply_proxy_vars(&params.session_name, params.proxy_vars)?;
     mark_session_owned_by_current_instance(&params.session_name);
 
     state.projects_created.fetch_add(1, Ordering::SeqCst);
@@ -1553,9 +1547,22 @@ fn create_project_channel(
     state: &SharedState,
     params: CreateProjectChannelParams,
 ) -> Result<Value, String> {
-    ensure_tmux_session(&params.session_name, &params.default_shell_cmd)?;
-    apply_proxy_vars(&params.session_name, params.proxy_vars)?;
-    run_tmux(&[
+    if native_backend_enabled() {
+        native_registry()?.create_channel_with_launch_plan(
+            &params.session_name,
+            &params.cwd,
+            &params.channel_name,
+            &params.shell_cmd,
+            params.launch_plan.as_ref(),
+        )?;
+        state.windows_created.fetch_add(1, Ordering::SeqCst);
+        return Ok(serde_json::json!({ "ok": true }));
+    }
+
+    let backend = TmuxSessionBackend::new();
+    backend.ensure_session(&params.session_name, &params.default_shell_cmd)?;
+    backend.apply_proxy_vars(&params.session_name, params.proxy_vars)?;
+    backend.run(&[
         "new-window".to_string(),
         "-t".to_string(),
         params.session_name.clone(),
@@ -1575,9 +1582,26 @@ fn create_resume_window(
     state: &SharedState,
     params: CreateResumeWindowParams,
 ) -> Result<Value, String> {
-    ensure_tmux_session(&params.session_name, &params.default_shell_cmd)?;
-    apply_proxy_vars(&params.session_name, params.proxy_vars)?;
-    let output = run_tmux_capture(&[
+    if native_backend_enabled() {
+        let index = native_registry()?.create_channel_with_launch_plan(
+            &params.session_name,
+            &params.cwd,
+            &params.window_name,
+            &params.shell_cmd,
+            params.launch_plan.as_ref(),
+        )?;
+        state.windows_created.fetch_add(1, Ordering::SeqCst);
+        return Ok(serde_json::json!({
+            "windowId": native_window_id(&params.session_name, index),
+            "index": index,
+            "name": params.window_name,
+        }));
+    }
+
+    let backend = TmuxSessionBackend::new();
+    backend.ensure_session(&params.session_name, &params.default_shell_cmd)?;
+    backend.apply_proxy_vars(&params.session_name, params.proxy_vars)?;
+    let output = backend.capture(&[
         "new-window".to_string(),
         "-P".to_string(),
         "-F".to_string(),
@@ -1611,17 +1635,54 @@ fn resume_codex_session(
     state: &SharedState,
     params: ResumeCodexSessionParams,
 ) -> Result<Value, String> {
+    if native_backend_enabled() {
+        let registry = native_registry()?;
+        let project_name = if !params.project_name.trim().is_empty() {
+            params.project_name.trim().to_string()
+        } else {
+            params.session_name.trim().to_string()
+        };
+        if project_name.is_empty() {
+            return Err("project not found".to_string());
+        }
+
+        let index = registry.create_channel_with_launch_plan(
+            &project_name,
+            &params.cwd,
+            &params.window_name,
+            &params.shell_cmd,
+            params.launch_plan.as_ref(),
+        )?;
+        registry.set_channel_metadata(
+            &project_name,
+            index,
+            CODEX_RESUME_SESSION_METADATA_KEY,
+            &params.session_id,
+        )?;
+        registry.activate_channel(&project_name, index)?;
+
+        state.windows_created.fetch_add(1, Ordering::SeqCst);
+        return Ok(json!({
+            "ok": true,
+            "project": project_name,
+            "channelIndex": index,
+            "channelName": params.window_name,
+            "sessionId": params.session_id,
+        }));
+    }
+
+    let backend = TmuxSessionBackend::new();
     let project_name = if !params.project_name.trim().is_empty() {
         params.project_name.trim().to_string()
     } else {
         params.session_name.trim().to_string()
     };
-    if project_name.is_empty() || !tmux_session_exists(&project_name) {
+    if project_name.is_empty() || !backend.session_exists(&project_name) {
         return Err("project not found".to_string());
     }
 
-    apply_proxy_vars(&project_name, params.proxy_vars)?;
-    let output = run_tmux_capture(&[
+    backend.apply_proxy_vars(&project_name, params.proxy_vars)?;
+    let output = backend.capture(&[
         "new-window".to_string(),
         "-P".to_string(),
         "-F".to_string(),
@@ -1648,13 +1709,13 @@ fn resume_codex_session(
         window_id.clone()
     };
 
-    mark_tmux_window_as_codex_resume_session(&window_target, &params.session_id)?;
-    let _ = run_tmux(&[
+    backend.mark_window_as_codex_resume_session(&window_target, &params.session_id)?;
+    let _ = backend.run(&[
         "select-window".to_string(),
         "-t".to_string(),
         format!("{}:{}", project_name, index),
     ]);
-    let _ = set_tmux_env(&project_name, "NEXUS_LAST_CHANNEL", &index.to_string());
+    let _ = backend.set_env(&project_name, "NEXUS_LAST_CHANNEL", &index.to_string());
 
     state.windows_created.fetch_add(1, Ordering::SeqCst);
     Ok(json!({
@@ -1667,7 +1728,16 @@ fn resume_codex_session(
 }
 
 fn rename_project(params: RenameProjectParams) -> Result<Value, String> {
-    run_tmux(&[
+    if native_backend_enabled() {
+        native_registry()?.rename_project(&params.old_name, &params.new_name)?;
+        return Ok(serde_json::json!({
+            "ok": true,
+            "oldName": params.old_name,
+            "newName": params.new_name,
+        }));
+    }
+
+    TmuxSessionBackend::new().run(&[
         "rename-session".to_string(),
         "-t".to_string(),
         params.old_name.clone(),
@@ -1683,8 +1753,21 @@ fn rename_project(params: RenameProjectParams) -> Result<Value, String> {
 }
 
 fn delete_project(params: DeleteProjectParams) -> Result<Value, String> {
-    let window_ids = list_tmux_window_ids(&params.session_name);
-    run_tmux(&[
+    if native_backend_enabled() {
+        let registry = native_registry()?;
+        let channels = registry.list_channels(&params.session_name)?;
+        let processes = registry.running_processes_for_project(&params.session_name)?;
+        terminate_native_processes(&processes)?;
+        registry.delete_project(&params.session_name)?;
+        for channel in channels {
+            cleanup_codex_runtime(&native_window_id(&params.session_name, channel.index));
+        }
+        return Ok(serde_json::json!({ "ok": true }));
+    }
+
+    let backend = TmuxSessionBackend::new();
+    let window_ids = backend.list_window_ids(&params.session_name);
+    backend.run(&[
         "kill-session".to_string(),
         "-t".to_string(),
         params.session_name,
@@ -1698,17 +1781,33 @@ fn delete_project(params: DeleteProjectParams) -> Result<Value, String> {
 }
 
 fn attach_session_window(params: AttachSessionWindowParams) -> Result<Value, String> {
+    if native_backend_enabled() {
+        let index = native_window_index(&params.index)?;
+        native_registry()?.activate_channel(&params.session_name, index)?;
+        return Ok(serde_json::json!({ "ok": true }));
+    }
+
+    let backend = TmuxSessionBackend::new();
     let index = params.index.as_string();
     let target = session_window_target(&params.session_name, &params.index);
-    run_tmux(&["select-window".to_string(), "-t".to_string(), target])?;
-    set_tmux_env(&params.session_name, "NEXUS_LAST_CHANNEL", &index)?;
+    backend.run(&["select-window".to_string(), "-t".to_string(), target])?;
+    backend.set_env(&params.session_name, "NEXUS_LAST_CHANNEL", &index)?;
 
     Ok(serde_json::json!({ "ok": true }))
 }
 
 fn rename_session_window(params: RenameSessionWindowParams) -> Result<Value, String> {
+    if native_backend_enabled() {
+        let index = native_window_index(&params.index)?;
+        native_registry()?.rename_channel(&params.session_name, index, &params.name)?;
+        return Ok(serde_json::json!({
+            "ok": true,
+            "name": params.name,
+        }));
+    }
+
     let target = session_window_target(&params.session_name, &params.index);
-    run_tmux(&[
+    TmuxSessionBackend::new().run(&[
         "rename-window".to_string(),
         "-t".to_string(),
         target,
@@ -1722,12 +1821,34 @@ fn rename_session_window(params: RenameSessionWindowParams) -> Result<Value, Str
 }
 
 fn delete_session_window(params: DeleteSessionWindowParams) -> Result<Value, String> {
+    if native_backend_enabled() {
+        let index = native_window_index(&params.index)?;
+        let registry = native_registry()?;
+        let channel_count = registry.list_channels(&params.session_name)?.len();
+        let should_create_fallback = params.create_fallback_shell || channel_count <= 1;
+        if should_create_fallback && !params.default_shell_cmd.trim().is_empty() {
+            let cwd = registry.get_project_cwd(&params.session_name)?;
+            registry.create_channel(
+                &params.session_name,
+                &cwd,
+                "shell",
+                &params.default_shell_cmd,
+            )?;
+        }
+        let processes = registry.running_processes_for_channel(&params.session_name, index)?;
+        terminate_native_processes(&processes)?;
+        registry.delete_channel(&params.session_name, index)?;
+        cleanup_codex_runtime(&native_window_id(&params.session_name, index));
+        return Ok(serde_json::json!({ "ok": true }));
+    }
+
+    let backend = TmuxSessionBackend::new();
     let window_id = get_tmux_window_id(&params.session_name, &params.index);
     let create_fallback_shell =
-        params.create_fallback_shell || count_tmux_windows(&params.session_name)? <= 1;
+        params.create_fallback_shell || backend.count_windows(&params.session_name)? <= 1;
 
     if create_fallback_shell && !params.default_shell_cmd.trim().is_empty() {
-        run_tmux(&[
+        backend.run(&[
             "new-window".to_string(),
             "-t".to_string(),
             params.session_name.clone(),
@@ -1738,7 +1859,7 @@ fn delete_session_window(params: DeleteSessionWindowParams) -> Result<Value, Str
     }
 
     let target = session_window_target(&params.session_name, &params.index);
-    run_tmux(&["kill-window".to_string(), "-t".to_string(), target])?;
+    backend.run(&["kill-window".to_string(), "-t".to_string(), target])?;
     cleanup_codex_runtime(&window_id);
 
     Ok(serde_json::json!({ "ok": true }))
