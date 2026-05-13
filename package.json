@@ -22,9 +22,11 @@
     "build:rust-codex-home": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-codex-home",
     "build:rust-task-runtime": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-task-runtime",
     "build:rust-pty-runtime": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-pty-runtime",
+    "build:rust-native-pty-supervisor": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-native-pty-supervisor",
+    "build:rust-native-session": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-native-session",
     "build:rust-launch-runtime": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-window-launch-runtime",
     "build:rust-session-runtime": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-session-runtime",
-    "build:rust-runtimes": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime"
+    "build:rust-runtimes": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",

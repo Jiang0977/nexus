@@ -243,7 +243,40 @@ test -x "$HOME/.cargo/bin/cargo"
 
 原因：`frontend/dist/` 缺失或仓库不完整。当前运行时仍只认 `frontend/dist/`；如果仓库完整，可以在 `frontend/` 下重新构建后再重启。
 
-### 4. 指定 Codex profile 新开 channel 后没有 skills
+### 4. native 模式另一个终端无法进入会话
+
+先确认 native supervisor 服务和 socket：
+
+```bash
+systemctl --user status nexus-native-pty
+test -S data/native-sessions/supervisor.sock
+```
+
+列出 native project/channel：
+
+```bash
+nexus-native-session list
+```
+
+进入指定 channel：
+
+```bash
+nexus-native-session attach <project> <channel-index>
+```
+
+如果 `nexus-native-session` 不在 `PATH`，重新跑部署脚本或确认 `~/.local/bin/nexus-native-session` 存在；也可以临时使用完整路径 `rust-runtime/target/release/nexus-native-session`。
+
+如果 `attach` 报 supervisor 连接失败，先看 backend 是否已经切到 native，并重启服务：
+
+```bash
+cat data/session-backend.json
+systemctl --user restart nexus-native-pty
+systemctl --user restart nexus
+```
+
+如果使用了 `NEXUS_DATA_DIR`，socket 和 `session-backend.json` 都在该数据目录下。
+
+### 5. 指定 Codex profile 新开 channel 后没有 skills
 
 原因：
 
@@ -265,7 +298,7 @@ test -x rust-runtime/target/release/nexus-codex-home
 - 已打开的 Codex 进程可能缓存了启动时的 skills 列表；在 channel 中退出 Codex 后按 `r` 重启，或新开 Codex profile channel。
 - 不要为了这个问题直接重启 `nexus-tmux.service`，除非你明确接受所有 tmux 会话被影响。
 
-### 5. 重启时报 `Address already in use`
+### 6. 重启时报 `Address already in use`
 
 原因：历史上旧 unit 可能留下孤儿 `nexus-server` 进程，占住 `127.0.0.1:59000`。
 
@@ -281,11 +314,11 @@ sudo systemctl start nexus
 
 如果新的 unit 已部署正确，清掉这次残留后，后续重启不应再复发。
 
-### 6. `systemctl --user` 不可用
+### 7. `systemctl --user` 不可用
 
 说明：当前机器没有用户级 systemd。可以临时 `bash start.sh` 前台运行，但这不等于正式部署。
 
-### 7. Nexus 内 `codex` 报 `real codex binary not found in PATH`
+### 8. Nexus 内 `codex` 报 `real codex binary not found in PATH`
 
 原因：服务或 tmux 的 `PATH` 里只有 wrapper，没带上真实 Codex CLI 所在目录。
 

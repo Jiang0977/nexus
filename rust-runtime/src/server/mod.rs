@@ -82,7 +82,14 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let runtime_manager = Arc::new(RuntimeManager::new(config.runtime_configs).await);
+    let runtime_manager = Arc::new(
+        RuntimeManager::new(
+            config.runtime_configs,
+            config.session_backend.clone(),
+            config.native_pty_supervisor_socket.clone(),
+        )
+        .await,
+    );
     if let Some(parent) = config.tasks_file.parent() {
         fs::create_dir_all(parent).await?;
     }

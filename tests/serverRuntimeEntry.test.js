@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readlinkSync, readdirSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -121,12 +121,14 @@ function createDeployScriptFixture() {
   const cargoLogFile = join(fixtureRoot, 'cargo.log')
   const restartLogFile = join(fixtureRoot, 'restart.log')
   const restartCountFile = join(fixtureRoot, 'restart-count')
+  const homeDir = join(fixtureRoot, 'home')
   const binDir = join(fixtureRoot, 'bin')
   const scriptsDir = join(fixtureRoot, 'scripts')
   const frontendDistDir = join(fixtureRoot, 'frontend', 'dist')
   const releaseDir = join(fixtureRoot, 'rust-runtime', 'target', 'release')
 
   mkdirSync(binDir, { recursive: true })
+  mkdirSync(homeDir, { recursive: true })
   mkdirSync(scriptsDir, { recursive: true })
   mkdirSync(frontendDistDir, { recursive: true })
   mkdirSync(releaseDir, { recursive: true })
@@ -170,6 +172,7 @@ done
     cargoLogFile,
     restartLogFile,
     restartCountFile,
+    homeDir,
     releaseDir,
     scriptsDir,
     binDir,
@@ -181,6 +184,7 @@ function runDeployScript(fixture, envOverrides = {}, args = []) {
     cwd: fixture.fixtureRoot,
     env: {
       ...process.env,
+      HOME: fixture.homeDir,
       PATH: `${fixture.binDir}:${process.env.PATH || ''}`,
       ...envOverrides,
     },
@@ -329,6 +333,10 @@ printf 'restart-ok\\n' >> ${JSON.stringify(fixture.restartLogFile)}
     assert.match(cargoLog, /--bin nexus-codex-home/)
     assert.equal(readFileSync(join(fixture.releaseDir, 'nexus-server'), 'utf8'), 'new-nexus-server\n')
     assert.equal(readFileSync(join(fixture.releaseDir, 'nexus-codex-home'), 'utf8'), 'new-nexus-codex-home\n')
+    assert.equal(
+      readlinkSync(join(fixture.homeDir, '.local/bin/nexus-native-session')),
+      join(fixture.fixtureRoot, 'rust-runtime/target/release/nexus-native-session'),
+    )
     assert.equal(readFileSync(fixture.restartLogFile, 'utf8'), 'restart-ok\n')
   } finally {
     rmSync(fixture.fixtureRoot, { recursive: true, force: true })
@@ -419,7 +427,7 @@ test('start.sh builds missing rust release binaries before launching the default
       .split('\n')
       .filter(Boolean)
     assert.equal(cargoCommands.length, 2)
-    assert.match(cargoCommands[0], /build --manifest-path rust-runtime\/Cargo\.toml --release --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home/)
+    assert.match(cargoCommands[0], /build --manifest-path rust-runtime\/Cargo\.toml --release --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home/)
     assert.match(cargoCommands[1], /build --manifest-path rust-runtime\/Cargo\.toml --release --bin nexus-server/)
 
     const serverEnv = parseEnvDump(fixture.serverEnvFile)

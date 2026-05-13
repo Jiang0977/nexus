@@ -37,10 +37,22 @@ resolve_cargo_bin() {
     return 127
 }
 
+install_native_session_cli() {
+    local cli_target="${REPO_ROOT}/rust-runtime/target/release/nexus-native-session"
+    local install_dir="${NEXUS_CLI_INSTALL_DIR:-${HOME}/.local/bin}"
+    local cli_link="${install_dir}/nexus-native-session"
+
+    mkdir -p "$install_dir"
+    ln -sfn "$cli_target" "$cli_link"
+    echo "[Nexus] Installed native session CLI at ${cli_link}"
+}
+
 declare -a RELEASE_BINS=(
     "rust-runtime/target/release/nexus-server"
     "rust-runtime/target/release/nexus-task-runtime"
     "rust-runtime/target/release/nexus-pty-runtime"
+    "rust-runtime/target/release/nexus-native-pty-supervisor"
+    "rust-runtime/target/release/nexus-native-session"
     "rust-runtime/target/release/nexus-window-launch-runtime"
     "rust-runtime/target/release/nexus-session-runtime"
     "rust-runtime/target/release/nexus-codex-home"
@@ -103,9 +115,19 @@ echo "[Nexus] Building release binaries..."
     --bin nexus-server \
     --bin nexus-task-runtime \
     --bin nexus-pty-runtime \
+    --bin nexus-native-pty-supervisor \
+    --bin nexus-native-session \
     --bin nexus-window-launch-runtime \
     --bin nexus-session-runtime \
     --bin nexus-codex-home
+
+install_native_session_cli
+
+if sudo -n systemctl is-active --quiet nexus-native-pty.service; then
+    echo "[Nexus] Restarting native PTY supervisor..."
+    sudo -n systemctl restart nexus-native-pty.service
+    sudo -n systemctl status nexus-native-pty.service --no-pager
+fi
 
 echo "[Nexus] Restarting deployed service..."
 if run_restart_helper; then
