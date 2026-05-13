@@ -117,10 +117,8 @@ mod tests {
                 account_id: "provider-old".to_string(),
             }),
         }];
-        let provider_ids = HashSet::from([
-            "provider-old".to_string(),
-            "provider-target".to_string(),
-        ]);
+        let provider_ids =
+            HashSet::from(["provider-old".to_string(), "provider-target".to_string()]);
 
         remap_to_target_account(&mut sessions, &provider_ids, "provider-target", false);
 

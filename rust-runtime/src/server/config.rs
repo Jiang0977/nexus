@@ -1,5 +1,5 @@
-use crate::runtime_config::read_session_backend_config_file;
 use super::*;
+use crate::runtime_config::read_session_backend_config_file;
 
 pub(super) async fn api_login(
     State(state): State<Arc<AppState>>,
@@ -84,7 +84,8 @@ pub(super) async fn api_save_config(
         _ => return json_error(StatusCode::BAD_REQUEST, "invalid session backend"),
     };
 
-    match write_session_backend_config_file(state.session_backend_config_file.as_ref(), normalized) {
+    match write_session_backend_config_file(state.session_backend_config_file.as_ref(), normalized)
+    {
         Ok(()) => Json(json!({
             "ok": true,
             "sessionBackend": state.session_backend.as_ref(),

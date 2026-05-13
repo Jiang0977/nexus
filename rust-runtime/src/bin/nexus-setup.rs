@@ -18,6 +18,7 @@ fn run() -> Result<(), String> {
     ensure_systemd_user(&root)?;
     ensure_env_file(&root)?;
     ensure_frontend_bundle(&root)?;
+    install_native_session_cli(&root)?;
     install_user_units(&root)?;
     start_user_units(&root)?;
     print_completion_banner();
@@ -173,6 +174,47 @@ fn current_path() -> String {
     })
 }
 
+#[cfg(unix)]
+fn install_native_session_cli(root: &Path) -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+
+    step("Installing native session CLI");
+    let target = root
+        .join("rust-runtime")
+        .join("target")
+        .join("release")
+        .join("nexus-native-session");
+    if !target.is_file() {
+        return Err(format!(
+            "native session CLI is missing at {}. Build it first with: cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-native-session",
+            target.display()
+        ));
+    }
+
+    let bin_dir = current_home()?.join(".local").join("bin");
+    fs::create_dir_all(&bin_dir)
+        .map_err(|error| format!("failed to create {}: {error}", bin_dir.display()))?;
+    let link = bin_dir.join("nexus-native-session");
+    if link.exists() || link.symlink_metadata().is_ok() {
+        fs::remove_file(&link)
+            .map_err(|error| format!("failed to replace {}: {error}", link.display()))?;
+    }
+    symlink(&target, &link).map_err(|error| {
+        format!(
+            "failed to install {} -> {}: {error}",
+            link.display(),
+            target.display()
+        )
+    })?;
+    ok(&format!("native session CLI installed at {}", link.display()));
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn install_native_session_cli(_root: &Path) -> Result<(), String> {
+    Ok(())
+}
+
 fn user_systemd_dir() -> Result<PathBuf, String> {
     Ok(current_home()?.join(".config").join("systemd").join("user"))
 }
@@ -238,6 +280,30 @@ fn nexus_tmux_service_content(root: &Path) -> Result<String, String> {
     ))
 }
 
+fn nexus_native_pty_service_content(root: &Path) -> Result<String, String> {
+    let root = root
+        .to_str()
+        .ok_or_else(|| format!("path is not valid UTF-8: {}", root.display()))?;
+    let home = current_home()?;
+    let home = home
+        .to_str()
+        .ok_or_else(|| format!("path is not valid UTF-8: {}", home.display()))?;
+    let supervisor_script = format!("{root}/scripts/nexus-native-pty-service.sh");
+
+    Ok(format!(
+        "[Unit]\nDescription=Persistent native PTY supervisor for Nexus\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={}\nEnvironment=HOME={}\nEnvironment=USER={}\nEnvironment=SHELL={}\nEnvironment=LANG={}\nEnvironment=LC_ALL={}\nEnvironment=PATH={}\nExecStart={} {}\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=20\nKillMode=control-group\n\n[Install]\nWantedBy=default.target\n",
+        systemd_quote(root),
+        systemd_quote(home),
+        systemd_quote(&current_user()),
+        systemd_quote(&current_shell()),
+        systemd_quote(&current_lang()),
+        systemd_quote(&current_lc_all()),
+        systemd_quote(&current_path()),
+        bash_path(),
+        systemd_quote(&supervisor_script),
+    ))
+}
+
 fn install_user_units(root: &Path) -> Result<(), String> {
     step("Installing systemd user units");
     let systemd_dir = user_systemd_dir()?;
@@ -246,11 +312,14 @@ fn install_user_units(root: &Path) -> Result<(), String> {
 
     let nexus_service = systemd_dir.join("nexus.service");
     let tmux_service = systemd_dir.join("nexus-tmux.service");
+    let native_pty_service = systemd_dir.join("nexus-native-pty.service");
 
     fs::write(&nexus_service, nexus_service_content(root)?)
         .map_err(|error| format!("failed to write {}: {error}", nexus_service.display()))?;
     fs::write(&tmux_service, nexus_tmux_service_content(root)?)
         .map_err(|error| format!("failed to write {}: {error}", tmux_service.display()))?;
+    fs::write(&native_pty_service, nexus_native_pty_service_content(root)?)
+        .map_err(|error| format!("failed to write {}: {error}", native_pty_service.display()))?;
 
     ok(&format!(
         "installed user units in {}",
@@ -272,6 +341,12 @@ fn start_user_units(root: &Path) -> Result<(), String> {
         &["--user", "enable", "--now", "nexus-tmux.service"],
         root,
         "Failed to enable/start nexus-tmux.service",
+    )?;
+    run_command_checked(
+        "systemctl",
+        &["--user", "enable", "--now", "nexus-native-pty.service"],
+        root,
+        "Failed to enable/start nexus-native-pty.service",
     )?;
     run_command_checked(
         "systemctl",

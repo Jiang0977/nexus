@@ -115,14 +115,19 @@ TASK_RUNNER_RUST_EXECUTABLE="$(resolve_env_or_file NEXUS_TASK_RUNNER_RUST_EXECUT
 PTY_BROKER_RUST_EXECUTABLE="$(resolve_env_or_file NEXUS_PTY_BROKER_RUST_EXECUTABLE)"
 WINDOW_LAUNCH_RUST_EXECUTABLE="$(resolve_env_or_file NEXUS_WINDOW_LAUNCH_RUST_EXECUTABLE)"
 SESSION_MANAGEMENT_RUST_EXECUTABLE="$(resolve_env_or_file NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE)"
+SESSION_BACKEND="$(resolve_env_or_file NEXUS_SESSION_BACKEND | tr '[:upper:]' '[:lower:]')"
 DEFAULT_TASK_RUNTIME="$SCRIPT_DIR/rust-runtime/target/release/nexus-task-runtime"
 DEFAULT_PTY_RUNTIME="$SCRIPT_DIR/rust-runtime/target/release/nexus-pty-runtime"
+DEFAULT_NATIVE_PTY_SUPERVISOR="$SCRIPT_DIR/rust-runtime/target/release/nexus-native-pty-supervisor"
+DEFAULT_NATIVE_SESSION_CLI="$SCRIPT_DIR/rust-runtime/target/release/nexus-native-session"
 DEFAULT_WINDOW_LAUNCH_RUNTIME="$SCRIPT_DIR/rust-runtime/target/release/nexus-window-launch-runtime"
 DEFAULT_SESSION_MANAGEMENT_RUNTIME="$SCRIPT_DIR/rust-runtime/target/release/nexus-session-runtime"
 DEFAULT_CODEX_HOME_RUNTIME="$SCRIPT_DIR/rust-runtime/target/release/nexus-codex-home"
 DEFAULT_RUST_SERVER_EXECUTABLE="$SCRIPT_DIR/rust-runtime/target/release/nexus-server"
 NEED_TASK_RUNTIME=0
 NEED_PTY_RUNTIME=0
+NEED_NATIVE_PTY_SUPERVISOR=0
+NEED_NATIVE_SESSION_CLI=0
 NEED_WINDOW_LAUNCH_RUNTIME=0
 NEED_SESSION_MANAGEMENT_RUNTIME=0
 NEED_CODEX_HOME_RUNTIME=0
@@ -141,6 +146,11 @@ if [ -n "$SERVER_EXECUTABLE" ]; then
     if [ -z "$PTY_BROKER_RUST_EXECUTABLE" ]; then
         PTY_BROKER_RUST_EXECUTABLE="$DEFAULT_PTY_RUNTIME"
         mark_default_bin_rebuild_if_needed "$DEFAULT_PTY_RUNTIME" NEED_PTY_RUNTIME
+    fi
+
+    if [ "$SESSION_BACKEND" = "native" ]; then
+        mark_default_bin_rebuild_if_needed "$DEFAULT_NATIVE_PTY_SUPERVISOR" NEED_NATIVE_PTY_SUPERVISOR
+        mark_default_bin_rebuild_if_needed "$DEFAULT_NATIVE_SESSION_CLI" NEED_NATIVE_SESSION_CLI
     fi
 
     if [ -z "$WINDOW_LAUNCH_RUST_EXECUTABLE" ]; then
@@ -162,17 +172,23 @@ if [ -n "$SERVER_EXECUTABLE" ] && [ "$SERVER_EXECUTABLE" = "$DEFAULT_RUST_SERVER
     mark_default_bin_rebuild_if_needed "$DEFAULT_RUST_SERVER_EXECUTABLE" NEED_RUST_SERVER
 fi
 
-NEED_RUST_RUNTIME_COUNT=$((NEED_TASK_RUNTIME + NEED_PTY_RUNTIME + NEED_WINDOW_LAUNCH_RUNTIME + NEED_SESSION_MANAGEMENT_RUNTIME + NEED_CODEX_HOME_RUNTIME))
+NEED_RUST_RUNTIME_COUNT=$((NEED_TASK_RUNTIME + NEED_PTY_RUNTIME + NEED_NATIVE_PTY_SUPERVISOR + NEED_NATIVE_SESSION_CLI + NEED_WINDOW_LAUNCH_RUNTIME + NEED_SESSION_MANAGEMENT_RUNTIME + NEED_CODEX_HOME_RUNTIME))
 
 if [ "$NEED_RUST_RUNTIME_COUNT" -gt 1 ]; then
     echo "构建 Rust runtimes..."
-    build_rust_release_bins --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
+    build_rust_release_bins --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
 elif [ "$NEED_TASK_RUNTIME" -eq 1 ]; then
     echo "构建 Rust task runtime..."
     build_rust_release_bins --bin nexus-task-runtime
 elif [ "$NEED_PTY_RUNTIME" -eq 1 ]; then
     echo "构建 Rust pty runtime..."
     build_rust_release_bins --bin nexus-pty-runtime
+elif [ "$NEED_NATIVE_PTY_SUPERVISOR" -eq 1 ]; then
+    echo "构建 Rust native pty supervisor..."
+    build_rust_release_bins --bin nexus-native-pty-supervisor
+elif [ "$NEED_NATIVE_SESSION_CLI" -eq 1 ]; then
+    echo "构建 Rust native session cli..."
+    build_rust_release_bins --bin nexus-native-session
 elif [ "$NEED_WINDOW_LAUNCH_RUNTIME" -eq 1 ]; then
     echo "构建 Rust window launch runtime..."
     build_rust_release_bins --bin nexus-window-launch-runtime

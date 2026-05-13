@@ -77,15 +77,23 @@ pub(super) struct RuntimeManager {
 }
 
 impl RuntimeManager {
-    pub(super) async fn new(configs: RuntimeConfigs) -> Self {
-        let session_backend = configs_session_backend();
+    pub(super) async fn new(
+        configs: RuntimeConfigs,
+        session_backend: String,
+        native_pty_supervisor_socket: PathBuf,
+    ) -> Self {
+        let mut pty_broker_env =
+            vec![("NEXUS_SESSION_BACKEND".to_string(), session_backend.clone())];
+        if session_backend.eq_ignore_ascii_case("native") {
+            pty_broker_env.push((
+                crate::runtime_config::NATIVE_PTY_SUPERVISOR_SOCKET_ENV.to_string(),
+                native_pty_supervisor_socket.display().to_string(),
+            ));
+        }
+
         Self {
             task_runner: ManagedRuntime::boot(configs.task_runner, Vec::new()).await,
-            pty_broker: ManagedRuntime::boot(
-                configs.pty_broker,
-                vec![("NEXUS_SESSION_BACKEND".to_string(), session_backend.clone())],
-            )
-            .await,
+            pty_broker: ManagedRuntime::boot(configs.pty_broker, pty_broker_env).await,
             window_launch: ManagedRuntime::boot(
                 configs.window_launch,
                 vec![("NEXUS_SESSION_BACKEND".to_string(), session_backend.clone())],
@@ -203,17 +211,13 @@ impl ManagedRuntime {
         args: Vec<String>,
         ready_timeout: Duration,
     ) -> Value {
-        let mut process = match RuntimeProcess::spawn(
-            self.display_name,
-            &executable,
-            &args,
-            &self.extra_env,
-        )
-        .await
-        {
-            Ok(process) => process,
-            Err(error) => return runtime_error_status("nexus-server", &error),
-        };
+        let mut process =
+            match RuntimeProcess::spawn(self.display_name, &executable, &args, &self.extra_env)
+                .await
+            {
+                Ok(process) => process,
+                Err(error) => return runtime_error_status("nexus-server", &error),
+            };
 
         match process.request("ready", json!({}), ready_timeout).await {
             Ok(result) => {
@@ -343,13 +347,13 @@ impl RuntimeProcess {
             command.env(key, value);
         }
         let mut child = command.spawn().map_err(|error| {
-                format!(
-                    "failed to spawn {} runtime {}: {}",
-                    display_name,
-                    executable.display(),
-                    error
-                )
-            })?;
+            format!(
+                "failed to spawn {} runtime {}: {}",
+                display_name,
+                executable.display(),
+                error
+            )
+        })?;
 
         let stdin = child
             .stdin
@@ -547,19 +551,6 @@ impl RuntimeProcess {
         })?;
         Ok(())
     }
-}
-
-fn configs_session_backend() -> String {
-    std::env::var("NEXUS_SESSION_BACKEND")
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            let project_root = crate::config::resolve_project_root().ok()?;
-            let dotenv = crate::config::load_dotenv(&project_root);
-            crate::config::env_or_dotenv("NEXUS_SESSION_BACKEND", &dotenv)
-        })
-        .unwrap_or_else(|| "tmux".to_string())
 }
 
 pub(super) fn spawn_runtime_stdout_dispatcher(

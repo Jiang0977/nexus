@@ -136,16 +136,40 @@ bash start.sh
 `bash start.sh` 只会补构建“缺失”的 release binary，不会强制重建现有产物。代码变更后显式重建：
 
 ```bash
-cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime
+cargo build --manifest-path rust-runtime/Cargo.toml --release \
+  --bin nexus-server \
+  --bin nexus-task-runtime \
+  --bin nexus-pty-runtime \
+  --bin nexus-native-pty-supervisor \
+  --bin nexus-native-session \
+  --bin nexus-window-launch-runtime \
+  --bin nexus-session-runtime
 ```
 
 然后重启服务。
 
-### 4. 如何改密码
+### 4. native 模式下从另一个终端进入会话
+
+native 后端仍是 opt-in。启用后确认 supervisor 服务在运行：
+
+```bash
+systemctl --user status nexus-native-pty
+```
+
+另一个终端可以直接列出并进入 native 会话：
+
+```bash
+nexus-native-session list
+nexus-native-session attach <project> <channel-index>
+```
+
+如果 shell 提示 `nexus-native-session: command not found`，先确认 `~/.local/bin` 在当前终端的 `PATH` 中，或临时使用完整路径 `rust-runtime/target/release/nexus-native-session`。
+
+### 5. 如何改密码
 
 把 `.env` 里的 `ACC_PASSWORD_HASH` 改成新的 bcrypt hash。仓库当前不内置密码生成工具，使用你现有的 bcrypt 工具生成即可。
 
-### 5. 如何重建前端
+### 6. 如何重建前端
 
 如果你改了 `frontend/src/*`：
 
@@ -162,7 +186,7 @@ npm run build:frontend
 npm run check
 ```
 
-### 6. Nexus 内 `codex` 提示 wrapper 找不到真实二进制
+### 7. Nexus 内 `codex` 提示 wrapper 找不到真实二进制
 
 先检查宿主机上真实 CLI 是否存在：
 

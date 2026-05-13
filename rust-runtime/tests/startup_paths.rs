@@ -82,6 +82,7 @@ fn scrub_runtime_env(command: &mut Command) -> &mut Command {
         .env_remove("NEXUS_SERVER_EXECUTABLE")
         .env_remove("NEXUS_TASK_RUNNER_RUST_EXECUTABLE")
         .env_remove("NEXUS_PTY_BROKER_RUST_EXECUTABLE")
+        .env_remove("NEXUS_NATIVE_PTY_SUPERVISOR_EXECUTABLE")
         .env_remove("NEXUS_WINDOW_LAUNCH_RUST_EXECUTABLE")
         .env_remove("NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE")
 }
@@ -137,6 +138,16 @@ fn start_script_rebuilds_only_binaries_whose_depfile_inputs_are_newer() {
     fs::write(source_dir.join("nexus-task-runtime.rs"), "// task\n").unwrap();
     fs::write(source_dir.join("nexus-pty-runtime.rs"), "// pty\n").unwrap();
     fs::write(
+        source_dir.join("nexus-native-pty-supervisor.rs"),
+        "// native supervisor\n",
+    )
+    .unwrap();
+    fs::write(
+        source_dir.join("nexus-native-session.rs"),
+        "// native cli\n",
+    )
+    .unwrap();
+    fs::write(
         source_dir.join("nexus-window-launch-runtime.rs"),
         "// launch\n",
     )
@@ -148,6 +159,8 @@ fn start_script_rebuilds_only_binaries_whose_depfile_inputs_are_newer() {
     for binary in [
         "nexus-task-runtime",
         "nexus-pty-runtime",
+        "nexus-native-pty-supervisor",
+        "nexus-native-session",
         "nexus-window-launch-runtime",
         "nexus-session-runtime",
         "nexus-codex-home",
@@ -200,6 +213,8 @@ fn start_script_rebuilds_only_binaries_whose_depfile_inputs_are_newer() {
     assert!(cargo_log.contains("--bin nexus-server"));
     assert!(!cargo_log.contains("--bin nexus-task-runtime"));
     assert!(!cargo_log.contains("--bin nexus-pty-runtime"));
+    assert!(!cargo_log.contains("--bin nexus-native-pty-supervisor"));
+    assert!(!cargo_log.contains("--bin nexus-native-session"));
     assert!(!cargo_log.contains("--bin nexus-window-launch-runtime"));
     assert!(!cargo_log.contains("--bin nexus-session-runtime"));
 }
@@ -231,6 +246,16 @@ fn start_script_ignores_unrelated_rust_sources_when_depfiles_are_present() {
     fs::write(source_dir.join("nexus-task-runtime.rs"), "// task\n").unwrap();
     fs::write(source_dir.join("nexus-pty-runtime.rs"), "// pty\n").unwrap();
     fs::write(
+        source_dir.join("nexus-native-pty-supervisor.rs"),
+        "// native supervisor\n",
+    )
+    .unwrap();
+    fs::write(
+        source_dir.join("nexus-native-session.rs"),
+        "// native cli\n",
+    )
+    .unwrap();
+    fs::write(
         source_dir.join("nexus-window-launch-runtime.rs"),
         "// launch\n",
     )
@@ -242,6 +267,8 @@ fn start_script_ignores_unrelated_rust_sources_when_depfiles_are_present() {
     for binary in [
         "nexus-task-runtime",
         "nexus-pty-runtime",
+        "nexus-native-pty-supervisor",
+        "nexus-native-session",
         "nexus-window-launch-runtime",
         "nexus-session-runtime",
         "nexus-codex-home",
@@ -350,6 +377,8 @@ fn start_script_falls_back_to_home_cargo_bin_when_path_lacks_cargo() {
     assert!(cargo_log.contains("--manifest-path rust-runtime/Cargo.toml --release"));
     assert!(cargo_log.contains("--bin nexus-task-runtime"));
     assert!(cargo_log.contains("--bin nexus-pty-runtime"));
+    assert!(cargo_log.contains("--bin nexus-native-pty-supervisor"));
+    assert!(cargo_log.contains("--bin nexus-native-session"));
     assert!(cargo_log.contains("--bin nexus-window-launch-runtime"));
     assert!(cargo_log.contains("--bin nexus-session-runtime"));
     assert!(cargo_log.contains("--bin nexus-server"));
@@ -413,6 +442,8 @@ fn start_script_keeps_codex_wrapper_ahead_of_real_cli() {
     for name in [
         "nexus-task-runtime",
         "nexus-pty-runtime",
+        "nexus-native-pty-supervisor",
+        "nexus-native-session",
         "nexus-window-launch-runtime",
         "nexus-session-runtime",
         "nexus-codex-home",

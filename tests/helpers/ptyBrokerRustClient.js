@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createConnection } from 'node:net'
 import { createInterface } from 'node:readline'
 
 import { resolveReleaseBinary } from './runtimeBinaryPath.js'
@@ -234,6 +235,175 @@ export function createPtyBrokerRustClient(options = {}) {
       } catch {}
       try {
         child.kill?.('SIGTERM')
+      } catch {}
+    },
+  }
+}
+
+export function createPtyBrokerSocketClient(options = {}) {
+  const {
+    socketPath,
+    readyTimeoutMs = DEFAULT_READY_TIMEOUT_MS,
+    log = console,
+  } = options
+
+  const socket = createConnection(socketPath)
+  const pendingRequests = new Map()
+  let eventHandler = () => {}
+  let requestCounter = 0
+  let closed = false
+  let runtimeStatus = {
+    mode: 'rust',
+    ready: false,
+    source: 'pty-broker-rust-runtime',
+    runningPtys: 0,
+  }
+
+  const reader = createInterface({
+    input: socket,
+    crlfDelay: Infinity,
+  })
+
+  function updateRuntimeStatus(next = {}) {
+    if (!next || typeof next !== 'object') return runtimeStatus
+    runtimeStatus = {
+      ...runtimeStatus,
+      ...next,
+      mode: 'rust',
+    }
+    return runtimeStatus
+  }
+
+  function rejectPending(error) {
+    for (const pending of pendingRequests.values()) {
+      if (pending.timer) clearTimeout(pending.timer)
+      pending.reject(error)
+    }
+    pendingRequests.clear()
+  }
+
+  reader.on('line', (line) => {
+    if (!line.trim()) return
+
+    let message = null
+    try {
+      message = JSON.parse(line)
+    } catch (error) {
+      log.error?.('pty broker socket sent invalid JSON:', error)
+      return
+    }
+
+    if (!message || typeof message !== 'object') return
+
+    if (message.kind === 'response') {
+      const pending = pendingRequests.get(message.id)
+      if (!pending) return
+      pendingRequests.delete(message.id)
+      if (pending.timer) clearTimeout(pending.timer)
+
+      if (message.ok) {
+        if (
+          message.result
+          && typeof message.result === 'object'
+          && ('ready' in message.result || 'capabilities' in message.result || 'runningPtys' in message.result)
+        ) {
+          updateRuntimeStatus(message.result)
+        }
+        pending.resolve(message.result)
+      } else {
+        pending.reject(new Error(message.error?.message || 'pty broker socket request failed'))
+      }
+      return
+    }
+
+    if (message.kind === 'event') {
+      eventHandler({
+        type: message.event,
+        ...(message.params || {}),
+      })
+    }
+  })
+
+  socket.on('error', (error) => {
+    if (closed) return
+    closed = true
+    rejectPending(error)
+  })
+
+  socket.on('close', () => {
+    if (closed) return
+    closed = true
+    rejectPending(new Error('pty broker socket closed'))
+  })
+
+  function request(method, params = {}, options = {}) {
+    if (closed || socket.destroyed || socket.writableEnded) {
+      return Promise.reject(new Error('pty broker socket is not available'))
+    }
+
+    const id = `pty_broker_socket_req_${++requestCounter}`
+    const payload = JSON.stringify({ kind: 'request', id, method, params })
+    const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : 0
+
+    return new Promise((resolve, reject) => {
+      const timer = timeoutMs > 0
+        ? setTimeout(() => {
+          pendingRequests.delete(id)
+          reject(new Error(`pty broker socket request timed out: ${method}`))
+        }, timeoutMs)
+        : null
+
+      pendingRequests.set(id, { resolve, reject, timer })
+      socket.write(`${payload}\n`, (error) => {
+        if (!error) return
+        pendingRequests.delete(id)
+        if (timer) clearTimeout(timer)
+        reject(error)
+      })
+    })
+  }
+
+  function notify(method, params = {}) {
+    if (closed || socket.destroyed || socket.writableEnded) return
+    socket.write(`${JSON.stringify({ kind: 'notify', method, params })}\n`)
+  }
+
+  return {
+    onEvent(handler) {
+      eventHandler = typeof handler === 'function' ? handler : () => {}
+    },
+    ready() {
+      return request('ready', {}, { timeoutMs: readyTimeoutMs }).then((status) => updateRuntimeStatus(status))
+    },
+    getStatus() {
+      if (closed) return Promise.resolve(runtimeStatus)
+      return request('runtimeStatus', {}, { timeoutMs: readyTimeoutMs }).then((status) => updateRuntimeStatus(status))
+    },
+    attachConnection(params) {
+      return request('attachConnection', params)
+    },
+    handleConnectionMessage(params) {
+      notify('handleConnectionMessage', {
+        ...params,
+        rawMessage: typeof params?.rawMessage === 'string' ? params.rawMessage : String(params?.rawMessage || ''),
+      })
+    },
+    closeConnection(params) {
+      notify('closeConnection', params)
+    },
+    errorConnection(params) {
+      notify('errorConnection', params)
+    },
+    getOutputSnapshot(params) {
+      return request('getOutputSnapshot', params)
+    },
+    close() {
+      closed = true
+      try {
+        socket.end()
+      } catch {}
+      try {
+        reader.close()
       } catch {}
     },
   }

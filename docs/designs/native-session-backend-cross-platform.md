@@ -635,6 +635,12 @@ Phase 2 的第一张实现票允许引入 opt-in selector：`NEXUS_SESSION_BACKE
 
 目标：`nexus.service` 或 child runtime 重启后，UI 不能丢 project/channel，也不能谎称 dead process 仍 running。
 
+当前代码状态：
+
+- `nexus-pty-runtime` 已有 `PtyHost` 边界，当前实现是 `InProcessPtyHost`。
+- 这个边界只把 stdio broker 和 PTY 宿主解耦，尚未提供跨 runtime attach。
+- 真正的 tmux-like restart/reattach 语义仍依赖后续长驻 native PTY supervisor。
+
 交付物：
 
 - session runtime 启动时能从 registry 列出 project/channel。

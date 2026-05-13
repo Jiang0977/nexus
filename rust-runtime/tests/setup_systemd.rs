@@ -65,7 +65,15 @@ fn nexus_setup_installs_systemd_units_without_node_or_pm2() {
     fs::write(root.join("frontend/dist/index.html"), "<!doctype html>\n").unwrap();
     fs::write(root.join("start.sh"), "#!/usr/bin/bash\nexit 0\n").unwrap();
     write_executable(
+        &root.join("rust-runtime/target/release/nexus-native-session"),
+        "#!/usr/bin/bash\nexit 0\n",
+    );
+    write_executable(
         &root.join("scripts/nexus-tmux-service.sh"),
+        "#!/usr/bin/bash\nexit 0\n",
+    );
+    write_executable(
+        &root.join("scripts/nexus-native-pty-service.sh"),
         "#!/usr/bin/bash\nexit 0\n",
     );
 
@@ -103,6 +111,8 @@ fn nexus_setup_installs_systemd_units_without_node_or_pm2() {
     );
 
     assert!(root.join(".env").is_file());
+    let native_cli_link = home.join(".local/bin/nexus-native-session");
+    assert!(native_cli_link.exists());
 
     let nexus_service =
         fs::read_to_string(home.join(".config/systemd/user/nexus.service")).unwrap();
@@ -124,9 +134,18 @@ fn nexus_setup_installs_systemd_units_without_node_or_pm2() {
     assert!(!tmux_service.contains("pm2"));
     assert!(!tmux_service.contains("node"));
 
+    let native_pty_service =
+        fs::read_to_string(home.join(".config/systemd/user/nexus-native-pty.service")).unwrap();
+    assert!(native_pty_service.contains("Persistent native PTY supervisor for Nexus"));
+    assert!(native_pty_service.contains("nexus-native-pty-service.sh"));
+    assert!(native_pty_service.contains("Type=simple"));
+    assert!(!native_pty_service.contains("pm2"));
+    assert!(!native_pty_service.contains("node"));
+
     let log = fs::read_to_string(&log_file).unwrap();
     assert!(log.contains("systemctl --user daemon-reload"));
     assert!(log.contains("systemctl --user enable --now nexus-tmux.service"));
+    assert!(log.contains("systemctl --user enable --now nexus-native-pty.service"));
     assert!(log.contains("systemctl --user enable --now nexus.service"));
     assert!(log.contains("tmux -V"));
     assert!(!log.contains("tmux has-session -t main"));
@@ -251,4 +270,61 @@ fn nexus_tmux_script_keeps_codex_wrapper_ahead_of_real_cli() {
         nvm_bin.display()
     )));
     assert!(log.contains("tmux -N new-session -Ad -s nexus -n shell exec zsh -i"));
+}
+
+#[cfg(unix)]
+#[test]
+fn nexus_native_pty_service_reads_backend_from_configured_data_dir() {
+    let temp = tempdir().unwrap();
+    let root = temp.path();
+    let data_dir = root.join("custom-data");
+    let log_file = root.join("supervisor.log");
+    let script_path = root.join("scripts/nexus-native-pty-service.sh");
+    let supervisor_path = root.join("supervisor");
+
+    fs::create_dir_all(data_dir.join("native-sessions")).unwrap();
+    fs::create_dir_all(root.join("scripts")).unwrap();
+    fs::copy(
+        repo_root().join("scripts/nexus-native-pty-service.sh"),
+        &script_path,
+    )
+    .unwrap();
+    let mut script_perms = fs::metadata(&script_path).unwrap().permissions();
+    script_perms.set_mode(0o755);
+    fs::set_permissions(&script_path, script_perms).unwrap();
+    fs::write(root.join(".env"), "NEXUS_DATA_DIR=custom-data\n").unwrap();
+    fs::write(
+        data_dir.join("session-backend.json"),
+        "{ \"session_backend\": \"native\" }\n",
+    )
+    .unwrap();
+    write_executable(
+        &supervisor_path,
+        &format!(
+            "#!/usr/bin/bash\nprintf 'backend=%s\\ndata=%s\\nsocket=%s\\n' \"$NEXUS_SESSION_BACKEND\" \"$NEXUS_DATA_DIR\" \"$NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET\" > {:?}\nexit 0\n",
+            log_file
+        ),
+    );
+
+    let output = Command::new("bash")
+        .arg(&script_path)
+        .current_dir(root)
+        .env("NEXUS_NATIVE_PTY_SUPERVISOR_EXECUTABLE", &supervisor_path)
+        .output()
+        .unwrap();
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "native service failed: {combined}");
+
+    let log = fs::read_to_string(log_file).unwrap();
+    assert!(log.contains("backend=native"));
+    assert!(log.contains(&format!("data={}", data_dir.display())));
+    assert!(log.contains(&format!(
+        "socket={}",
+        data_dir.join("native-sessions/supervisor.sock").display()
+    )));
 }

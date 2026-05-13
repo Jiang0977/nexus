@@ -157,7 +157,9 @@ pub fn sync_cc_switch_codex_history() -> Result<SyncHistoryOutput, ReplayRouteEr
     sync_cc_switch_codex_history_for_home(Path::new(&home_dir))
 }
 
-fn sync_cc_switch_codex_history_for_home(home_dir: &Path) -> Result<SyncHistoryOutput, ReplayRouteError> {
+fn sync_cc_switch_codex_history_for_home(
+    home_dir: &Path,
+) -> Result<SyncHistoryOutput, ReplayRouteError> {
     let map = load_cc_switch_codex_map(home_dir)?;
     let codex_root = home_dir.join(".codex");
     fs::create_dir_all(&codex_root).map_err(|error| {
@@ -168,12 +170,13 @@ fn sync_cc_switch_codex_history_for_home(home_dir: &Path) -> Result<SyncHistoryO
     let activations = load_activation_journal(&journal_path).map_err(ReplayRouteError::internal)?;
     let sessions_dir = codex_root.join("sessions");
     let session_index_path = codex_root.join("session_index.jsonl");
-    let existing_names =
-        load_existing_session_index_names(&session_index_path).map_err(ReplayRouteError::internal)?;
+    let existing_names = load_existing_session_index_names(&session_index_path)
+        .map_err(ReplayRouteError::internal)?;
     let summaries = scan_session_summaries(&sessions_dir).map_err(ReplayRouteError::internal)?;
     let index_entries = build_session_index_entries(&summaries, &existing_names);
-    let index_projection = write_session_index_projection(&session_index_path, &index_entries, true)
-        .map_err(ReplayRouteError::internal)?;
+    let index_projection =
+        write_session_index_projection(&session_index_path, &index_entries, true)
+            .map_err(ReplayRouteError::internal)?;
 
     let provider_ids = map
         .providers
@@ -278,7 +281,12 @@ fn load_cc_switch_codex_map(home_dir: &Path) -> Result<CodexMapOutput, ReplayRou
     let target_account_id = settings
         .current_provider_codex
         .clone()
-        .or_else(|| providers.iter().find(|provider| provider.is_current).map(|provider| provider.id.clone()))
+        .or_else(|| {
+            providers
+                .iter()
+                .find(|provider| provider.is_current)
+                .map(|provider| provider.id.clone())
+        })
         .or_else(|| providers.first().map(|provider| provider.id.clone()))
         .ok_or_else(|| {
             ReplayRouteError::from_message(
@@ -350,7 +358,12 @@ fn build_target_desktop_thread_projections(
             .collect::<Vec<_>>(),
         activations,
     );
-    remap_to_target_account(&mut attributed, provider_ids, target_account_id, keep_unknown);
+    remap_to_target_account(
+        &mut attributed,
+        provider_ids,
+        target_account_id,
+        keep_unknown,
+    );
     let attributed_by_id = attributed
         .into_iter()
         .map(|session| (session.id.clone(), session.attribution))
@@ -545,10 +558,8 @@ fn write_session_index_projection(
     let derived_thread_names = entries.len().saturating_sub(preserved_thread_names);
 
     let backup_path = if create_backup && index_path.exists() {
-        let backup = index_path.with_extension(format!(
-            "jsonl.bak-{}",
-            Utc::now().format("%Y%m%dT%H%M%SZ")
-        ));
+        let backup =
+            index_path.with_extension(format!("jsonl.bak-{}", Utc::now().format("%Y%m%dT%H%M%SZ")));
         fs::copy(index_path, &backup).with_context(|| {
             format!(
                 "failed creating backup from {} to {}",
@@ -710,7 +721,9 @@ fn parse_session_file_summary(path: &Path) -> Result<Option<SessionFileSummary>>
                 .or(sandbox_policy);
         }
 
-        if let (Some(timestamp), Some(text)) = (timestamp, extract_user_prompt_text(record_type, payload)) {
+        if let (Some(timestamp), Some(text)) =
+            (timestamp, extract_user_prompt_text(record_type, payload))
+        {
             first_user_messages.push((timestamp, text));
         }
     }
@@ -841,13 +854,19 @@ fn normalize_thread_name(value: &str) -> Option<String> {
         "<plugins_instructions>",
         "<app-context>",
     ];
-    if IGNORED_MARKERS.iter().any(|marker| compact.contains(marker)) {
+    if IGNORED_MARKERS
+        .iter()
+        .any(|marker| compact.contains(marker))
+    {
         return None;
     }
 
     const MAX_THREAD_NAME_LEN: usize = 120;
     let shortened = if compact.chars().count() > MAX_THREAD_NAME_LEN {
-        compact.chars().take(MAX_THREAD_NAME_LEN).collect::<String>()
+        compact
+            .chars()
+            .take(MAX_THREAD_NAME_LEN)
+            .collect::<String>()
     } else {
         compact
     };
@@ -1185,7 +1204,10 @@ fn clear_desktop_projection_tables(connection: &Connection) -> Result<()> {
         .context("failed clearing desktop projection tables")
 }
 
-fn write_desktop_projection_rows(connection: &Connection, rows: &[DesktopThreadProjection]) -> Result<()> {
+fn write_desktop_projection_rows(
+    connection: &Connection,
+    rows: &[DesktopThreadProjection],
+) -> Result<()> {
     let transaction = connection
         .unchecked_transaction()
         .context("failed starting desktop projection transaction")?;
@@ -1350,14 +1372,14 @@ mod tests {
         DesktopThreadProjection, DynamicToolRecord, build_session_index_entries,
         build_target_desktop_thread_projections, derive_desktop_model_provider,
         normalize_thread_name, pick_first_message_after_start, scan_session_summaries,
-        write_desktop_projection_rows, write_desktop_state_projection, write_session_index_projection,
+        write_desktop_projection_rows, write_desktop_state_projection,
+        write_session_index_projection,
     };
     use crate::codex_replay::model::ActivationEvent;
 
     #[test]
     fn derive_desktop_model_provider_prefers_configured_value() {
-        let custom_config =
-            "model_provider = \"custom\"\nmodel = \"gpt-5.4\"\n\n[model_providers.custom]\nbase_url = \"https://example.com/v1\"\n";
+        let custom_config = "model_provider = \"custom\"\nmodel = \"gpt-5.4\"\n\n[model_providers.custom]\nbase_url = \"https://example.com/v1\"\n";
         let base_url_only = "base_url = \"https://example.com/v1\"\n";
         let openai_default = "model = \"gpt-5.4\"\n";
 
@@ -1426,10 +1448,8 @@ mod tests {
             false,
             false,
         )];
-        let provider_ids = HashSet::from([
-            "provider-old".to_string(),
-            "provider-target".to_string(),
-        ]);
+        let provider_ids =
+            HashSet::from(["provider-old".to_string(), "provider-target".to_string()]);
 
         let projected = build_target_desktop_thread_projections(
             &[summary],
@@ -1570,14 +1590,22 @@ mod tests {
             .expect("thread row");
         assert_eq!(
             thread_row,
-            ("session-1".to_string(), "Recovered from corrupt db".to_string())
+            (
+                "session-1".to_string(),
+                "Recovered from corrupt db".to_string()
+            )
         );
     }
 
     #[test]
     fn session_index_rebuild_derives_first_user_message() {
         let dir = tempdir().expect("tempdir");
-        let sessions_dir = dir.path().join("sessions").join("2026").join("04").join("14");
+        let sessions_dir = dir
+            .path()
+            .join("sessions")
+            .join("2026")
+            .join("04")
+            .join("14");
         fs::create_dir_all(&sessions_dir).expect("mkdir");
         let session_id = "11111111-2222-3333-4444-555555555555";
         let file = sessions_dir.join(format!("rollout-2026-04-14-{session_id}.jsonl"));
@@ -1591,10 +1619,15 @@ mod tests {
         )
         .expect("write");
 
-        let summaries = scan_session_summaries(dir.path().join("sessions").as_path()).expect("scan");
+        let summaries =
+            scan_session_summaries(dir.path().join("sessions").as_path()).expect("scan");
         let entries = build_session_index_entries(&summaries, &HashMap::new());
-        let projection = write_session_index_projection(&dir.path().join("session_index.jsonl"), &entries, false)
-            .expect("projection");
+        let projection = write_session_index_projection(
+            &dir.path().join("session_index.jsonl"),
+            &entries,
+            false,
+        )
+        .expect("projection");
 
         assert_eq!(projection.written_entries, 1);
         let rendered = fs::read_to_string(dir.path().join("session_index.jsonl")).expect("read");

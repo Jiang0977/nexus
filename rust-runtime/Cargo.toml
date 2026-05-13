@@ -12,6 +12,14 @@ name = "nexus-pty-runtime"
 path = "src/bin/nexus-pty-runtime.rs"
 
 [[bin]]
+name = "nexus-native-pty-supervisor"
+path = "src/bin/nexus-native-pty-supervisor.rs"
+
+[[bin]]
+name = "nexus-native-session"
+path = "src/bin/nexus-native-session.rs"
+
+[[bin]]
 name = "nexus-window-launch-runtime"
 path = "src/bin/nexus-window-launch-runtime.rs"
 

@@ -15,6 +15,7 @@ pub const DEFAULT_TMUX_SESSION: &str = "~";
 pub const DEFAULT_SESSION_BACKEND: &str = "tmux";
 pub const DEFAULT_GITHUB_REPO: &str = "Jiang0977/nexus";
 pub const TELEGRAM_API_BASE_URL: &str = "https://api.telegram.org";
+pub const NATIVE_PTY_SUPERVISOR_SOCKET_ENV: &str = "NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET";
 
 pub struct AppConfig {
     pub host: String,
@@ -25,6 +26,7 @@ pub struct AppConfig {
     pub default_tmux_session: String,
     pub session_backend: String,
     pub session_backend_config_file: PathBuf,
+    pub native_pty_supervisor_socket: PathBuf,
     pub codex_history_enabled: bool,
     pub github_repo: String,
     pub workspace_root: String,
@@ -65,6 +67,8 @@ impl AppConfig {
             .map(|value| value.trim().to_ascii_lowercase())
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| read_session_backend_config_file(&session_backend_config_file));
+        let native_pty_supervisor_socket =
+            resolve_native_pty_supervisor_socket(&project_root, &data_dir, &dotenv);
 
         Ok(Self {
             host,
@@ -76,6 +80,7 @@ impl AppConfig {
                 .unwrap_or_else(|| DEFAULT_TMUX_SESSION.to_string()),
             session_backend,
             session_backend_config_file,
+            native_pty_supervisor_socket,
             codex_history_enabled: env_or_dotenv("NEXUS_CODEX_HISTORY_ENABLED", &dotenv)
                 .map(|value| value != "0")
                 .unwrap_or(true),
@@ -101,6 +106,25 @@ impl AppConfig {
             proxy_vars: collect_proxy_vars(&dotenv),
             runtime_configs: RuntimeConfigs::from_env(&dotenv, &runtime_root),
         })
+    }
+}
+
+pub fn resolve_native_pty_supervisor_socket(
+    project_root: &Path,
+    data_dir: &Path,
+    dotenv: &HashMap<String, String>,
+) -> PathBuf {
+    let configured = env_or_dotenv(NATIVE_PTY_SUPERVISOR_SOCKET_ENV, dotenv)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let path = configured
+        .map(PathBuf::from)
+        .unwrap_or_else(|| data_dir.join("native-sessions").join("supervisor.sock"));
+    if path.is_absolute() {
+        path
+    } else {
+        project_root.join(path)
     }
 }
 
@@ -204,11 +228,46 @@ impl RuntimeServiceConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_GITHUB_REPO, DEFAULT_PORT};
+    use super::{
+        DEFAULT_GITHUB_REPO, DEFAULT_PORT, NATIVE_PTY_SUPERVISOR_SOCKET_ENV,
+        resolve_native_pty_supervisor_socket,
+    };
+    use std::collections::HashMap;
+    use std::path::Path;
 
     #[test]
     fn runtime_defaults_match_repository_defaults() {
         assert_eq!(DEFAULT_PORT, 59000);
         assert_eq!(DEFAULT_GITHUB_REPO, "Jiang0977/nexus");
+    }
+
+    #[test]
+    fn native_supervisor_socket_defaults_under_data_dir() {
+        let dotenv = HashMap::new();
+        assert_eq!(
+            resolve_native_pty_supervisor_socket(
+                Path::new("/repo"),
+                Path::new("/repo/data"),
+                &dotenv
+            ),
+            Path::new("/repo/data/native-sessions/supervisor.sock")
+        );
+    }
+
+    #[test]
+    fn native_supervisor_socket_honors_env_override() {
+        let mut dotenv = HashMap::new();
+        dotenv.insert(
+            NATIVE_PTY_SUPERVISOR_SOCKET_ENV.to_string(),
+            "var/native.sock".to_string(),
+        );
+        assert_eq!(
+            resolve_native_pty_supervisor_socket(
+                Path::new("/repo"),
+                Path::new("/repo/data"),
+                &dotenv
+            ),
+            Path::new("/repo/var/native.sock")
+        );
     }
 }
