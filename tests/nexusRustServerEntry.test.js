@@ -1297,6 +1297,8 @@ test('rust nexus-server serves config and workspace routes', async (t) => {
   assert.equal(configResponse.status, 200)
   assert.deepEqual(await configResponse.json(), {
     tmuxSession: '~',
+    sessionBackend: 'tmux',
+    configuredSessionBackend: 'tmux',
     workspaceRoot,
     features: {
       codexHistory: false,
@@ -1458,6 +1460,100 @@ test('rust nexus-server serves config and workspace routes', async (t) => {
     servedFileResponse.headers.get('content-disposition') || '',
     /attachment; filename\*=UTF-8''notes-renamed\.txt/,
   )
+})
+
+test('rust nexus-server persists session backend config and keeps current backend until restart', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const dataDir = mkdtempSync(join(tmpdir(), 'nexus-session-backend-data-'))
+  const requestLog = join(dataDir, 'session-requests.jsonl')
+  const port = await getFreePort()
+  const password = 'session-backend-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    NEXUS_DATA_DIR: dataDir,
+    WORKSPACE_ROOT: '/workspace',
+    TMUX_SESSION: '~',
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+    NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
+    NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
+    FAKE_SESSION_MANAGEMENT_REQUEST_LOG: requestLog,
+    FAKE_SESSION_MANAGEMENT_LOG_ENV: '1',
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+    rmSync(dataDir, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const { token } = await login(port, password)
+  const headers = { Authorization: `Bearer ${token}` }
+  const jsonHeaders = {
+    ...headers,
+    'Content-Type': 'application/json',
+  }
+
+  const beforeResponse = await fetch(`http://127.0.0.1:${port}/api/config`, { headers })
+  assert.equal(beforeResponse.status, 200)
+  assert.deepEqual(await beforeResponse.json(), {
+    tmuxSession: '~',
+    sessionBackend: 'tmux',
+    configuredSessionBackend: 'tmux',
+    workspaceRoot: '/workspace',
+    features: {
+      codexHistory: true,
+    },
+  })
+
+  const saveResponse = await fetch(`http://127.0.0.1:${port}/api/config`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify({ session_backend: 'native' }),
+  })
+  assert.equal(saveResponse.status, 200)
+  assert.deepEqual(await saveResponse.json(), {
+    ok: true,
+    sessionBackend: 'tmux',
+    configuredSessionBackend: 'native',
+    restartRequired: true,
+  })
+
+  const afterResponse = await fetch(`http://127.0.0.1:${port}/api/config`, { headers })
+  assert.equal(afterResponse.status, 200)
+  assert.deepEqual(await afterResponse.json(), {
+    tmuxSession: '~',
+    sessionBackend: 'tmux',
+    configuredSessionBackend: 'native',
+    workspaceRoot: '/workspace',
+    features: {
+      codexHistory: true,
+    },
+  })
+
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(dataDir, 'session-backend.json'), 'utf8')),
+    { session_backend: 'native' },
+  )
+
+  const projectsResponse = await fetch(`http://127.0.0.1:${port}/api/projects`, { headers })
+  assert.equal(projectsResponse.status, 200)
+
+  const requests = readFileSync(requestLog, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const listProjects = requests.find((request) => request.method === 'listProjects')
+  assert.ok(listProjects)
+  assert.equal(listProjects.env.NEXUS_SESSION_BACKEND, 'tmux')
 })
 
 test('rust nexus-server serves config profile and cc-switch routes', async (t) => {

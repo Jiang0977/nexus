@@ -2,6 +2,7 @@ use crate::config::{
     collect_proxy_vars, env_or_dotenv, load_dotenv, parse_json_array_env, resolve_data_dir,
     resolve_project_root, resolve_runtime_path,
 };
+use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -11,6 +12,7 @@ pub const DEFAULT_HOST: &str = "0.0.0.0";
 pub const DEFAULT_PORT: u16 = 59000;
 pub const DEFAULT_RUNTIME_READY_TIMEOUT_MS: u64 = 5_000;
 pub const DEFAULT_TMUX_SESSION: &str = "~";
+pub const DEFAULT_SESSION_BACKEND: &str = "tmux";
 pub const DEFAULT_GITHUB_REPO: &str = "Jiang0977/nexus";
 pub const TELEGRAM_API_BASE_URL: &str = "https://api.telegram.org";
 
@@ -22,6 +24,7 @@ pub struct AppConfig {
     pub password_hash: String,
     pub default_tmux_session: String,
     pub session_backend: String,
+    pub session_backend_config_file: PathBuf,
     pub codex_history_enabled: bool,
     pub github_repo: String,
     pub workspace_root: String,
@@ -57,6 +60,12 @@ impl AppConfig {
         let password_hash = env_or_dotenv("ACC_PASSWORD_HASH", &dotenv)
             .ok_or_else(|| "ACC_PASSWORD_HASH must be set in environment or .env".to_string())?;
 
+        let session_backend_config_file = data_dir.join("session-backend.json");
+        let session_backend = env_or_dotenv("NEXUS_SESSION_BACKEND", &dotenv)
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| read_session_backend_config_file(&session_backend_config_file));
+
         Ok(Self {
             host,
             port,
@@ -65,10 +74,8 @@ impl AppConfig {
             password_hash,
             default_tmux_session: env_or_dotenv("TMUX_SESSION", &dotenv)
                 .unwrap_or_else(|| DEFAULT_TMUX_SESSION.to_string()),
-            session_backend: env_or_dotenv("NEXUS_SESSION_BACKEND", &dotenv)
-                .map(|value| value.trim().to_ascii_lowercase())
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| "tmux".to_string()),
+            session_backend,
+            session_backend_config_file,
             codex_history_enabled: env_or_dotenv("NEXUS_CODEX_HISTORY_ENABLED", &dotenv)
                 .map(|value| value != "0")
                 .unwrap_or(true),
@@ -95,6 +102,22 @@ impl AppConfig {
             runtime_configs: RuntimeConfigs::from_env(&dotenv, &runtime_root),
         })
     }
+}
+
+pub fn read_session_backend_config_file(path: &Path) -> String {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|value| {
+            value
+                .as_object()
+                .and_then(|object| object.get("session_backend"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| matches!(value.as_str(), "tmux" | "native"))
+        .unwrap_or_else(|| DEFAULT_SESSION_BACKEND.to_string())
 }
 
 pub struct RuntimeConfigs {

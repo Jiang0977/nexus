@@ -146,6 +146,24 @@ function latestNativeProcessInstance(dbPath, projectName, channelIndex) {
   }
 }
 
+function nativeProcessInstanceCount(dbPath, projectName, channelIndex) {
+  const db = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    return db
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM process_instances
+        WHERE project_name = ? AND channel_index = ?
+      `)
+      .get(projectName, channelIndex).count
+  } catch (error) {
+    if (String(error?.message || '').includes('database is locked')) return 0
+    throw error
+  } finally {
+    db.close()
+  }
+}
+
 function insertNativeProcessInstance(dbPath, {
   projectName,
   channelIndex,
@@ -695,15 +713,22 @@ test('real rust pty runtime records native process lifecycle in the registry', {
   assert.notEqual(instance.started_at, '')
   assert.notEqual(instance.ended_at, '')
   assert.notEqual(instance.start_fingerprint, '')
+  const initialInstanceCount = nativeProcessInstanceCount(dbPath, 'native-process-project', 0)
 
-  await assert.rejects(
-    () => ptyClient.attachConnection({
-      connectionId: 'native-process-conn-again',
-      session: 'native-process-project',
-      windowIndex: 0,
-    }),
-    /native channel process exited/,
-  )
+  const reopened = await ptyClient.attachConnection({
+    connectionId: 'native-process-conn-again',
+    session: 'native-process-project',
+    windowIndex: 0,
+  })
+  assert.deepEqual(reopened, { key: 'native-process-project:0' })
+
+  let nextInstanceCount = 0
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    nextInstanceCount = nativeProcessInstanceCount(dbPath, 'native-process-project', 0)
+    if (nextInstanceCount > initialInstanceCount) break
+    await delay(20)
+  }
+  assert.ok(nextInstanceCount > initialInstanceCount)
 })
 
 test('real rust session runtime terminates native channel process before deleting the channel', { skip: process.platform === 'win32' }, async (t) => {
@@ -785,7 +810,7 @@ test('real rust session runtime terminates native channel process before deletin
   assert.equal(stillAlive, false)
 })
 
-test('real rust pty runtime reconciles old native running processes on startup', { skip: process.platform === 'win32' }, async (t) => {
+test('real rust pty runtime reconciles old native running processes on startup and can cold-reattach orphaned channels', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
   ensureSessionRuntimeBuilt()
   const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-reconcile-'))
@@ -850,14 +875,16 @@ test('real rust pty runtime reconciles old native running processes on startup',
   assert.equal(latestNativeProcessInstance(dbPath, 'native-reconcile', 0).status, 'orphaned')
   assert.equal(latestNativeProcessInstance(dbPath, 'native-reconcile', 1).status, 'stale')
 
-  await assert.rejects(
-    () => ptyClient.attachConnection({
-      connectionId: 'native-reconcile-conn',
-      session: 'native-reconcile',
-      windowIndex: 0,
-    }),
-    /native channel process orphaned/,
-  )
+  const attached = await ptyClient.attachConnection({
+    connectionId: 'native-reconcile-conn',
+    session: 'native-reconcile',
+    windowIndex: 0,
+  })
+  assert.deepEqual(attached, { key: 'native-reconcile:0' })
+
+  const latest = latestNativeProcessInstance(dbPath, 'native-reconcile', 0)
+  assert.equal(latest.status, 'running')
+  assert.notEqual(latest.start_fingerprint, 'live-old')
 })
 
 test('real rust pty runtime returns native cold snapshot from durable scrollback', { skip: process.platform === 'win32' }, async (t) => {

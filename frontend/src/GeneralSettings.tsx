@@ -19,6 +19,7 @@ const LANGUAGES = [
 const UPDATE_CMD = 'git pull && cd frontend && npm run build && cd .. && pm2 restart nexus'
 
 type UpdateStatus = 'idle' | 'checking' | 'upToDate' | 'available' | 'dirty' | 'error'
+type SessionBackend = 'tmux' | 'native'
 
 export default function GeneralSettings({ token, themeMode, onToggleTheme, onClose, onOpenApiConfig }: Props) {
   const { t, i18n } = useTranslation()
@@ -30,6 +31,11 @@ export default function GeneralSettings({ token, themeMode, onToggleTheme, onClo
   const [syncingCodexHistory, setSyncingCodexHistory] = useState(false)
   const [codexHistoryNotice, setCodexHistoryNotice] = useState<string | null>(null)
   const [codexHistoryError, setCodexHistoryError] = useState<string | null>(null)
+  const [sessionBackend, setSessionBackend] = useState<SessionBackend>('tmux')
+  const [configuredSessionBackend, setConfiguredSessionBackend] = useState<SessionBackend>('tmux')
+  const [savingSessionBackend, setSavingSessionBackend] = useState(false)
+  const [sessionBackendNotice, setSessionBackendNotice] = useState<string | null>(null)
+  const [sessionBackendError, setSessionBackendError] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/version', { headers: { Authorization: `Bearer ${token}` } })
@@ -40,6 +46,23 @@ export default function GeneralSettings({ token, themeMode, onToggleTheme, onClo
       .then(data => { if (data?.current) setCurrentVersion(data.current) })
       .catch((error: unknown) => {
         console.error('[GeneralSettings] Failed to load current version', error)
+      })
+  }, [token])
+
+  useEffect(() => {
+    fetch('/api/config', { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
+      .then((data) => {
+        const current = data?.sessionBackend === 'native' ? 'native' : 'tmux'
+        const configured = data?.configuredSessionBackend === 'native' ? 'native' : 'tmux'
+        setSessionBackend(current)
+        setConfiguredSessionBackend(configured)
+      })
+      .catch((error: unknown) => {
+        console.error('[GeneralSettings] Failed to load config', error)
       })
   }, [token])
 
@@ -107,22 +130,50 @@ export default function GeneralSettings({ token, themeMode, onToggleTheme, onClo
     i18n.changeLanguage(e.target.value)
   }
 
+  async function handleSaveSessionBackend() {
+    setSavingSessionBackend(true)
+    setSessionBackendNotice(null)
+    setSessionBackendError(null)
+    try {
+      const response = await fetch('/api/config', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ session_backend: configuredSessionBackend }),
+      })
+      const data = await response.json().catch(() => null)
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.error || `HTTP ${response.status}`)
+      }
+      setSessionBackendNotice(t('settings.sessionBackendSaved'))
+      setSessionBackend(data?.sessionBackend === 'native' ? 'native' : 'tmux')
+      setConfiguredSessionBackend(data?.configuredSessionBackend === 'native' ? 'native' : 'tmux')
+    } catch (error: unknown) {
+      setSessionBackendError(error instanceof Error ? error.message : t('settings.sessionBackendSaveFailed'))
+    } finally {
+      setSavingSessionBackend(false)
+    }
+  }
+
   return (
-    <div className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-5">
+    <div className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-3 sm:p-5">
       <GhostShield />
-      <div className="bg-nexus-bg border border-nexus-border rounded-xl flex flex-col text-nexus-text w-full max-w-[400px] shadow-[0_20px_60px_rgba(0,0,0,0.5)] overflow-hidden">
+      <div className="bg-nexus-bg border border-nexus-border rounded-xl flex max-h-[calc(100dvh-24px)] min-h-0 flex-col text-nexus-text w-full max-w-[400px] shadow-[0_20px_60px_rgba(0,0,0,0.5)] overflow-hidden sm:max-h-[calc(100dvh-40px)]">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3.5 border-b border-nexus-border">
+        <div className="flex shrink-0 items-center justify-between px-4 py-3.5 border-b border-nexus-border">
           <span className="text-base font-semibold">{t('settings.title')}</span>
           <button
             className="bg-transparent border-none text-nexus-text-2 cursor-pointer flex items-center justify-center"
+            aria-label={t('common.close')}
             onPointerDown={onClose}
           >
             <Icon name="x" size={20} />
           </button>
         </div>
 
-        <div className="px-4 py-4 flex flex-col gap-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-5">
           {/* Appearance section */}
           <div>
             <div className="text-[11px] text-nexus-text-2 tracking-wider uppercase mb-3">
@@ -161,6 +212,47 @@ export default function GeneralSettings({ token, themeMode, onToggleTheme, onClo
                 </button>
               </div>
             </div>
+          </div>
+
+          <div className="border-t border-nexus-border pt-4">
+            <div className="text-[11px] text-nexus-text-2 tracking-wider uppercase mb-3">
+              {t('settings.terminalBackend')}
+            </div>
+            <p className="text-sm text-nexus-text-2 mb-3">
+              {t('settings.terminalBackendDesc')}
+            </p>
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <span className="text-sm text-nexus-text">{t('settings.currentBackend')}</span>
+              <span className="text-sm font-mono text-nexus-text-2">{sessionBackend}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-nexus-text">{t('settings.targetBackend')}</span>
+              <select
+                className="bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text text-sm px-2.5 py-1.5 outline-none cursor-pointer"
+                value={configuredSessionBackend}
+                onChange={(e) => setConfiguredSessionBackend(e.target.value === 'native' ? 'native' : 'tmux')}
+              >
+                <option value="tmux">{t('settings.backendTmux')}</option>
+                <option value="native">{t('settings.backendNative')}</option>
+              </select>
+            </div>
+            <p className="text-xs text-nexus-text-2 mt-3">
+              {t('settings.terminalBackendRestartHint')}
+            </p>
+            <button
+              className="flex items-center gap-1.5 bg-transparent border border-nexus-border rounded-md text-nexus-text text-sm px-3 py-2 cursor-pointer disabled:opacity-50 mt-3"
+              onPointerDown={savingSessionBackend ? undefined : handleSaveSessionBackend}
+              disabled={savingSessionBackend}
+            >
+              <Icon name="save" size={14} />
+              <span>{savingSessionBackend ? t('common.saving') : t('common.save')}</span>
+            </button>
+            {sessionBackendNotice && (
+              <p className="text-sm text-nexus-accent mt-3">{sessionBackendNotice}</p>
+            )}
+            {sessionBackendError && (
+              <p className="text-sm text-red-400 mt-3">{sessionBackendError}</p>
+            )}
           </div>
 
           {/* API Config Profiles section */}

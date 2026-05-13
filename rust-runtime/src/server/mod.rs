@@ -104,6 +104,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         password_hash: Arc::new(config.password_hash),
         default_tmux_session: Arc::new(config.default_tmux_session),
         session_backend: Arc::new(config.session_backend),
+        session_backend_config_file: Arc::new(config.session_backend_config_file),
         codex_history_enabled: config.codex_history_enabled,
         ws_connection_counter: Arc::new(AtomicUsize::new(0)),
         github_repo: Arc::new(config.github_repo),
@@ -140,7 +141,7 @@ fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/health", get(api_health))
         .route("/api/auth/login", post(api_login))
-        .route("/api/config", get(api_config))
+        .route("/api/config", get(api_config).post(api_save_config))
         .route("/api/configs", get(api_claude_configs))
         .route("/api/configs/{id}", post(api_save_claude_config))
         .route("/api/configs/{id}", delete(api_delete_claude_config))

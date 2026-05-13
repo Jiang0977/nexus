@@ -450,7 +450,7 @@ fn ensure_native_channel_attachable(
     window_index: u32,
 ) -> Result<(), String> {
     if let Some(instance) = registry.latest_process_instance(session, window_index)?
-        && matches!(instance.status.as_str(), "exited" | "stale" | "orphaned")
+        && matches!(instance.status.as_str(), "starting" | "running")
     {
         return Err(format!("native channel process {}", instance.status));
     }
