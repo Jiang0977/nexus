@@ -267,6 +267,7 @@ mod tests {
     fn unconfigured_runtime(display_name: &'static str) -> Arc<ManagedRuntime> {
         Arc::new(ManagedRuntime {
             display_name,
+            extra_env: Vec::new(),
             inner: Mutex::new(ManagedRuntimeState {
                 ready_timeout: Duration::from_millis(1),
                 process: None,
@@ -289,6 +290,7 @@ mod tests {
             password_hash: Arc::new("hash".to_string()),
             default_tmux_session: Arc::new("nexus".to_string()),
             session_backend: Arc::new("tmux".to_string()),
+            session_backend_config_file: Arc::new(PathBuf::from("/tmp/nexus/session-backend.json")),
             codex_history_enabled: true,
             ws_connection_counter: Arc::new(AtomicUsize::new(0)),
             github_repo: Arc::new("repo".to_string()),

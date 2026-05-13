@@ -988,6 +988,59 @@ test('browser regression: settings home syncs codex desktop history from cc-swit
   )
 })
 
+test('browser regression: mobile settings modal stays scrollable and closable', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  await page.getByTitle('More').click()
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Sync Codex Desktop History' }).waitFor()
+
+  const metrics = await page.getByText('Appearance').evaluate((heading) => {
+    const dialog = heading.closest('.bg-nexus-bg')
+    if (!(dialog instanceof HTMLElement)) return null
+    const content = Array.from(dialog.children).find((child) => (
+      child instanceof HTMLElement &&
+      child.textContent?.includes('Appearance') &&
+      child.textContent?.includes('About')
+    ))
+    if (!(content instanceof HTMLElement)) return null
+    const dialogRect = dialog.getBoundingClientRect()
+    const closeButton = dialog.querySelector('button')
+    const closeRect = closeButton?.getBoundingClientRect()
+    return {
+      closeVisible: !!closeRect && closeRect.top >= 0 && closeRect.bottom <= window.innerHeight,
+      contentCanScroll: content.scrollHeight > content.clientHeight,
+      dialogBottom: dialogRect.bottom,
+      dialogTop: dialogRect.top,
+      viewportHeight: window.innerHeight,
+    }
+  })
+
+  assert.ok(metrics, 'expected settings dialog metrics to be available')
+  assert.equal(metrics.contentCanScroll, true, 'settings content should scroll inside the dialog on mobile')
+  assert.equal(metrics.closeVisible, true, 'settings close button should be visible before scrolling')
+  assert.ok(metrics.dialogTop >= 0, `settings dialog should start inside viewport: ${JSON.stringify(metrics)}`)
+  assert.ok(metrics.dialogBottom <= metrics.viewportHeight, `settings dialog should fit inside viewport: ${JSON.stringify(metrics)}`)
+
+  await page.getByText('Appearance').evaluate((heading) => {
+    const dialog = heading.closest('.bg-nexus-bg')
+    const content = dialog?.querySelector('.overflow-y-auto')
+    if (content instanceof HTMLElement) content.scrollTop = content.scrollHeight
+  })
+  await page.getByText('About').waitFor()
+
+  await page.getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('button', { name: 'Close' }).waitFor({ state: 'hidden' })
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
 test('browser regression: mobile diagonal-horizontal swipe switches channel even if the finger leaves terminal bounds', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
 

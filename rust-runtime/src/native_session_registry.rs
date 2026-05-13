@@ -71,6 +71,15 @@ impl NativeSessionRegistry {
         }
         let connection = Connection::open(path).map_err(|error| error.to_string())?;
         connection
+            .pragma_update(None, "journal_mode", "WAL")
+            .map_err(|error| error.to_string())?;
+        connection
+            .pragma_update(None, "synchronous", "NORMAL")
+            .map_err(|error| error.to_string())?;
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .map_err(|error| error.to_string())?;
+        connection
             .busy_timeout(Duration::from_millis(1_000))
             .map_err(|error| error.to_string())?;
         let registry = Self { connection };

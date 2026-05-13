@@ -22,6 +22,7 @@ pub(super) struct AppState {
     pub(super) password_hash: Arc<String>,
     pub(super) default_tmux_session: Arc<String>,
     pub(super) session_backend: Arc<String>,
+    pub(super) session_backend_config_file: Arc<PathBuf>,
     pub(super) codex_history_enabled: bool,
     pub(super) ws_connection_counter: Arc<AtomicUsize>,
     pub(super) github_repo: Arc<String>,
@@ -77,11 +78,24 @@ pub(super) struct RuntimeManager {
 
 impl RuntimeManager {
     pub(super) async fn new(configs: RuntimeConfigs) -> Self {
+        let session_backend = configs_session_backend();
         Self {
-            task_runner: ManagedRuntime::boot(configs.task_runner).await,
-            pty_broker: ManagedRuntime::boot(configs.pty_broker).await,
-            window_launch: ManagedRuntime::boot(configs.window_launch).await,
-            session_management: ManagedRuntime::boot(configs.session_management).await,
+            task_runner: ManagedRuntime::boot(configs.task_runner, Vec::new()).await,
+            pty_broker: ManagedRuntime::boot(
+                configs.pty_broker,
+                vec![("NEXUS_SESSION_BACKEND".to_string(), session_backend.clone())],
+            )
+            .await,
+            window_launch: ManagedRuntime::boot(
+                configs.window_launch,
+                vec![("NEXUS_SESSION_BACKEND".to_string(), session_backend.clone())],
+            )
+            .await,
+            session_management: ManagedRuntime::boot(
+                configs.session_management,
+                vec![("NEXUS_SESSION_BACKEND".to_string(), session_backend)],
+            )
+            .await,
         }
     }
 
@@ -147,6 +161,7 @@ impl RuntimeManager {
 
 pub(super) struct ManagedRuntime {
     pub(super) display_name: &'static str,
+    pub(super) extra_env: Vec<(String, String)>,
     pub(super) inner: Mutex<ManagedRuntimeState>,
 }
 
@@ -157,9 +172,13 @@ pub(super) struct ManagedRuntimeState {
 }
 
 impl ManagedRuntime {
-    pub(super) async fn boot(config: RuntimeServiceConfig) -> Arc<Self> {
+    pub(super) async fn boot(
+        config: RuntimeServiceConfig,
+        extra_env: Vec<(String, String)>,
+    ) -> Arc<Self> {
         let runtime = Arc::new(Self {
             display_name: config.display_name,
+            extra_env,
             inner: Mutex::new(ManagedRuntimeState {
                 ready_timeout: config.ready_timeout,
                 process: None,
@@ -184,7 +203,14 @@ impl ManagedRuntime {
         args: Vec<String>,
         ready_timeout: Duration,
     ) -> Value {
-        let mut process = match RuntimeProcess::spawn(self.display_name, &executable, &args).await {
+        let mut process = match RuntimeProcess::spawn(
+            self.display_name,
+            &executable,
+            &args,
+            &self.extra_env,
+        )
+        .await
+        {
             Ok(process) => process,
             Err(error) => return runtime_error_status("nexus-server", &error),
         };
@@ -306,14 +332,17 @@ impl RuntimeProcess {
         display_name: &'static str,
         executable: &Path,
         args: &[String],
+        extra_env: &[(String, String)],
     ) -> Result<Self, String> {
-        let mut child = Command::new(executable)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| {
+        let mut command = Command::new(executable);
+        command.args(args);
+        command.stdin(Stdio::piped());
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+        for (key, value) in extra_env {
+            command.env(key, value);
+        }
+        let mut child = command.spawn().map_err(|error| {
                 format!(
                     "failed to spawn {} runtime {}: {}",
                     display_name,
@@ -518,6 +547,19 @@ impl RuntimeProcess {
         })?;
         Ok(())
     }
+}
+
+fn configs_session_backend() -> String {
+    std::env::var("NEXUS_SESSION_BACKEND")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let project_root = crate::config::resolve_project_root().ok()?;
+            let dotenv = crate::config::load_dotenv(&project_root);
+            crate::config::env_or_dotenv("NEXUS_SESSION_BACKEND", &dotenv)
+        })
+        .unwrap_or_else(|| "tmux".to_string())
 }
 
 pub(super) fn spawn_runtime_stdout_dispatcher(

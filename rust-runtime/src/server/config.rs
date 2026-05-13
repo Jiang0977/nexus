@@ -1,3 +1,4 @@
+use crate::runtime_config::read_session_backend_config_file;
 use super::*;
 
 pub(super) async fn api_login(
@@ -40,14 +41,59 @@ pub(super) async fn api_config(State(state): State<Arc<AppState>>, headers: Head
         return response;
     }
 
+    let configured_session_backend =
+        read_session_backend_config_file(state.session_backend_config_file.as_ref());
     Json(json!({
         "tmuxSession": state.default_tmux_session.as_ref(),
+        "sessionBackend": state.session_backend.as_ref(),
+        "configuredSessionBackend": configured_session_backend,
         "workspaceRoot": state.workspace_root.as_ref(),
         "features": {
             "codexHistory": state.codex_history_enabled,
         },
     }))
     .into_response()
+}
+
+#[derive(Deserialize)]
+pub(super) struct SessionBackendConfigPayload {
+    pub(super) session_backend: Option<String>,
+}
+
+pub(super) async fn api_save_config(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<SessionBackendConfigPayload>,
+) -> Response {
+    if let Some(response) = require_auth(&headers, &state) {
+        return response;
+    }
+
+    let Some(session_backend) = payload
+        .session_backend
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return json_error(StatusCode::BAD_REQUEST, "session_backend required");
+    };
+
+    let normalized = match session_backend.to_ascii_lowercase().as_str() {
+        "tmux" => "tmux",
+        "native" => "native",
+        _ => return json_error(StatusCode::BAD_REQUEST, "invalid session backend"),
+    };
+
+    match write_session_backend_config_file(state.session_backend_config_file.as_ref(), normalized) {
+        Ok(()) => Json(json!({
+            "ok": true,
+            "sessionBackend": state.session_backend.as_ref(),
+            "configuredSessionBackend": normalized,
+            "restartRequired": true,
+        }))
+        .into_response(),
+        Err(error) => Json(error.body).into_response(),
+    }
 }
 
 pub(super) async fn api_claude_configs(
@@ -375,6 +421,18 @@ pub(super) fn json_object_file(path: &Path) -> Option<serde_json::Map<String, Va
         .ok()
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
         .and_then(|value| value.as_object().cloned())
+}
+
+pub(super) fn write_session_backend_config_file(
+    path: &Path,
+    session_backend: &str,
+) -> Result<(), ServiceRouteError> {
+    let mut object = serde_json::Map::new();
+    object.insert(
+        "session_backend".to_string(),
+        Value::String(session_backend.to_string()),
+    );
+    write_json_object_file(path, &object, true)
 }
 
 pub(super) fn write_json_object_file(

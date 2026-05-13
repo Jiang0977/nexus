@@ -4,6 +4,7 @@ import { appendFileSync } from 'node:fs'
 const mode = process.env.FAKE_SESSION_MANAGEMENT_RUNTIME_MODE || 'normal'
 const workspaceRoot = (process.env.FAKE_SESSION_MANAGEMENT_WORKSPACE_ROOT || '/workspace').replace(/\/+$/, '') || '/'
 const requestLog = process.env.FAKE_SESSION_MANAGEMENT_REQUEST_LOG || ''
+const logEnv = process.env.FAKE_SESSION_MANAGEMENT_LOG_ENV || ''
 
 function workspacePath(relativePath = '') {
   const relative = String(relativePath || '').replace(/^\/+/, '')
@@ -66,7 +67,13 @@ rl.on('line', (line) => {
 
   const { id, method, params = {} } = message
   if (requestLog) {
-    appendFileSync(requestLog, `${JSON.stringify({ method, params })}\n`)
+    const payload = { method, params }
+    if (logEnv) {
+      payload.env = {
+        NEXUS_SESSION_BACKEND: process.env.NEXUS_SESSION_BACKEND || '',
+      }
+    }
+    appendFileSync(requestLog, `${JSON.stringify(payload)}\n`)
   }
   switch (method) {
     case 'ready':
