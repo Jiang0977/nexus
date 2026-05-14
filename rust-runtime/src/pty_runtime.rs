@@ -971,11 +971,44 @@ fn stale_native_supervisor_lock(path: &Path) -> bool {
 }
 
 fn configured_native_supervisor_socket_path() -> Option<PathBuf> {
-    env::var(NATIVE_SUPERVISOR_SOCKET_ENV)
+    match env::var(NATIVE_SUPERVISOR_SOCKET_ENV) {
+        Ok(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                return None;
+            }
+            Some(PathBuf::from(value))
+        }
+        Err(_) => {
+            let default_socket = native_supervisor_socket_path();
+            if native_supervisor_socket_exists(&default_socket) {
+                Some(default_socket)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn native_program_configured() -> bool {
+    env::var(NATIVE_PROGRAM_ENV)
         .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn native_supervisor_socket_exists(path: &Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+
+    fs::metadata(path)
+        .map(|metadata| metadata.file_type().is_socket())
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn native_supervisor_socket_exists(path: &Path) -> bool {
+    path.exists()
 }
 
 fn safe_scrollback_component(value: &str) -> String {
@@ -1767,7 +1800,7 @@ fn spawn_supervisor_event_reader(
 pub fn run_stdio_runtime() {
     if backend_mode() == BackendMode::Tmux {
         cleanup_stale_grouped_sessions();
-    } else if configured_native_supervisor_socket_path().is_none() {
+    } else if configured_native_supervisor_socket_path().is_none() && !native_program_configured() {
         reconcile_native_processes_on_startup();
     }
 

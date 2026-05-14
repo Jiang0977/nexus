@@ -11,7 +11,6 @@ import {
   ALL_KEYS,
   FACTORY_CONFIG,
   getToolbarButtonText,
-  isToolbarKeycap,
 } from './toolbarDefaults'
 import type { ThemeMode } from './terminal/theme'
 
@@ -848,9 +847,6 @@ function chunk<T>(arr: T[], n: number): T[][] {
 }
 
 // Tailwind class constants for reuse
-const keyClass = 'bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text cursor-pointer text-xs font-mono min-w-[38px] py-1.5 px-[7px] text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
-const keyPCClass = 'bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text cursor-pointer text-sm font-mono min-w-[48px] py-2 px-2.5 text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
-const keyEmbeddedClass = 'bg-nexus-bg-2 border border-nexus-border rounded text-nexus-text cursor-pointer text-[11px] font-mono min-w-[30px] py-1 px-[5px] text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
 const actionKeyClass = 'bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text cursor-pointer text-[11px] font-medium py-1.5 px-2.5 text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
 const actionKeyPCClass = 'bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text cursor-pointer text-[13px] font-medium py-2 px-3 text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
 const actionKeyEmbeddedClass = 'bg-nexus-bg-2 border border-nexus-border rounded text-nexus-text cursor-pointer text-[11px] font-medium py-1 px-2 text-center touch-manipulation flex-shrink-0 transition-all duration-100 active:scale-95 active:bg-nexus-bg active:border-nexus-accent'
@@ -866,12 +862,7 @@ const editBtnPrimaryPCClass = 'bg-nexus-accent border-none rounded text-white cu
 const addBtnClass = 'bg-nexus-bg-2 border border-nexus-border rounded text-nexus-accent cursor-pointer text-[11px] py-1 px-2 transition-all duration-100 active:scale-95 active:bg-nexus-bg'
 const addBtnPCClass = 'bg-nexus-bg-2 border border-nexus-border rounded text-nexus-accent cursor-pointer text-xs py-1.5 px-3 transition-all duration-100 active:scale-95 active:bg-nexus-bg'
 
-function getToolbarButtonClass(key: KeyDef, mode: 'mobile' | 'pc' | 'embedded') {
-  if (isToolbarKeycap(key)) {
-    if (mode === 'pc') return keyPCClass
-    if (mode === 'embedded') return keyEmbeddedClass
-    return keyClass
-  }
+function getToolbarButtonClass(_key: KeyDef, mode: 'mobile' | 'pc' | 'embedded') {
   if (mode === 'pc') return actionKeyPCClass
   if (mode === 'embedded') return actionKeyEmbeddedClass
   return actionKeyClass

@@ -68,21 +68,30 @@ async function waitForSocket(path) {
   throw new Error(`socket was not created: ${path}`)
 }
 
+function isolatedNativeEnv(baseDir, overrides = {}) {
+  return {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_DATA_DIR: baseDir,
+    NEXUS_NATIVE_SESSION_DB: join(baseDir, 'native-sessions', 'session.db'),
+    NEXUS_NATIVE_SCROLLBACK_DIR: join(baseDir, 'scrollback'),
+    ...overrides,
+  }
+}
+
 test('native pty supervisor keeps a native PTY alive across socket clients', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
 
   const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-pty-supervisor-'))
   const socketPath = join(baseDir, 'supervisor.sock')
+  const env = isolatedNativeEnv(baseDir, {
+    NEXUS_NATIVE_PTY_PROGRAM: 'cat',
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: socketPath,
+  })
   const supervisor = spawn(SUPERVISOR, [], {
     cwd: ROOT,
     stdio: ['ignore', 'ignore', 'pipe'],
-    env: {
-      ...process.env,
-      NEXUS_SESSION_BACKEND: 'native',
-      NEXUS_NATIVE_PTY_PROGRAM: 'cat',
-      NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: socketPath,
-      NEXUS_NATIVE_SCROLLBACK_DIR: join(baseDir, 'scrollback'),
-    },
+    env,
   })
   let stderr = ''
   supervisor.stderr.on('data', (chunk) => {
@@ -183,13 +192,10 @@ test('pty runtime forwards native connections through the supervisor socket', { 
 
   const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-pty-forward-'))
   const socketPath = join(baseDir, 'supervisor.sock')
-  const env = {
-    ...process.env,
-    NEXUS_SESSION_BACKEND: 'native',
+  const env = isolatedNativeEnv(baseDir, {
     NEXUS_NATIVE_PTY_PROGRAM: 'cat',
     NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: socketPath,
-    NEXUS_NATIVE_SCROLLBACK_DIR: join(baseDir, 'scrollback'),
-  }
+  })
   const supervisor = spawn(SUPERVISOR, [], {
     cwd: ROOT,
     stdio: ['ignore', 'ignore', 'pipe'],
@@ -293,6 +299,68 @@ test('pty runtime forwards native connections through the supervisor socket', { 
     await delay(20)
   }
   assert.match(secondOutput, /forward two\r?\n/)
+  assert.equal(supervisor.exitCode, null, stderr)
+})
+
+test('pty runtime discovers the default native supervisor socket when env is unset', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-pty-default-socket-'))
+  const socketPath = join(baseDir, 'native-sessions', 'supervisor.sock')
+  const env = isolatedNativeEnv(baseDir, {
+    NEXUS_NATIVE_PTY_PROGRAM: 'cat',
+  })
+  delete env.NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET
+  const supervisor = spawn(SUPERVISOR, [], {
+    cwd: ROOT,
+    stdio: ['ignore', 'ignore', 'pipe'],
+    env,
+  })
+  let stderr = ''
+  supervisor.stderr.on('data', (chunk) => {
+    stderr += String(chunk)
+  })
+
+  t.after(() => {
+    supervisor.kill('SIGTERM')
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await waitForSocket(socketPath)
+
+  const events = []
+  const runtime = createPtyBrokerRustClient({
+    runtimeExecutable: PTY_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  runtime.onEvent((event) => events.push(event))
+  t.after(async () => runtime.close())
+
+  await runtime.ready()
+  assert.deepEqual(await runtime.attachConnection({
+    connectionId: 'default-socket-client',
+    session: 'default-socket-project',
+    windowIndex: 0,
+  }), { key: 'default-socket-project:0' })
+
+  runtime.handleConnectionMessage({
+    connectionId: 'default-socket-client',
+    key: 'default-socket-project:0',
+    rawMessage: 'default socket one\n',
+  })
+
+  let output = ''
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    output = events
+      .filter((event) => event.type === 'output')
+      .map((event) => event.data)
+      .join('')
+    if (output.includes('default socket one')) break
+    await delay(20)
+  }
+  assert.match(output, /default socket one\r?\n/)
   assert.equal(supervisor.exitCode, null, stderr)
 })
 
@@ -470,13 +538,10 @@ test('native pty supervisor refuses a second owner for the same socket', { skip:
 
   const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-pty-lock-'))
   const socketPath = join(baseDir, 'supervisor.sock')
-  const env = {
-    ...process.env,
-    NEXUS_SESSION_BACKEND: 'native',
+  const env = isolatedNativeEnv(baseDir, {
     NEXUS_NATIVE_PTY_PROGRAM: 'cat',
     NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: socketPath,
-    NEXUS_NATIVE_SCROLLBACK_DIR: join(baseDir, 'scrollback'),
-  }
+  })
   const first = spawn(SUPERVISOR, [], {
     cwd: ROOT,
     stdio: ['ignore', 'ignore', 'pipe'],

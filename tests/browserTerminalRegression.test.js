@@ -1041,6 +1041,88 @@ test('browser regression: mobile settings modal stays scrollable and closable', 
   )
 })
 
+test('browser regression: mobile terminal vertical drag scrolls xterm history', { timeout: 120000 }, async (t) => {
+  const longOutput = Array.from({ length: 120 }, (_, index) => `mobile history line ${String(index + 1).padStart(3, '0')}`).join('\n') + '\n'
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    mobile: true,
+    ptySnapshots: {
+      'nexus-preview-rust:0': {
+        output: longOutput,
+        clients: 1,
+      },
+    },
+  })
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket
+    window.__nexusWsInstances = []
+    function PatchedWebSocket(url, protocols) {
+      const socket = protocols === undefined
+        ? new NativeWebSocket(url)
+        : new NativeWebSocket(url, protocols)
+      window.__nexusWsInstances.push(socket)
+      return socket
+    }
+    Object.assign(PatchedWebSocket, NativeWebSocket)
+    Object.defineProperty(window, 'WebSocket', {
+      configurable: true,
+      writable: true,
+      value: PatchedWebSocket,
+    })
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('mobile history line 120'))
+
+  const rect = await page.getByRole('button', { name: 'Select text' }).evaluate((button) => {
+    const container = button.parentElement?.firstElementChild
+    const bounds = container?.getBoundingClientRect()
+    return bounds ? {
+      left: bounds.left,
+      top: bounds.top,
+      width: bounds.width,
+      height: bounds.height,
+    } : null
+  })
+
+  assert.ok(rect, 'expected terminal container bounds to exist')
+
+  const startX = rect.left + rect.width / 2
+  const startY = rect.top + rect.height / 2
+  const beforeScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  await dispatchMobileSwipe(page, [
+    [startX, startY],
+    [startX + 1, startY + 80],
+    [startX + 1, startY + 160],
+    [startX, startY + 240],
+    [startX, startY + 320],
+  ])
+
+  await page.waitForFunction(() => {
+    const viewport = document.querySelector('.xterm-viewport')
+    return viewport instanceof HTMLElement && viewport.scrollTop < viewport.scrollHeight - viewport.clientHeight - 20
+  })
+  const afterScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  assert.ok(afterScrollTop < beforeScrollTop, `expected mobile drag to move xterm viewport upward, before=${beforeScrollTop}, after=${afterScrollTop}`)
+  await page.getByRole('button', { name: '滚到底部' }).waitFor()
+
+  await page.evaluate(() => {
+    const socket = window.__nexusWsInstances?.at(-1)
+    socket?.onmessage?.(new MessageEvent('message', { data: 'streaming output after touch scroll\n' }))
+  })
+  await delay(150)
+  const afterStreamingScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  assert.ok(
+    afterStreamingScrollTop < beforeScrollTop,
+    `expected incoming output to preserve user scroll, before=${beforeScrollTop}, afterStream=${afterStreamingScrollTop}`,
+  )
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
 test('browser regression: mobile diagonal-horizontal swipe switches channel even if the finger leaves terminal bounds', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
 
