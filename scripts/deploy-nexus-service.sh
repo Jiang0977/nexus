@@ -7,11 +7,15 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 RUN_FRONTEND_BUILD=0
+RESTART_NATIVE_PTY=0
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --frontend)
             RUN_FRONTEND_BUILD=1
+            ;;
+        --restart-native-pty)
+            RESTART_NATIVE_PTY=1
             ;;
         *)
             echo "[Nexus] Unknown argument: $1" >&2
@@ -123,10 +127,13 @@ echo "[Nexus] Building release binaries..."
 
 install_native_session_cli
 
-if sudo -n systemctl is-active --quiet nexus-native-pty.service; then
+if [ "$RESTART_NATIVE_PTY" -eq 1 ] && sudo -n systemctl is-active --quiet nexus-native-pty.service; then
     echo "[Nexus] Restarting native PTY supervisor..."
     sudo -n systemctl restart nexus-native-pty.service
     sudo -n systemctl status nexus-native-pty.service --no-pager
+elif sudo -n systemctl is-active --quiet nexus-native-pty.service; then
+    echo "[Nexus] Native PTY supervisor is running; not restarting it to preserve native sessions."
+    echo "[Nexus] Pass --restart-native-pty to restart it explicitly."
 fi
 
 echo "[Nexus] Restarting deployed service..."

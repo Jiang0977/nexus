@@ -328,19 +328,33 @@ test('real rust pty runtime speaks the broker contract through a fake tmux backe
 
 test('real rust pty runtime can attach to an opt-in native foreground PTY', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-opt-in-'))
+  const dbPath = join(baseDir, 'session.db')
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
+    NEXUS_NATIVE_PTY_PROGRAM: 'cat',
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
   const client = createPtyBrokerRustClient({
     runtimeExecutable: RUNTIME,
-    env: {
-      ...process.env,
-      NEXUS_SESSION_BACKEND: 'native',
-      NEXUS_NATIVE_PTY_PROGRAM: 'cat',
-    },
+    env,
     readyTimeoutMs: 1000,
     log: { log() {}, error() {} },
   })
 
   t.after(async () => {
     await client.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
   })
 
   const events = []
@@ -348,7 +362,26 @@ test('real rust pty runtime can attach to an opt-in native foreground PTY', { sk
     events.push(event)
   })
 
+  await sessionClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-opt-in-sentinel',
+    cwd: ROOT,
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: {},
+  })
+  insertNativeProcessInstance(dbPath, {
+    projectName: 'native-opt-in-sentinel',
+    channelIndex: 0,
+    osPid: process.pid,
+    startFingerprint: 'must-not-reconcile-opt-in-program',
+  })
+
   await client.ready()
+  assert.equal(
+    latestNativeProcessInstance(dbPath, 'native-opt-in-sentinel', 0).status,
+    'running',
+  )
   const first = await client.attachConnection({
     connectionId: 'native-conn-1',
     session: 'native-project',
@@ -446,6 +479,7 @@ test('real rust pty runtime launches an opt-in native channel from the session r
     ...process.env,
     NEXUS_SESSION_BACKEND: 'native',
     NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
   }
   const sessionClient = createSessionManagementRustClient({
     runtimeExecutable: SESSION_RUNTIME,
@@ -522,6 +556,7 @@ test('real rust pty runtime detaches native registry channels without exiting th
     ...process.env,
     NEXUS_SESSION_BACKEND: 'native',
     NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
   }
   const sessionClient = createSessionManagementRustClient({
     runtimeExecutable: SESSION_RUNTIME,
@@ -594,6 +629,7 @@ test('real rust pty runtime launches native channels from a structured launch pl
     ...process.env,
     NEXUS_SESSION_BACKEND: 'native',
     NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
   }
   const sessionClient = createSessionManagementRustClient({
     runtimeExecutable: SESSION_RUNTIME,
@@ -662,6 +698,7 @@ test('real rust pty runtime records native process lifecycle in the registry', {
     ...process.env,
     NEXUS_SESSION_BACKEND: 'native',
     NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
   }
   const sessionClient = createSessionManagementRustClient({
     runtimeExecutable: SESSION_RUNTIME,
@@ -742,6 +779,7 @@ test('real rust session runtime terminates native channel process before deletin
     ...process.env,
     NEXUS_SESSION_BACKEND: 'native',
     NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
   }
   const sessionClient = createSessionManagementRustClient({
     runtimeExecutable: SESSION_RUNTIME,
@@ -819,6 +857,7 @@ test('real rust pty runtime reconciles old native running processes on startup a
     ...process.env,
     NEXUS_SESSION_BACKEND: 'native',
     NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
   }
   const sessionClient = createSessionManagementRustClient({
     runtimeExecutable: SESSION_RUNTIME,
@@ -896,6 +935,7 @@ test('real rust pty runtime returns native cold snapshot from durable scrollback
     ...process.env,
     NEXUS_SESSION_BACKEND: 'native',
     NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
     NEXUS_NATIVE_SCROLLBACK_DIR: join(baseDir, 'scrollback'),
   }
   const sessionClient = createSessionManagementRustClient({

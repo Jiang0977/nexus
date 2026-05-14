@@ -9,7 +9,6 @@ import type { TmuxWindow } from './useTerminalSessions'
 
 const FONT_SIZE_KEY = 'nexus_font_size'
 const TAP_THRESHOLD = 8
-const SCROLLBACK_SWIPE_THRESHOLD = 48
 const CHANNEL_SWIPE_THRESHOLD = 60
 const SWIPE_DIRECTION_LOCK_THRESHOLD = 18
 const SWIPE_DIRECTION_GAP = 12
@@ -26,11 +25,9 @@ interface UseTerminalRuntimeArgs {
   overlayOpen: boolean
   scrollPositionsRef: MutableRefObject<Record<number, number>>
   setToolbarCollapsed: Dispatch<SetStateAction<boolean | undefined>>
-  showScrollbackRef: MutableRefObject<boolean>
   termRef: MutableRefObject<XTerm | null>
   token: string
   toolbarCollapsedRef: MutableRefObject<boolean | undefined>
-  triggerScrollbackRef: MutableRefObject<() => void>
   uploadFileRef: MutableRefObject<(file: File) => Promise<void>>
   windowsLoaded: boolean
   windowsRef: MutableRefObject<TmuxWindow[]>
@@ -49,11 +46,9 @@ export function useTerminalRuntime({
   overlayOpen,
   scrollPositionsRef,
   setToolbarCollapsed,
-  showScrollbackRef,
   termRef,
   token,
   toolbarCollapsedRef,
-  triggerScrollbackRef,
   uploadFileRef,
   windowsLoaded,
   windowsRef,
@@ -346,21 +341,24 @@ export function useTerminalRuntime({
       }
     })
 
-    term.onScroll(() => {
+    function syncScrolledStateFromBuffer() {
       const buffer = (term as any).buffer?.active
       if (!buffer) return
       const scrolledUp = buffer.viewportY < buffer.baseY
       userScrolledRef.current = scrolledUp
       setIsScrolledUp(scrolledUp)
-    })
+    }
+
+    term.onScroll(syncScrolledStateFromBuffer)
 
     let touchStartX = 0
     let touchStartY = 0
+    let touchLastY = 0
+    let touchScrollRemainder = 0
     let isPinching = false
     let pinchStartDist = 0
     let pinchStartFontSize = fontSize
     let swipeAxis: 'vertical' | 'horizontal' | null = null
-    let scrollbackSwipeTriggered = false
     let channelSwipeTriggered = false
 
     function switchChannelBySwipe(deltaX: number) {
@@ -400,6 +398,25 @@ export function useTerminalRuntime({
       return Math.sqrt(dx * dx + dy * dy)
     }
 
+    function getTouchScrollLineHeight(): number {
+      const rect = containerEl.getBoundingClientRect()
+      if (term.rows > 0 && rect.height > 0) {
+        return Math.max(8, rect.height / term.rows)
+      }
+      return Math.max(8, Number(term.options.fontSize) || fontSize)
+    }
+
+    function scrollTerminalByTouch(deltaY: number) {
+      touchScrollRemainder += deltaY
+      const lineHeight = getTouchScrollLineHeight()
+      const lines = Math.trunc(touchScrollRemainder / lineHeight)
+      if (lines === 0) return
+
+      touchScrollRemainder -= lines * lineHeight
+      term.scrollLines(-lines)
+      syncScrolledStateFromBuffer()
+    }
+
     function onTouchStart(event: TouchEvent) {
       if (event.touches.length === 2) {
         isPinching = true
@@ -411,8 +428,9 @@ export function useTerminalRuntime({
       isPinching = false
       touchStartX = event.touches[0].clientX
       touchStartY = event.touches[0].clientY
+      touchLastY = event.touches[0].clientY
+      touchScrollRemainder = 0
       swipeAxis = null
-      scrollbackSwipeTriggered = false
       channelSwipeTriggered = false
     }
 
@@ -430,8 +448,9 @@ export function useTerminalRuntime({
         return
       }
 
+      const currentY = event.touches[0].clientY
       const totalDeltaX = event.touches[0].clientX - touchStartX
-      const totalDeltaY = event.touches[0].clientY - touchStartY
+      const totalDeltaY = currentY - touchStartY
       if (!swipeAxis) swipeAxis = resolveSwipeAxis(totalDeltaX, totalDeltaY)
 
       if (swipeAxis === 'horizontal') {
@@ -443,11 +462,9 @@ export function useTerminalRuntime({
         return
       }
 
-      if (swipeAxis === 'vertical' && !showScrollbackRef.current && !scrollbackSwipeTriggered) {
-        if (totalDeltaY >= SCROLLBACK_SWIPE_THRESHOLD) {
-          scrollbackSwipeTriggered = true
-          triggerScrollbackRef.current()
-        }
+      if (swipeAxis === 'vertical') {
+        scrollTerminalByTouch(currentY - touchLastY)
+        touchLastY = currentY
       }
     }
 
@@ -584,7 +601,7 @@ export function useTerminalRuntime({
       termRef.current = null
       fitAddonRef.current = null
     }
-  }, [activeWindowIndexRef, attachWindowFnRef, enabled, fitNow, inputRef, setToolbarCollapsed, showScrollbackRef, toolbarCollapsedRef, triggerScrollbackRef, uploadFileRef, windowsRef])
+  }, [activeWindowIndexRef, attachWindowFnRef, enabled, fitNow, inputRef, setToolbarCollapsed, toolbarCollapsedRef, uploadFileRef, windowsRef])
 
   useEffect(() => {
     if (!enabled) {

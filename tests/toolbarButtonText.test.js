@@ -4,7 +4,8 @@ import assert from 'node:assert/strict'
 import {
   ALL_KEYS,
   getToolbarButtonText,
-  isToolbarKeycap,
+  isToolbarLocalAction,
+  isToolbarTerminalInput,
 } from '../frontend/src/toolbarDefaults.ts'
 
 function findKey(id) {
@@ -15,24 +16,34 @@ function findKey(id) {
 
 const t = (value) => `translated:${value}`
 
-test('standard keycaps keep their original key label', () => {
+test('terminal input shortcuts show their readable key and function label', () => {
   const esc = findKey('esc')
-  const left = findKey('left')
-  const slash = findKey('slash')
+  const ctrlO = findKey('ctrl-o')
+  const altB = findKey('alt-b')
+  const shiftTab = findKey('shift-tab')
+  const bang = findKey('bang')
 
-  assert.equal(isToolbarKeycap(esc), true)
-  assert.equal(getToolbarButtonText(esc, t), 'Esc')
-  assert.equal(getToolbarButtonText(left, t), '←')
-  assert.equal(getToolbarButtonText(slash, t), '/')
+  assert.equal(isToolbarTerminalInput(esc), true)
+  assert.equal(getToolbarButtonText(esc, t), 'Esc · translated:toolbarKeys.escapeVim')
+  assert.equal(getToolbarButtonText(ctrlO, t), 'Ctrl+O · translated:toolbarKeys.toggleVerbose')
+  assert.equal(getToolbarButtonText(altB, t), 'Alt+B · translated:toolbarKeys.wordBack')
+  assert.equal(getToolbarButtonText(shiftTab, t), 'Shift+Tab · translated:toolbarKeys.togglePermission')
+  assert.equal(getToolbarButtonText(bang, t), '! · translated:toolbarKeys.bashMode')
 })
 
-test('non-standard shortcuts show translated function text', () => {
-  const ctrlA = findKey('ctrl-a')
-  const altB = findKey('alt-b')
+test('local toolbar actions show translated function text', () => {
+  const pasteClipboard = findKey('ctrl-v')
   const copyTerm = findKey('copy-term')
+  const fit = findKey('fit')
 
-  assert.equal(isToolbarKeycap(ctrlA), false)
-  assert.equal(getToolbarButtonText(ctrlA, t), 'translated:toolbarKeys.lineStart')
-  assert.equal(getToolbarButtonText(altB, t), 'translated:toolbarKeys.wordBack')
+  assert.equal(isToolbarLocalAction(pasteClipboard), true)
+  assert.equal(getToolbarButtonText(pasteClipboard, t), 'translated:toolbarKeys.pasteClipboard')
   assert.equal(getToolbarButtonText(copyTerm, t), 'translated:toolbarKeys.copyTerminal')
+  assert.equal(getToolbarButtonText(fit, t), 'translated:toolbarKeys.fitTerminal')
+})
+
+test('every toolbar key has a terminal sequence or a local action', () => {
+  for (const key of ALL_KEYS) {
+    assert.ok(key.seq || key.action, `toolbar key has no behavior: ${key.id}`)
+  }
 })

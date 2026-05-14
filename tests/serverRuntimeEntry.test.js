@@ -121,6 +121,7 @@ function createDeployScriptFixture() {
   const cargoLogFile = join(fixtureRoot, 'cargo.log')
   const restartLogFile = join(fixtureRoot, 'restart.log')
   const restartCountFile = join(fixtureRoot, 'restart-count')
+  const systemctlLogFile = join(fixtureRoot, 'systemctl.log')
   const homeDir = join(fixtureRoot, 'home')
   const binDir = join(fixtureRoot, 'bin')
   const scriptsDir = join(fixtureRoot, 'scripts')
@@ -136,6 +137,7 @@ function createDeployScriptFixture() {
 
   writeFileSync(cargoLogFile, '', 'utf8')
   writeFileSync(restartLogFile, '', 'utf8')
+  writeFileSync(systemctlLogFile, '', 'utf8')
   writeFileSync(join(fixtureRoot, 'scripts', 'deploy-nexus-service.sh'), DEPLOY_SERVICE_SCRIPT, { mode: 0o755 })
   writeFileSync(join(frontendDistDir, 'index.html'), '<!doctype html><html><body>fixture</body></html>\n')
   writeFileSync(join(fixtureRoot, 'rust-runtime', 'Cargo.toml'), '[package]\nname = "fixture"\nversion = "0.0.0"\n', 'utf8')
@@ -166,12 +168,34 @@ while [ "$#" -gt 0 ]; do
 done
 `,
   )
+  writeExecutable(
+    join(binDir, 'sudo'),
+    `#!/bin/sh
+set -eu
+if [ "$1" = "-n" ]; then
+  shift
+fi
+exec "$@"
+`,
+  )
+  writeExecutable(
+    join(binDir, 'systemctl'),
+    `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> ${JSON.stringify(systemctlLogFile)}
+if [ "$1" = "is-active" ]; then
+  exit 0
+fi
+exit 0
+`,
+  )
 
   return {
     fixtureRoot,
     cargoLogFile,
     restartLogFile,
     restartCountFile,
+    systemctlLogFile,
     homeDir,
     releaseDir,
     scriptsDir,
@@ -324,6 +348,7 @@ printf 'restart-ok\\n' >> ${JSON.stringify(fixture.restartLogFile)}
     })
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.match(result.stdout, /\[Nexus\] Building release binaries/)
+    assert.match(result.stdout, /not restarting it to preserve native sessions/)
     assert.match(result.stdout, /\[Nexus\] Deploy complete\./)
 
     const cargoLog = readFileSync(fixture.cargoLogFile, 'utf8')
@@ -338,6 +363,33 @@ printf 'restart-ok\\n' >> ${JSON.stringify(fixture.restartLogFile)}
       join(fixture.fixtureRoot, 'rust-runtime/target/release/nexus-native-session'),
     )
     assert.equal(readFileSync(fixture.restartLogFile, 'utf8'), 'restart-ok\n')
+    assert.equal(readFileSync(fixture.systemctlLogFile, 'utf8'), 'is-active --quiet nexus-native-pty.service\n')
+  } finally {
+    rmSync(fixture.fixtureRoot, { recursive: true, force: true })
+  }
+})
+
+test('deploy helper only restarts native PTY supervisor when explicitly requested', () => {
+  const fixture = createDeployScriptFixture()
+  writeExecutable(
+    join(fixture.scriptsDir, 'fake-restart.sh'),
+    `#!/bin/sh
+set -eu
+printf 'restart-ok\\n' >> ${JSON.stringify(fixture.restartLogFile)}
+`,
+  )
+
+  try {
+    const result = runDeployScript(fixture, {
+      NEXUS_RESTART_HELPER: './scripts/fake-restart.sh',
+    }, ['--restart-native-pty'])
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.match(result.stdout, /\[Nexus\] Restarting native PTY supervisor/)
+    assert.equal(readFileSync(fixture.systemctlLogFile, 'utf8'), [
+      'is-active --quiet nexus-native-pty.service',
+      'restart nexus-native-pty.service',
+      'status nexus-native-pty.service --no-pager',
+    ].join('\n') + '\n')
   } finally {
     rmSync(fixture.fixtureRoot, { recursive: true, force: true })
   }
@@ -381,6 +433,8 @@ test('start.sh defaults to rust nexus-server and wires runtime executables witho
   const defaultServer = join(fixture.releaseDir, 'nexus-server')
   const defaultTaskRuntime = join(fixture.releaseDir, 'nexus-task-runtime')
   const defaultPtyRuntime = join(fixture.releaseDir, 'nexus-pty-runtime')
+  const defaultNativePtySupervisor = join(fixture.releaseDir, 'nexus-native-pty-supervisor')
+  const defaultNativeSessionCli = join(fixture.releaseDir, 'nexus-native-session')
   const defaultWindowLaunchRuntime = join(fixture.releaseDir, 'nexus-window-launch-runtime')
   const defaultSessionRuntime = join(fixture.releaseDir, 'nexus-session-runtime')
   const defaultCodexHomeRuntime = join(fixture.releaseDir, 'nexus-codex-home')
@@ -388,6 +442,8 @@ test('start.sh defaults to rust nexus-server and wires runtime executables witho
   writeExecutable(defaultServer, createFakeRustServerScript(fixture.serverEnvFile))
   writeExecutable(defaultTaskRuntime)
   writeExecutable(defaultPtyRuntime)
+  writeExecutable(defaultNativePtySupervisor)
+  writeExecutable(defaultNativeSessionCli)
   writeExecutable(defaultWindowLaunchRuntime)
   writeExecutable(defaultSessionRuntime)
   writeExecutable(defaultCodexHomeRuntime)

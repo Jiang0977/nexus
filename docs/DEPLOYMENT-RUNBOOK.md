@@ -266,6 +266,8 @@ nexus-native-session attach <project> <channel-index>
 
 如果 `nexus-native-session` 不在 `PATH`，重新跑部署脚本或确认 `~/.local/bin/nexus-native-session` 存在；也可以临时使用完整路径 `rust-runtime/target/release/nexus-native-session`。
 
+部署脚本默认不会重启 `nexus-native-pty.service`，以保留正在运行的 native Codex/PTY。只有确认可以中断所有 native session 时，才给 `scripts/deploy-nexus-service.sh` 传 `--restart-native-pty`。
+
 如果 `attach` 报 supervisor 连接失败，先看 backend 是否已经切到 native，并重启服务：
 
 ```bash
