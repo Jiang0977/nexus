@@ -922,9 +922,28 @@ fn write_desktop_state_projection(
     rows: &[DesktopThreadProjection],
     create_backup: bool,
 ) -> Result<DesktopStateProjectionOutput> {
+    let target_model_provider = rows
+        .iter()
+        .find(|row| row.projected_to_target)
+        .map(|row| row.model_provider.clone());
+
     if let Some(parent) = state_db_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed creating directory {}", parent.display()))?;
+    }
+
+    if state_db_path.exists() && is_migrated_codex_state_db(state_db_path) {
+        let normalized_sources = rows.iter().filter(|row| row.normalized_source).count();
+        let projected_target_provider_threads =
+            rows.iter().filter(|row| row.projected_to_target).count();
+        return Ok(DesktopStateProjectionOutput {
+            state_db_path: state_db_path.to_path_buf(),
+            backup_path: None,
+            written_threads: 0,
+            normalized_sources,
+            projected_target_provider_threads,
+            target_model_provider,
+        });
     }
 
     let backup_path = if create_backup && state_db_path.exists() {
@@ -950,7 +969,28 @@ fn write_desktop_state_projection(
             .with_context(|| format!("failed removing stale temp db {}", temp_path.display()))?;
     }
 
-    let template_home = create_desktop_state_template(state_db_path).ok();
+    let template_home = match create_desktop_state_template(state_db_path) {
+        Ok(template_home) => Some(template_home),
+        Err(error) => {
+            if temp_path.exists() {
+                let _ = fs::remove_file(&temp_path);
+            }
+            let normalized_sources = rows.iter().filter(|row| row.normalized_source).count();
+            let projected_target_provider_threads =
+                rows.iter().filter(|row| row.projected_to_target).count();
+            eprintln!(
+                "[nexus] skipped Codex state DB projection because template initialization failed: {error:#}"
+            );
+            return Ok(DesktopStateProjectionOutput {
+                state_db_path: state_db_path.to_path_buf(),
+                backup_path,
+                written_threads: 0,
+                normalized_sources,
+                projected_target_provider_threads,
+                target_model_provider,
+            });
+        }
+    };
     if let Some(template_home) = template_home.as_ref() {
         let template_state_db_path = latest_versioned_sqlite(template_home, "state", 5);
         fs::copy(&template_state_db_path, &temp_path).with_context(|| {
@@ -984,11 +1024,6 @@ fn write_desktop_state_projection(
     let normalized_sources = rows.iter().filter(|row| row.normalized_source).count();
     let projected_target_provider_threads =
         rows.iter().filter(|row| row.projected_to_target).count();
-    let target_model_provider = rows
-        .iter()
-        .find(|row| row.projected_to_target)
-        .map(|row| row.model_provider.clone());
-
     Ok(DesktopStateProjectionOutput {
         state_db_path: state_db_path.to_path_buf(),
         backup_path,
@@ -997,6 +1032,20 @@ fn write_desktop_state_projection(
         projected_target_provider_threads,
         target_model_provider,
     })
+}
+
+fn is_migrated_codex_state_db(path: &Path) -> bool {
+    let Ok(connection) = Connection::open(path) else {
+        return false;
+    };
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE success = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count > 0)
+        .unwrap_or(false)
 }
 
 fn create_desktop_state_template(state_db_path: &Path) -> Result<PathBuf> {
@@ -1595,6 +1644,207 @@ mod tests {
                 "Recovered from corrupt db".to_string()
             )
         );
+    }
+
+    #[test]
+    fn write_desktop_state_projection_preserves_existing_codex_state_schema() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("state_5.sqlite");
+        let connection = Connection::open(&db_path).expect("open seed db");
+        connection
+            .execute_batch(
+                "CREATE TABLE _sqlx_migrations (
+                    version BIGINT PRIMARY KEY,
+                    description TEXT NOT NULL,
+                    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    success BOOLEAN NOT NULL,
+                    checksum BLOB NOT NULL,
+                    execution_time BIGINT NOT NULL
+                );
+                INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
+                VALUES (1, 'threads', 1, X'00', 1),
+                       (29, 'thread goals', 1, X'00', 1),
+                       (31, 'drop device key bindings', 1, X'00', 1);
+                CREATE TABLE threads (
+                    id TEXT PRIMARY KEY,
+                    rollout_path TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    source TEXT NOT NULL,
+                    model_provider TEXT NOT NULL,
+                    cwd TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    sandbox_policy TEXT NOT NULL,
+                    approval_mode TEXT NOT NULL,
+                    tokens_used INTEGER NOT NULL DEFAULT 0,
+                    has_user_event INTEGER NOT NULL DEFAULT 0,
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    archived_at INTEGER,
+                    git_sha TEXT,
+                    git_branch TEXT,
+                    git_origin_url TEXT,
+                    cli_version TEXT NOT NULL DEFAULT '',
+                    first_user_message TEXT NOT NULL DEFAULT '',
+                    agent_nickname TEXT,
+                    agent_role TEXT,
+                    memory_mode TEXT NOT NULL DEFAULT 'enabled',
+                    model TEXT,
+                    reasoning_effort TEXT,
+                    agent_path TEXT,
+                    created_at_ms INTEGER,
+                    updated_at_ms INTEGER,
+                    thread_source TEXT
+                );
+                CREATE TABLE thread_goals (
+                    thread_id TEXT PRIMARY KEY NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                    goal_id TEXT NOT NULL,
+                    objective TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    token_budget INTEGER,
+                    tokens_used INTEGER NOT NULL DEFAULT 0,
+                    time_used_seconds INTEGER NOT NULL DEFAULT 0,
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL
+                );
+                CREATE TABLE thread_dynamic_tools (
+                    thread_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    input_schema TEXT NOT NULL,
+                    defer_loading INTEGER NOT NULL DEFAULT 0,
+                    namespace TEXT,
+                    PRIMARY KEY(thread_id, position)
+                );
+                CREATE TABLE thread_spawn_edges (
+                    parent_thread_id TEXT NOT NULL,
+                    child_thread_id TEXT NOT NULL PRIMARY KEY,
+                    status TEXT NOT NULL
+                );
+                CREATE TABLE stage1_outputs (
+                    thread_id TEXT PRIMARY KEY,
+                    source_updated_at INTEGER NOT NULL,
+                    raw_memory TEXT NOT NULL,
+                    rollout_summary TEXT NOT NULL,
+                    generated_at INTEGER NOT NULL,
+                    rollout_slug TEXT,
+                    usage_count INTEGER,
+                    last_usage INTEGER,
+                    selected_for_phase2 INTEGER NOT NULL DEFAULT 0,
+                    selected_for_phase2_source_updated_at INTEGER
+                );
+                CREATE TABLE backfill_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    status TEXT NOT NULL,
+                    last_watermark TEXT,
+                    last_success_at INTEGER,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE jobs (
+                    kind TEXT NOT NULL,
+                    job_key TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    worker_id TEXT,
+                    ownership_token TEXT,
+                    started_at INTEGER,
+                    finished_at INTEGER,
+                    lease_until INTEGER,
+                    retry_at INTEGER,
+                    retry_remaining INTEGER NOT NULL,
+                    last_error TEXT,
+                    input_watermark INTEGER,
+                    last_success_watermark INTEGER,
+                    PRIMARY KEY (kind, job_key)
+                );
+                CREATE TABLE agent_jobs (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    instruction TEXT NOT NULL,
+                    output_schema_json TEXT,
+                    input_headers_json TEXT NOT NULL,
+                    input_csv_path TEXT NOT NULL,
+                    output_csv_path TEXT NOT NULL,
+                    auto_export INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    started_at INTEGER,
+                    completed_at INTEGER,
+                    last_error TEXT,
+                    max_runtime_seconds INTEGER
+                );
+                CREATE TABLE agent_job_items (
+                    job_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    row_index INTEGER NOT NULL,
+                    source_id TEXT,
+                    row_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    assigned_thread_id TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    result_json TEXT,
+                    last_error TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    completed_at INTEGER,
+                    reported_at INTEGER,
+                    PRIMARY KEY (job_id, item_id)
+                );
+                INSERT INTO backfill_state (id, status, updated_at) VALUES (1, 'complete', 0);",
+            )
+            .expect("seed current codex schema");
+        drop(connection);
+
+        let rows = vec![DesktopThreadProjection {
+            id: "session-1".to_string(),
+            rollout_path: PathBuf::from("/tmp/session-1.jsonl"),
+            created_at: Utc.with_ymd_and_hms(2026, 4, 14, 12, 0, 0).unwrap(),
+            updated_at: Utc.with_ymd_and_hms(2026, 4, 14, 12, 1, 0).unwrap(),
+            source: "cli".to_string(),
+            model_provider: "custom".to_string(),
+            cwd: "/workspace/demo".to_string(),
+            title: "Preserve real Codex state".to_string(),
+            sandbox_policy: "{}".to_string(),
+            approval_mode: "never".to_string(),
+            cli_version: "0.130.0".to_string(),
+            model: "gpt-5.5".to_string(),
+            reasoning_effort: Some("high".to_string()),
+            git_sha: None,
+            git_branch: None,
+            git_origin_url: None,
+            dynamic_tools: vec![],
+            normalized_source: false,
+            projected_to_target: true,
+        }];
+
+        let projection =
+            write_desktop_state_projection(&db_path, &rows, true).expect("write projection");
+        assert_eq!(projection.written_threads, 0);
+        assert!(projection.backup_path.is_none());
+
+        let connection = Connection::open(&db_path).expect("open projected db");
+        let migration_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM _sqlx_migrations", [], |row| {
+                row.get(0)
+            })
+            .expect("migration count");
+        assert_eq!(migration_count, 3);
+        let has_thread_goals: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'thread_goals'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("thread goals table exists");
+        assert_eq!(has_thread_goals, 1);
+        let projected_threads: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM threads WHERE id = 'session-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("projected thread count");
+        assert_eq!(projected_threads, 0);
     }
 
     #[test]
