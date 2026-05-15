@@ -1123,6 +1123,56 @@ test('browser regression: mobile terminal vertical drag scrolls xterm history', 
   )
 })
 
+test('browser regression: mobile terminal short drag scrolls immediately', { timeout: 120000 }, async (t) => {
+  const longOutput = Array.from({ length: 120 }, (_, index) => `short drag history line ${String(index + 1).padStart(3, '0')}`).join('\n') + '\n'
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    mobile: true,
+    ptySnapshots: {
+      'nexus-preview-rust:0': {
+        output: longOutput,
+        clients: 1,
+      },
+    },
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('short drag history line 120'))
+
+  const rect = await page.getByRole('button', { name: 'Select text' }).evaluate((button) => {
+    const container = button.parentElement?.firstElementChild
+    const bounds = container?.getBoundingClientRect()
+    return bounds ? {
+      left: bounds.left,
+      top: bounds.top,
+      width: bounds.width,
+      height: bounds.height,
+    } : null
+  })
+
+  assert.ok(rect, 'expected terminal container bounds to exist')
+
+  const startX = rect.left + rect.width / 2
+  const startY = rect.top + rect.height / 2
+  const beforeScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  await dispatchMobileSwipe(page, [
+    [startX, startY],
+    [startX + 1, startY + 18],
+    [startX + 1, startY + 28],
+  ])
+
+  const afterScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  assert.ok(
+    afterScrollTop < beforeScrollTop,
+    `expected short mobile drag to move xterm viewport immediately, before=${beforeScrollTop}, after=${afterScrollTop}`,
+  )
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
 test('browser regression: mobile diagonal-horizontal swipe switches channel even if the finger leaves terminal bounds', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
 
