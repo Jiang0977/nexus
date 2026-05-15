@@ -12,6 +12,7 @@ const TAP_THRESHOLD = 8
 const CHANNEL_SWIPE_THRESHOLD = 60
 const SWIPE_DIRECTION_LOCK_THRESHOLD = 18
 const SWIPE_DIRECTION_GAP = 12
+const TOUCH_SCROLL_PIXELS_PER_LINE = 8
 
 interface UseTerminalRuntimeArgs {
   activeTmuxSession: string
@@ -398,21 +399,12 @@ export function useTerminalRuntime({
       return Math.sqrt(dx * dx + dy * dy)
     }
 
-    function getTouchScrollLineHeight(): number {
-      const rect = containerEl.getBoundingClientRect()
-      if (term.rows > 0 && rect.height > 0) {
-        return Math.max(8, rect.height / term.rows)
-      }
-      return Math.max(8, Number(term.options.fontSize) || fontSize)
-    }
-
     function scrollTerminalByTouch(deltaY: number) {
       touchScrollRemainder += deltaY
-      const lineHeight = getTouchScrollLineHeight()
-      const lines = Math.trunc(touchScrollRemainder / lineHeight)
+      const lines = Math.trunc(touchScrollRemainder / TOUCH_SCROLL_PIXELS_PER_LINE)
       if (lines === 0) return
 
-      touchScrollRemainder -= lines * lineHeight
+      touchScrollRemainder -= lines * TOUCH_SCROLL_PIXELS_PER_LINE
       term.scrollLines(-lines)
       syncScrolledStateFromBuffer()
     }
