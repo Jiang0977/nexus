@@ -1041,7 +1041,7 @@ test('browser regression: mobile settings modal stays scrollable and closable', 
   )
 })
 
-test('browser regression: mobile terminal vertical drag scrolls xterm history', { timeout: 120000 }, async (t) => {
+test('browser regression: mobile terminal vertical drag scrolls xterm history without cancelling native touch scroll', { timeout: 120000 }, async (t) => {
   const longOutput = Array.from({ length: 120 }, (_, index) => `mobile history line ${String(index + 1).padStart(3, '0')}`).join('\n') + '\n'
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
     mobile: true,
@@ -1055,6 +1055,30 @@ test('browser regression: mobile terminal vertical drag scrolls xterm history', 
   await page.addInitScript(() => {
     const NativeWebSocket = window.WebSocket
     window.__nexusWsInstances = []
+    window.__nexusTerminalTouchMoveStats = { total: 0, defaultPrevented: 0, preventDefaultCalls: 0, paths: [] }
+    function isTerminalTouchMove(event) {
+      const path = event.composedPath()
+      return path.some((node) => node instanceof HTMLElement && node.classList.contains('xterm'))
+    }
+    const nativePreventDefault = Event.prototype.preventDefault
+    Event.prototype.preventDefault = function patchedPreventDefault() {
+      if (this.type === 'touchmove' && isTerminalTouchMove(this)) {
+        window.__nexusTerminalTouchMoveStats.preventDefaultCalls += 1
+      }
+      return nativePreventDefault.call(this)
+    }
+    document.addEventListener('touchmove', (event) => {
+      if (!isTerminalTouchMove(event)) return
+      const path = event.composedPath()
+      window.__nexusTerminalTouchMoveStats.total += 1
+      if (event.defaultPrevented) window.__nexusTerminalTouchMoveStats.defaultPrevented += 1
+      window.__nexusTerminalTouchMoveStats.paths.push(path.map((node) => {
+        if (!(node instanceof HTMLElement)) return node.constructor?.name || String(node)
+        const className = typeof node.className === 'string' ? node.className : ''
+        return `${node.tagName.toLowerCase()}${className ? `.${className.replace(/\s+/g, '.')}` : ''}`
+      }).slice(0, 8))
+    }, { capture: true, passive: true })
+
     function PatchedWebSocket(url, protocols) {
       const socket = protocols === undefined
         ? new NativeWebSocket(url)
@@ -1103,6 +1127,13 @@ test('browser regression: mobile terminal vertical drag scrolls xterm history', 
   })
   const afterScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
   assert.ok(afterScrollTop < beforeScrollTop, `expected mobile drag to move xterm viewport upward, before=${beforeScrollTop}, after=${afterScrollTop}`)
+  const touchMoveStats = await page.evaluate(() => window.__nexusTerminalTouchMoveStats)
+  assert.ok(touchMoveStats.total > 0, `expected terminal touchmove events to be observed, got ${JSON.stringify(touchMoveStats)}`)
+  assert.equal(
+    touchMoveStats.preventDefaultCalls,
+    0,
+    `vertical terminal dragging must stay on the browser-native scroll path, got ${JSON.stringify(touchMoveStats)}`,
+  )
   await page.getByRole('button', { name: '滚到底部' }).waitFor()
 
   await page.evaluate(() => {
