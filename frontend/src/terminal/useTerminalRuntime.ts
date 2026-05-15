@@ -12,7 +12,6 @@ const TAP_THRESHOLD = 8
 const CHANNEL_SWIPE_THRESHOLD = 60
 const SWIPE_DIRECTION_LOCK_THRESHOLD = 18
 const SWIPE_DIRECTION_GAP = 12
-const TOUCH_SCROLL_PIXELS_PER_LINE = 8
 
 interface UseTerminalRuntimeArgs {
   activeTmuxSession: string
@@ -223,10 +222,16 @@ export function useTerminalRuntime({
     if (viewport) {
       viewport.style.pointerEvents = 'auto'
       viewport.style.userSelect = 'text'
+      viewport.style.touchAction = 'pan-y'
+      viewport.style.overscrollBehavior = 'contain'
+      viewport.style.setProperty('-webkit-overflow-scrolling', 'touch')
     }
 
     const screen = containerEl.querySelector('.xterm-screen') as HTMLElement | null
-    if (screen) screen.style.userSelect = 'text'
+    if (screen) {
+      screen.style.userSelect = 'text'
+      screen.style.pointerEvents = 'none'
+    }
 
     function onGlobalKeyDown(event: KeyboardEvent) {
       if (event.isComposing) return
@@ -354,8 +359,6 @@ export function useTerminalRuntime({
 
     let touchStartX = 0
     let touchStartY = 0
-    let touchLastY = 0
-    let touchScrollRemainder = 0
     let isPinching = false
     let pinchStartDist = 0
     let pinchStartFontSize = fontSize
@@ -399,44 +402,43 @@ export function useTerminalRuntime({
       return Math.sqrt(dx * dx + dy * dy)
     }
 
-    function scrollTerminalByTouch(deltaY: number) {
-      touchScrollRemainder += deltaY
-      const lines = Math.trunc(touchScrollRemainder / TOUCH_SCROLL_PIXELS_PER_LINE)
-      if (lines === 0) return
-
-      touchScrollRemainder -= lines * TOUCH_SCROLL_PIXELS_PER_LINE
-      term.scrollLines(-lines)
-      syncScrolledStateFromBuffer()
-    }
-
     function onTouchStart(event: TouchEvent) {
       if (event.touches.length === 2) {
         isPinching = true
         pinchStartDist = getTouchDist(event)
         pinchStartFontSize = parseInt(localStorage.getItem(FONT_SIZE_KEY) || '16', 10)
+        containerEl.addEventListener('touchmove', onPinchTouchMove, { passive: false })
         return
       }
 
       isPinching = false
       touchStartX = event.touches[0].clientX
       touchStartY = event.touches[0].clientY
-      touchLastY = event.touches[0].clientY
-      touchScrollRemainder = 0
       swipeAxis = null
       channelSwipeTriggered = false
     }
 
-    function onTouchMove(event: TouchEvent) {
+    function onPinchTouchMove(event: TouchEvent) {
+      if (!isPinching || event.touches.length !== 2) return
       event.preventDefault()
-      if (isPinching && event.touches.length === 2) {
-        const dist = getTouchDist(event)
-        const scale = dist / pinchStartDist
-        const newSize = Math.round(Math.max(8, Math.min(32, pinchStartFontSize * scale)))
-        if (newSize !== term.options.fontSize) {
-          term.options.fontSize = newSize
-          localStorage.setItem(FONT_SIZE_KEY, String(newSize))
-          fitNow()
-        }
+      const dist = getTouchDist(event)
+      const scale = dist / pinchStartDist
+      const newSize = Math.round(Math.max(8, Math.min(32, pinchStartFontSize * scale)))
+      if (newSize !== term.options.fontSize) {
+        term.options.fontSize = newSize
+        localStorage.setItem(FONT_SIZE_KEY, String(newSize))
+        fitNow()
+      }
+    }
+
+    function finishPinch() {
+      if (!isPinching) return
+      isPinching = false
+      containerEl.removeEventListener('touchmove', onPinchTouchMove)
+    }
+
+    function handleSingleTouchMove(event: TouchEvent) {
+      if (isPinching) {
         return
       }
 
@@ -455,14 +457,33 @@ export function useTerminalRuntime({
       }
 
       if (swipeAxis === 'vertical') {
-        scrollTerminalByTouch(currentY - touchLastY)
-        touchLastY = currentY
+        return
       }
+    }
+
+    function onTouchMove(event: TouchEvent) {
+      handleSingleTouchMove(event)
+    }
+
+    function onViewportTouchMove(event: TouchEvent) {
+      if (event.touches.length === 1) {
+        event.stopPropagation()
+        handleSingleTouchMove(event)
+      }
+    }
+
+    let viewportScrollSyncRaf: number | null = null
+    function onViewportScroll() {
+      if (viewportScrollSyncRaf !== null) return
+      viewportScrollSyncRaf = requestAnimationFrame(() => {
+        viewportScrollSyncRaf = null
+        syncScrolledStateFromBuffer()
+      })
     }
 
     function onTouchEnd(event: TouchEvent) {
       if (isPinching) {
-        isPinching = false
+        finishPinch()
         return
       }
 
@@ -534,8 +555,11 @@ export function useTerminalRuntime({
     }
 
     containerEl.addEventListener('touchstart', onTouchStart, { passive: true })
-    containerEl.addEventListener('touchmove', onTouchMove, { passive: false })
+    containerEl.addEventListener('touchmove', onTouchMove, { passive: true })
     containerEl.addEventListener('touchend', onTouchEnd, { passive: true })
+    containerEl.addEventListener('touchcancel', finishPinch, { passive: true })
+    viewport?.addEventListener('touchmove', onViewportTouchMove, { passive: true })
+    viewport?.addEventListener('scroll', onViewportScroll, { passive: true })
 
     function onDragOver(event: DragEvent) {
       event.preventDefault()
@@ -583,7 +607,12 @@ export function useTerminalRuntime({
       window.removeEventListener('keydown', onGlobalKeyDown, true)
       containerEl.removeEventListener('touchstart', onTouchStart)
       containerEl.removeEventListener('touchmove', onTouchMove)
+      containerEl.removeEventListener('touchmove', onPinchTouchMove)
       containerEl.removeEventListener('touchend', onTouchEnd)
+      containerEl.removeEventListener('touchcancel', finishPinch)
+      viewport?.removeEventListener('touchmove', onViewportTouchMove)
+      viewport?.removeEventListener('scroll', onViewportScroll)
+      if (viewportScrollSyncRaf !== null) cancelAnimationFrame(viewportScrollSyncRaf)
       containerEl.removeEventListener('dragover', onDragOver)
       containerEl.removeEventListener('dragenter', onDragEnter)
       containerEl.removeEventListener('dragleave', onDragLeave)
