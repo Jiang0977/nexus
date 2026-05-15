@@ -470,6 +470,70 @@ test('real rust pty runtime can attach to an opt-in native foreground PTY', { sk
   assert.equal(status.runningPtys, 0)
 })
 
+test('real rust pty runtime gives native PTYs an xterm UTF-8 environment', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-pty-env-'))
+  const scriptPath = join(baseDir, 'print-env.sh')
+  writeFileSync(scriptPath, `#!/bin/sh
+printf 'TERM=%s\\n' "$TERM"
+printf 'COLORTERM=%s\\n' "$COLORTERM"
+printf 'LANG=%s\\n' "$LANG"
+printf 'LC_ALL=%s\\n' "$LC_ALL"
+printf 'LC_CTYPE=%s\\n' "$LC_CTYPE"
+`, { mode: 0o755 })
+
+  const client = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env: {
+      ...process.env,
+      NEXUS_SESSION_BACKEND: 'native',
+      NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
+      NEXUS_NATIVE_PTY_PROGRAM: scriptPath,
+      TERM: 'dumb',
+      LANG: 'C',
+      LC_ALL: 'C',
+      LC_CTYPE: 'C',
+    },
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  const events = []
+  client.onEvent((event) => {
+    events.push(event)
+  })
+
+  await client.ready()
+  const attached = await client.attachConnection({
+    connectionId: 'native-env-conn',
+    session: 'native-env-project',
+    windowIndex: 0,
+  })
+  assert.deepEqual(attached, { key: 'native-env-project:0' })
+
+  let output = ''
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    output = events
+      .filter((event) => event.type === 'output' && event.connectionId === 'native-env-conn')
+      .map((event) => event.data)
+      .join('')
+    if (output.includes('LC_CTYPE=')) break
+    await delay(20)
+  }
+
+  assert.match(output, /^TERM=xterm-256color\r?$/m)
+  assert.match(output, /^COLORTERM=truecolor\r?$/m)
+  assert.match(output, /^LANG=C\.UTF-8\r?$/m)
+  assert.match(output, /^LC_ALL=C\.UTF-8\r?$/m)
+  assert.match(output, /^LC_CTYPE=C\.UTF-8\r?$/m)
+})
+
 test('real rust pty runtime launches an opt-in native channel from the session registry', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
   ensureSessionRuntimeBuilt()

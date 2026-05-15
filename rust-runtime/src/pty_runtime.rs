@@ -32,6 +32,8 @@ const NATIVE_CWD_ENV: &str = "NEXUS_NATIVE_PTY_CWD";
 const NATIVE_SCROLLBACK_DIR_ENV: &str = "NEXUS_NATIVE_SCROLLBACK_DIR";
 const NATIVE_SUPERVISOR_SOCKET_ENV: &str = "NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET";
 const SUPERVISOR_CONNECT_TIMEOUT_MS: u64 = 2_000;
+const NATIVE_PTY_TERM: &str = "xterm-256color";
+const NATIVE_PTY_COLORTERM: &str = "truecolor";
 
 #[derive(Deserialize)]
 struct Message {
@@ -796,6 +798,61 @@ fn default_native_command_spec() -> Result<NativeCommandSpec, String> {
     Err("no native shell found".to_string())
 }
 
+fn utf8_locale() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "en_US.UTF-8"
+    } else {
+        "C.UTF-8"
+    }
+}
+
+fn effective_env_value(overrides: &HashMap<String, String>, key: &str) -> Option<String> {
+    overrides
+        .get(key)
+        .cloned()
+        .or_else(|| env::var(key).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn value_is_utf8_locale(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase().replace('-', "");
+    normalized.contains("utf8")
+}
+
+fn normalize_native_terminal_env(overrides: &mut HashMap<String, String>) {
+    match overrides
+        .get("TERM")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        Some(term) if term != "dumb" => {}
+        _ => {
+            overrides.insert("TERM".to_string(), NATIVE_PTY_TERM.to_string());
+        }
+    }
+
+    if effective_env_value(overrides, "COLORTERM").is_none() {
+        overrides.insert("COLORTERM".to_string(), NATIVE_PTY_COLORTERM.to_string());
+    }
+
+    for key in ["LANG", "LC_CTYPE"] {
+        match effective_env_value(overrides, key) {
+            Some(value) if value_is_utf8_locale(&value) => {}
+            _ => {
+                overrides.insert(key.to_string(), utf8_locale().to_string());
+            }
+        }
+    }
+
+    if matches!(
+        effective_env_value(overrides, "LC_ALL"),
+        Some(value) if !value_is_utf8_locale(&value)
+    ) {
+        overrides.insert("LC_ALL".to_string(), utf8_locale().to_string());
+    }
+}
+
 fn native_cwd() -> Option<PathBuf> {
     env::var(NATIVE_CWD_ENV)
         .ok()
@@ -1436,7 +1493,8 @@ fn ensure_native_window_pty(
     }
 
     let create_result = (|| -> Result<Arc<PtyEntry>, String> {
-        let command_spec = native_command_spec(session, window_index)?;
+        let mut command_spec = native_command_spec(session, window_index)?;
+        normalize_native_terminal_env(&mut command_spec.env);
         let registry = if command_spec.registry_backed {
             let registry = NativeSessionRegistry::open_default()?;
             ensure_native_channel_attachable(&registry, session, window_index)?;

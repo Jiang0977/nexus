@@ -148,7 +148,7 @@ export function useTerminalPaneRuntime({
       cursorBlink: true,
       cursorInactiveStyle: 'block',
       allowProposedApi: true,
-      screenReaderMode: true,
+      screenReaderMode: false,
     })
     const fitAddon = new FitAddon()
     const webLinksAddon = new WebLinksAddon()
@@ -239,8 +239,8 @@ export function useTerminalPaneRuntime({
       if (!hasOpenedCurrentConnection) setConnectionState('loading')
     }, 250)
 
-    function writeTerm(data: string) {
-      termRef.current?.write(data)
+    function writeTerm(data: string, callback?: () => void) {
+      termRef.current?.write(data, callback)
     }
 
     function stopConnecting(message: string) {
@@ -281,8 +281,10 @@ export function useTerminalPaneRuntime({
       }
 
       nextWs.onmessage = (event) => {
-        writeTerm(event.data)
-        if (shouldAutoScroll()) termRef.current?.scrollToBottom()
+        const autoScroll = shouldAutoScroll()
+        writeTerm(event.data, () => {
+          if (autoScroll && shouldAutoScroll()) termRef.current?.scrollToBottom()
+        })
       }
 
       nextWs.onclose = (event) => {

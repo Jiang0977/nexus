@@ -295,6 +295,74 @@ async function dispatchMobileSwipe(page, points) {
   })
 }
 
+async function waitForTerminalViewportAtBottom(page, selector, label) {
+  await page.waitForFunction((viewportSelector) => {
+    const viewport = document.querySelector(viewportSelector)
+    if (!(viewport instanceof HTMLElement)) return false
+    return viewport.scrollHeight - viewport.clientHeight > 400
+  }, selector)
+
+  await page.waitForFunction((viewportSelector) => {
+    const viewport = document.querySelector(viewportSelector)
+    if (!(viewport instanceof HTMLElement)) return false
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    return maxScrollTop <= 4 || viewport.scrollTop >= maxScrollTop - 4
+  }, selector, { timeout: 10000 })
+
+  const metrics = await page.evaluate((viewportSelector) => {
+    const viewport = document.querySelector(viewportSelector)
+    if (!(viewport instanceof HTMLElement)) return null
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    return {
+      clientHeight: viewport.clientHeight,
+      maxScrollTop,
+      scrollHeight: viewport.scrollHeight,
+      scrollTop: viewport.scrollTop,
+    }
+  }, selector)
+
+  assert.ok(metrics, `expected ${label} terminal viewport to exist`)
+  assert.ok(
+    metrics.maxScrollTop <= 4 || metrics.scrollTop >= metrics.maxScrollTop - 4,
+    `expected ${label} terminal viewport at bottom, got ${JSON.stringify(metrics)}`,
+  )
+}
+
+function installWebSocketCapture() {
+  const NativeWebSocket = window.WebSocket
+  window.__nexusWsInstances = []
+  function PatchedWebSocket(url, protocols) {
+    const socket = protocols === undefined
+      ? new NativeWebSocket(url)
+      : new NativeWebSocket(url, protocols)
+    socket.__nexusUrl = String(url)
+    window.__nexusWsInstances.push(socket)
+    return socket
+  }
+  Object.assign(PatchedWebSocket, NativeWebSocket)
+  Object.defineProperty(window, 'WebSocket', {
+    configurable: true,
+    writable: true,
+    value: PatchedWebSocket,
+  })
+}
+
+async function dispatchCapturedWebSocketMessage(page, urlPart, data) {
+  await page.evaluate(({ data, urlPart }) => {
+    const socket = [...(window.__nexusWsInstances || [])].reverse()
+      .find((candidate) => String(candidate.__nexusUrl || candidate.url || '').includes(urlPart))
+    if (!socket) throw new Error(`captured WebSocket not found for ${urlPart}`)
+    socket.onmessage?.(new MessageEvent('message', { data }))
+  }, { data, urlPart })
+}
+
+async function dispatchCapturedWebSocketMessages(page, urlPart, chunks) {
+  for (const chunk of chunks) {
+    await dispatchCapturedWebSocketMessage(page, urlPart, chunk)
+    await delay(10)
+  }
+}
+
 test('browser regression: desktop login opens the terminal shell and session manager modal', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
 
@@ -745,6 +813,42 @@ test('browser regression: desktop split pane keeps user scroll during streaming 
   )
 })
 
+test('browser regression: desktop split pane replay defaults to bottom', { timeout: 120000 }, async (t) => {
+  const lineCount = 1200
+  const replayChunks = Array.from({ length: 12 }, (_, chunkIndex) => (
+    Array.from({ length: lineCount / 12 }, (_unused, lineIndex) => {
+      const index = chunkIndex * (lineCount / 12) + lineIndex
+      return `desktop refresh line ${String(index + 1).padStart(4, '0')}`
+    }).join('\n') + '\n'
+  ))
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+  await page.addInitScript(installWebSocketCapture)
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const channelRow = page.getByTestId('sidebar-channel-nexus-preview-rust-1')
+  await channelRow.waitFor()
+  const saveResponse = page.waitForResponse((response) => (
+    response.url().includes('/api/workspace-layouts/active')
+      && response.request().method() === 'PUT'
+      && response.ok()
+  ))
+  await channelRow.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await saveResponse
+  await page.waitForFunction(() => (window.__nexusWsInstances || []).some((socket) => String(socket.__nexusUrl || '').includes('window=1')))
+  await dispatchCapturedWebSocketMessages(page, 'window=1', replayChunks)
+  await waitForTerminalViewportAtBottom(page, '[data-testid="terminal-pane-pane-1"] .xterm-viewport', 'desktop replay')
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
 test('browser regression: desktop bottom-right split pane can be focused', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
 
@@ -1146,6 +1250,29 @@ test('browser regression: mobile terminal vertical drag scrolls xterm history wi
     afterStreamingScrollTop < beforeScrollTop,
     `expected incoming output to preserve user scroll, before=${beforeScrollTop}, afterStream=${afterStreamingScrollTop}`,
   )
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: mobile terminal replay defaults to bottom', { timeout: 120000 }, async (t) => {
+  const lineCount = 1200
+  const replayChunks = Array.from({ length: 12 }, (_, chunkIndex) => (
+    Array.from({ length: lineCount / 12 }, (_unused, lineIndex) => {
+      const index = chunkIndex * (lineCount / 12) + lineIndex
+      return `mobile refresh line ${String(index + 1).padStart(4, '0')}`
+    }).join('\n') + '\n'
+  ))
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
+  await page.addInitScript(installWebSocketCapture)
+
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => (window.__nexusWsInstances || []).some((socket) => String(socket.__nexusUrl || '').includes('window=0')))
+  await dispatchCapturedWebSocketMessages(page, 'window=0', replayChunks)
+  await waitForTerminalViewportAtBottom(page, '.xterm-viewport', 'mobile replay')
 
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),

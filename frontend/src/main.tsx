@@ -6,9 +6,21 @@ import App from './App'
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((error) => {
-      console.error('Failed to register service worker:', error)
-    })
+    navigator.serviceWorker.getRegistrations()
+      .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+      .catch((error) => {
+        console.error('Failed to unregister service worker:', error)
+      })
+  })
+}
+
+if ('caches' in window) {
+  window.addEventListener('load', () => {
+    caches.keys()
+      .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+      .catch((error) => {
+        console.error('Failed to clear frontend caches:', error)
+      })
   })
 }
 
