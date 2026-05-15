@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
+use std::time::Duration;
 
 use nexus_rust_runtime::native_session_registry::{
     NativeLaunchPlan, NativeProcessInstance, NativeSessionRegistry,
@@ -1461,6 +1462,16 @@ fn native_pid_alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+fn wait_for_native_pid_exit(pid: u32) -> bool {
+    for _ in 0..20 {
+        if !native_pid_alive(pid) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    !native_pid_alive(pid)
+}
+
 fn terminate_native_process(process: &NativeProcessInstance) -> Result<(), String> {
     let Some(pid) = process.os_pid else {
         return Ok(());
@@ -1483,8 +1494,24 @@ fn terminate_native_process(process: &NativeProcessInstance) -> Result<(), Strin
     }
     .map_err(|error| error.to_string())?;
 
-    if status.success() || !native_pid_alive(pid) {
+    if status.success() && wait_for_native_pid_exit(pid) {
         Ok(())
+    } else if !cfg!(windows) {
+        let kill_status = Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .status()
+            .map_err(|error| error.to_string())?;
+        if kill_status.success() && wait_for_native_pid_exit(pid) {
+            Ok(())
+        } else {
+            Err(format!(
+                "failed to terminate native process pid {} for {}:{}",
+                pid, process.project_name, process.channel_index
+            ))
+        }
     } else {
         Err(format!(
             "failed to terminate native process pid {} for {}:{}",

@@ -848,6 +848,88 @@ test('real rust session runtime terminates native channel process before deletin
   assert.equal(stillAlive, false)
 })
 
+test('real rust pty runtime does not reuse an in-memory native entry after the channel was deleted and recreated', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-recreate-entry-'))
+  const dbPath = join(baseDir, 'session.db')
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  const ptyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await ptyClient.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await sessionClient.ready()
+  await ptyClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-recreate-entry',
+    cwd: ROOT,
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: {},
+  })
+  await sessionClient.createProjectChannel({
+    sessionName: 'native-recreate-entry',
+    cwd: ROOT,
+    channelName: 'channel',
+    shellCmd: 'cat',
+    defaultShellCmd: 'cat',
+    proxyVars: {},
+  })
+
+  assert.deepEqual(await ptyClient.attachConnection({
+    connectionId: 'native-recreate-old',
+    session: 'native-recreate-entry',
+    windowIndex: 1,
+  }), { key: 'native-recreate-entry:1' })
+
+  const oldInstance = latestNativeProcessInstance(dbPath, 'native-recreate-entry', 1)
+  assert.equal(oldInstance.status, 'running')
+
+  await sessionClient.deleteSessionWindow({
+    sessionName: 'native-recreate-entry',
+    index: 1,
+    defaultShellCmd: 'cat',
+  })
+  await sessionClient.createProjectChannel({
+    sessionName: 'native-recreate-entry',
+    cwd: ROOT,
+    channelName: 'channel',
+    shellCmd: 'cat',
+    defaultShellCmd: 'cat',
+    proxyVars: {},
+  })
+
+  assert.deepEqual(await ptyClient.attachConnection({
+    connectionId: 'native-recreate-new',
+    session: 'native-recreate-entry',
+    windowIndex: 1,
+  }), { key: 'native-recreate-entry:1' })
+
+  const newInstance = latestNativeProcessInstance(dbPath, 'native-recreate-entry', 1)
+  assert.equal(newInstance.status, 'running')
+  assert.notEqual(newInstance.start_fingerprint, oldInstance.start_fingerprint)
+})
+
 test('real rust pty runtime reconciles old native running processes on startup and can cold-reattach orphaned channels', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
   ensureSessionRuntimeBuilt()
