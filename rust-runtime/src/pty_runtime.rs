@@ -611,6 +611,10 @@ impl SharedState {
         }
     }
 
+    fn remove_entry(&self, key: &str) -> Option<Arc<PtyEntry>> {
+        self.ptys.lock().ok().and_then(|mut ptys| ptys.remove(key))
+    }
+
     fn shutdown(&self) {
         let entries = self
             .ptys
@@ -1417,6 +1421,17 @@ fn ensure_native_window_pty(
     let key = pty_key(session, window_index);
 
     if let Some(entry) = state.get_entry(&key) {
+        if entry.registry_backed_native && !native_registry_entry_is_current(session, window_index)
+        {
+            if let Some(stale_entry) = state.remove_entry(&key) {
+                kill_entry(&stale_entry);
+            }
+        } else {
+            return Ok((key, entry));
+        }
+    }
+
+    if let Some(entry) = state.get_entry(&key) {
         return Ok((key, entry));
     }
 
@@ -1502,6 +1517,16 @@ fn ensure_native_window_pty(
     })();
 
     create_result.map(|entry| (key, entry))
+}
+
+fn native_registry_entry_is_current(session: &str, window_index: u32) -> bool {
+    let Ok(registry) = NativeSessionRegistry::open_default() else {
+        return false;
+    };
+    matches!(
+        registry.latest_process_instance(session, window_index),
+        Ok(Some(instance)) if instance.status == "running"
+    )
 }
 
 fn attach_connection(

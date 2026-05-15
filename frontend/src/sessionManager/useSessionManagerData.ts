@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { buildAuthHeaders, parseApiError, parseNetworkError } from './api'
+import { visibleChannelsForProject } from './channelVisibility'
 import { shouldAutoRefreshProjects } from './shouldAutoRefreshProjects'
 import type { Channel, Project } from './types'
 
@@ -13,6 +14,7 @@ interface UseSessionManagerDataArgs {
 export function useSessionManagerData({ currentProject, t, token }: UseSessionManagerDataArgs) {
   const [projects, setProjects] = useState<Project[]>([])
   const [channels, setChannels] = useState<Channel[]>([])
+  const [channelsProject, setChannelsProject] = useState('')
   const [hasLoadedProjects, setHasLoadedProjects] = useState(false)
   const [loadingProjects, setLoadingProjects] = useState(false)
   const [loadingChannels, setLoadingChannels] = useState(false)
@@ -39,23 +41,45 @@ export function useSessionManagerData({ currentProject, t, token }: UseSessionMa
   }, [headers, t])
 
   const fetchChannels = useCallback(async (projectName: string, opts?: { silent?: boolean }) => {
+    const requestedProject = projectName.trim()
+    if (!requestedProject) {
+      setChannels([])
+      setChannelsProject('')
+      return
+    }
     if (!opts?.silent) setLoadingChannels(true)
     try {
-      const response = await fetch(`/api/projects/${encodeURIComponent(projectName)}/channels`, { headers })
+      const response = await fetch(`/api/projects/${encodeURIComponent(requestedProject)}/channels`, { headers })
       if (!response.ok) {
         setChannels([])
+        setChannelsProject(requestedProject)
         setError(await parseApiError(response, t('sessionMgr.loadFailed')))
         return
       }
       const data = await response.json() as { channels?: Channel[] }
       setChannels(data.channels || [])
+      setChannelsProject(requestedProject)
     } catch (fetchError: unknown) {
       setChannels([])
+      setChannelsProject(requestedProject)
       setError(parseNetworkError(fetchError))
     } finally {
       if (!opts?.silent) setLoadingChannels(false)
     }
   }, [headers, t])
+
+  useEffect(() => {
+    const normalizedProject = currentProject.trim()
+    if (!normalizedProject) {
+      setChannels([])
+      setChannelsProject('')
+      return
+    }
+    if (channelsProject && channelsProject !== normalizedProject) {
+      setChannels([])
+      setChannelsProject('')
+    }
+  }, [channelsProject, currentProject])
 
   useEffect(() => {
     void fetchProjects()
@@ -98,7 +122,7 @@ export function useSessionManagerData({ currentProject, t, token }: UseSessionMa
   }, [currentProject, fetchChannels, fetchProjects])
 
   return {
-    channels,
+    channels: visibleChannelsForProject(channels, channelsProject, currentProject),
     error,
     fetchChannels,
     fetchProjects,
