@@ -83,6 +83,8 @@ fn scrub_runtime_env(command: &mut Command) -> &mut Command {
         .env_remove("NEXUS_TASK_RUNNER_RUST_EXECUTABLE")
         .env_remove("NEXUS_PTY_BROKER_RUST_EXECUTABLE")
         .env_remove("NEXUS_NATIVE_PTY_SUPERVISOR_EXECUTABLE")
+        .env_remove("NEXUS_SESSION_BACKEND")
+        .env_remove("NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET")
         .env_remove("NEXUS_WINDOW_LAUNCH_RUST_EXECUTABLE")
         .env_remove("NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE")
 }
@@ -464,6 +466,7 @@ fn start_script_keeps_codex_wrapper_ahead_of_real_cli() {
         .current_dir(root)
         .env("HOME", &home)
         .env("PATH", format!("{}:/usr/bin:/bin", local_bin.display()))
+        .env("NEXUS_SESSION_BACKEND", "tmux")
         .env("NEXUS_SERVER_EXECUTABLE", bin_dir.join("nexus-server"))
         .env(
             "NEXUS_TASK_RUNNER_RUST_EXECUTABLE",

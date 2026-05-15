@@ -441,7 +441,7 @@ function spawnRustServer(envOverrides = {}) {
     cwd: ROOT,
     env: {
       ...process.env,
-      NEXUS_SESSION_BACKEND: '',
+      NEXUS_SESSION_BACKEND: 'tmux',
       ...envOverrides,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
