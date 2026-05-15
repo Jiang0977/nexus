@@ -188,7 +188,7 @@ export function useTerminalRuntime({
       cursorBlink: true,
       cursorInactiveStyle: 'block',
       allowProposedApi: true,
-      screenReaderMode: true,
+      screenReaderMode: false,
     })
 
     const fitAddon = new FitAddon()
@@ -652,8 +652,8 @@ export function useTerminalRuntime({
       if (!hasOpenedCurrentConnection) setIsConnecting(true)
     }, 300)
 
-    function writeTerm(data: string) {
-      termRef.current?.write(data)
+    function writeTerm(data: string, callback?: () => void) {
+      termRef.current?.write(data, callback)
     }
 
     function stopConnecting(message: string) {
@@ -694,8 +694,10 @@ export function useTerminalRuntime({
       }
 
       nextWs.onmessage = (event) => {
-        writeTerm(event.data)
-        if (!userScrolledRef.current) termRef.current?.scrollToBottom()
+        const autoScroll = !userScrolledRef.current
+        writeTerm(event.data, () => {
+          if (autoScroll && !userScrolledRef.current) termRef.current?.scrollToBottom()
+        })
       }
 
       nextWs.onclose = (event) => {
