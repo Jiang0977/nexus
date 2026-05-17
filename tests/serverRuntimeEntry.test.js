@@ -223,6 +223,7 @@ test('package.json keeps rust startup scripts and declares browser regression to
   assert.equal(packageJson.scripts['restart:service'], 'bash ./scripts/restart-nexus-service.sh')
   assert.equal(packageJson.scripts.test, 'npm run test:rust && npm run test:node')
   assert.equal(packageJson.scripts['test:browser'], 'node --test tests/browserTerminalRegression.test.js')
+  assert.equal(packageJson.scripts['smoke:login-upload'], 'node scripts/login-upload-smoke.mjs')
   assert.equal(packageJson.scripts['test:rust'], 'cargo test --manifest-path rust-runtime/Cargo.toml')
   assert.equal(packageJson.scripts['test:node'], 'node --test tests/*.test.js')
   assert.equal(packageJson.scripts['typecheck:frontend'], 'npm --prefix frontend run typecheck')

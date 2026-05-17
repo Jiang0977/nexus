@@ -170,6 +170,14 @@ curl --silent --show-error --max-time 5 http://127.0.0.1:59000 | head -n 5
 - 2026-04-21 的真实重启验证表明，这类 attach client 会在 `nexus.service` 重启后被新进程重建，不再触发新的 `left-over process` 启动告警。
 - 关闭证据见 [systemd-residue-smoke-2026-04-21.md](verification/systemd-residue-smoke-2026-04-21.md)。
 
+如果这次改动涉及登录、移动端终端输入、上传或 WebSocket 输入链，额外运行真实登录页 smoke：
+
+```bash
+npm run smoke:login-upload
+```
+
+前置条件：本机存在 `.context/secrets/e2e.env`，内容为 `NEXUS_E2E_PASSWORD=<current Nexus login password>`。该路径已被 git 忽略，不要提交真实密码。
+
 如果本次改动涉及 Codex 启动链，再额外验证：
 
 ```bash
