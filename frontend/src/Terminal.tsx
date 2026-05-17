@@ -76,6 +76,7 @@ export default function Terminal({ token }: Props) {
   const [showGuide, setShowGuide] = useState(() => localStorage.getItem('nexus_guide_seen') !== 'true')
   const toolbarWrapRef = useRef<HTMLDivElement>(null)
   const toolbarHeightRef = useRef(0)
+  const sendUploadPathRef = useRef<(path: string) => void>(() => {})
   // Toolbar 展开状态（移动端点击空白区域时收起）
   // 初始值与 Toolbar 内部逻辑保持一致，确保首次加载时 ref 能正确反映展开状态
   const [toolbarCollapsed, setToolbarCollapsed] = useState<boolean | undefined>(() => {
@@ -123,13 +124,14 @@ export default function Terminal({ token }: Props) {
   }, [codexHistoryEnabled])
 
   attachWindowFnRef.current = (index: number) => { attachToWindow(index) }
+  const handleUploadComplete = useCallback((path: string) => {
+    sendUploadPathRef.current(path)
+  }, [])
 
   const {
     closeScrollback,
-    copiedId,
     fetchScrollback,
     fileInputRef,
-    handleCopyNotification,
     handleFileInputChange,
     handleFileUpload,
     handleOverlayScroll,
@@ -152,6 +154,7 @@ export default function Terminal({ token }: Props) {
   } = useTerminalArtifacts({
     activeTmuxSessionRef,
     activeWindowIndexRef,
+    onUploadComplete: handleUploadComplete,
     termRef,
     token,
   })
@@ -189,6 +192,15 @@ export default function Terminal({ token }: Props) {
     windowsRef,
     wsSessionKey,
   })
+
+  sendUploadPathRef.current = (path: string) => {
+    if (!path) return
+    if (isWidePC) {
+      focusedPaneRuntimeRef.current?.sendToWs(path)
+      return
+    }
+    sendToWs(path)
+  }
 
   useEffect(() => {
     const check = () => setIsWidePC(window.innerWidth >= 768)
@@ -677,8 +689,6 @@ export default function Terminal({ token }: Props) {
       />
       <UploadNotifications
         notifications={uploadNotifications}
-        copiedId={copiedId}
-        onCopy={handleCopyNotification}
         onRemove={removeUploadNotification}
         bottomOffset={isWidePC ? 16 : (toolbarHeightRef.current + 16)}
       />

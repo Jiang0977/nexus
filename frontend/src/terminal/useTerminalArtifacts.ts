@@ -7,6 +7,7 @@ const MAX_UPLOAD_NOTIFICATIONS = 5
 interface UseTerminalArtifactsArgs {
   activeTmuxSessionRef: MutableRefObject<string>
   activeWindowIndexRef: MutableRefObject<number>
+  onUploadComplete?: (path: string, filename: string) => void
   termRef: MutableRefObject<XTerm | null>
   token: string
 }
@@ -14,6 +15,7 @@ interface UseTerminalArtifactsArgs {
 export function useTerminalArtifacts({
   activeTmuxSessionRef,
   activeWindowIndexRef,
+  onUploadComplete,
   termRef,
   token,
 }: UseTerminalArtifactsArgs) {
@@ -26,7 +28,6 @@ export function useTerminalArtifacts({
   const [scrollbackContent, setScrollbackContent] = useState('')
   const [scrollbackLoading, setScrollbackLoading] = useState(false)
   const [uploadNotifications, setUploadNotifications] = useState<UploadNotification[]>([])
-  const [copiedId, setCopiedId] = useState<string | null>(null)
   const [uploadConflict, setUploadConflict] = useState<{ show: boolean; file: File | null; filename: string }>({
     show: false,
     file: null,
@@ -44,27 +45,6 @@ export function useTerminalArtifacts({
   const removeUploadNotification = useCallback((id: string) => {
     setUploadNotifications((prev) => prev.filter((notification) => notification.id !== id))
   }, [])
-
-  const copyToClipboard = useCallback(async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch {
-      const textarea = document.createElement('textarea')
-      textarea.value = text
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      document.body.removeChild(textarea)
-    }
-  }, [])
-
-  const handleCopyNotification = useCallback(async (id: string, path: string) => {
-    await copyToClipboard(path)
-    setCopiedId(id)
-    window.setTimeout(() => setCopiedId(null), 2000)
-  }, [copyToClipboard])
 
   const uploadFile = useCallback(async (file: File, overwrite = false) => {
     const formData = new FormData()
@@ -92,6 +72,7 @@ export function useTerminalArtifacts({
       const filename = data.originalName || data.filename || file.name
       if (!fullPath) console.warn('[Nexus] Upload response missing fullPath:', data)
       addUploadNotification(filename, fullPath)
+      if (fullPath) onUploadComplete?.(fullPath, filename)
 
       const term = termRef.current
       if (term) {
@@ -105,7 +86,7 @@ export function useTerminalArtifacts({
         term.writeln(`\r\n\x1b[31m[Nexus: 上传失败]\x1b[0m ${error.message || 'unknown error'}`)
       }
     }
-  }, [addUploadNotification, termRef, token])
+  }, [addUploadNotification, onUploadComplete, termRef, token])
 
   const handleFileUpload = useCallback(() => {
     fileInputRef.current?.click()
@@ -212,10 +193,8 @@ export function useTerminalArtifacts({
 
   return {
     closeScrollback,
-    copiedId,
     fetchScrollback,
     fileInputRef,
-    handleCopyNotification,
     handleFileInputChange,
     handleFileUpload,
     handleOverlayScroll,

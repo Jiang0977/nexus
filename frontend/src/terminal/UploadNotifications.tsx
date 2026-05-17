@@ -8,17 +8,13 @@ export interface UploadNotification {
 
 interface UploadNotificationsProps {
   bottomOffset: number
-  copiedId: string | null
   notifications: UploadNotification[]
-  onCopy: (id: string, path: string) => void
   onRemove: (id: string) => void
 }
 
 export function UploadNotifications({
   bottomOffset,
-  copiedId,
   notifications,
-  onCopy,
   onRemove,
 }: UploadNotificationsProps) {
   if (notifications.length === 0) return null
@@ -39,18 +35,10 @@ export function UploadNotifications({
           <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-nexus-text" title={notification.path}>
             {notification.filename}
           </span>
-          <button
-            onClick={() => onCopy(notification.id, notification.path)}
-            className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs cursor-pointer transition-all duration-100 active:scale-95 ${
-              copiedId === notification.id
-                ? 'border-none bg-nexus-success text-white'
-                : 'border border-nexus-border bg-nexus-bg-2 text-nexus-text-2 active:bg-nexus-bg active:text-nexus-text'
-            }`}
-            title="复制路径"
-          >
-            <Icon name={copiedId === notification.id ? 'check' : 'copy'} size={14} />
-            <span>{copiedId === notification.id ? '已复制' : '复制'}</span>
-          </button>
+          <div className="flex items-center gap-1 whitespace-nowrap rounded-md border border-nexus-border bg-nexus-bg-2 px-2.5 py-1.5 text-xs text-nexus-text-2">
+            <Icon name="check" size={14} />
+            <span>{notification.path ? '路径已就绪' : '已上传'}</span>
+          </div>
           <button
             onClick={() => onRemove(notification.id)}
             className="flex items-center justify-center border-none bg-transparent p-1 text-nexus-text-2 cursor-pointer transition-all duration-100 active:scale-90 active:text-nexus-text"

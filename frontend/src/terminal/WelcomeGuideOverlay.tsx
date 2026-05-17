@@ -15,7 +15,7 @@ export function WelcomeGuideOverlay({ onClose, visible }: WelcomeGuideOverlayPro
         <ul className="my-2 pl-5 text-sm leading-relaxed text-nexus-text-2">
           <li>黑色区域是终端，点击聚焦后可键盘输入</li>
           <li>底部工具栏提供 Esc/Tab/^C 等快捷键</li>
-          <li className="flex items-center gap-1.5"><Icon name="paperclip" size={14} />上传图片或文件后，可在“上传文件”里复制路径使用</li>
+          <li className="flex items-center gap-1.5"><Icon name="paperclip" size={14} />上传图片或文件后，路径会自动插入当前终端</li>
           <li>📁 新建工作区：在选定目录打开一个新的工作区</li>
           <li>➕ 新建窗口：在当前工作区目录再开一个窗口</li>
         </ul>
