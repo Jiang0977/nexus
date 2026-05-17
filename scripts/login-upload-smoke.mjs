@@ -155,13 +155,22 @@ async function main() {
       return (window.__nexusWsSends || []).some((item) => item.includes('resize'))
     }, null, { timeout: 20000 })
 
-    await page.locator('input[type=file]').nth(0).setInputFiles(uploadPath)
+    const mobileUploadInput = page.locator('span[data-native-file-picker="true"] input[type=file][accept="image/*"]').first()
+    await mobileUploadInput.setInputFiles(uploadPath)
     await page.waitForSelector('text=/路径已就绪|Path ready/', { timeout: 20000 })
     const sendsHandle = await page.waitForFunction((filename) => {
       return (window.__nexusWsSends || []).filter((item) => item.includes('/uploads/') && item.includes(filename))
     }, unique, { timeout: 20000 })
     const matchedSends = await sendsHandle.jsonValue()
     if (!matchedSends.length) throw new Error('uploaded path was not sent to the terminal websocket')
+    await page.keyboard.press('Control+U')
+    await page.waitForTimeout(12000)
+    const finalMatchedSends = await page.evaluate((filename) => {
+      return (window.__nexusWsSends || []).filter((item) => item.includes('/uploads/') && item.includes(filename))
+    }, unique)
+    if (finalMatchedSends.length !== 1) {
+      throw new Error(`uploaded path was sent ${finalMatchedSends.length} times; expected exactly 1`)
+    }
     uploadedPath = matchedSends[0]
 
     console.log(JSON.stringify({
@@ -169,6 +178,7 @@ async function main() {
       baseUrl,
       session: sessionName,
       windowIndex,
+      uploadPathSendCount: finalMatchedSends.length,
       uploadedPath,
     }, null, 2))
   } finally {
