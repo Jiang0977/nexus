@@ -186,7 +186,38 @@ npm run build:frontend
 npm run check
 ```
 
-### 7. Nexus 内 `codex` 提示 wrapper 找不到真实二进制
+### 7. 如何给 AI 助手提供本地登录测试能力
+
+不要把真实密码写进仓库，也不要每次在聊天里重复粘贴密码。推荐在本机创建一个被 git 忽略的本地 secret 文件：
+
+```bash
+mkdir -p .context/secrets
+printf 'NEXUS_E2E_PASSWORD=你的当前登录密码\n' > .context/secrets/e2e.env
+chmod 600 .context/secrets/e2e.env
+```
+
+之后 AI 助手或维护者可以直接运行真实登录页 smoke：
+
+```bash
+npm run smoke:login-upload
+```
+
+这个脚本会：
+
+- 从 `.context/secrets/e2e.env` 读取 `NEXUS_E2E_PASSWORD`
+- 通过真实登录页登录
+- 默认选择当前仓库路径对应的 Nexus 项目；找不到时退回到 active/首个有 channel 的项目
+- 上传临时 1px 图片
+- 验证上传返回路径已通过终端 WebSocket 发送
+- 清理临时上传文件
+
+如果你的默认项目名或 channel 不是脚本默认值，可以覆盖：
+
+```bash
+NEXUS_E2E_SESSION=<project-name> NEXUS_E2E_WINDOW=<channel-index> npm run smoke:login-upload
+```
+
+### 8. Nexus 内 `codex` 提示 wrapper 找不到真实二进制
 
 先检查宿主机上真实 CLI 是否存在：
 
