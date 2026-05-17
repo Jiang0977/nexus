@@ -74,10 +74,8 @@ export function useTerminalArtifacts({
       addUploadNotification(filename, fullPath)
       if (fullPath) onUploadComplete?.(fullPath, filename)
 
-      const term = termRef.current
-      if (term) {
-        term.writeln(`\r\n\x1b[32m[Nexus: 文件已上传]\x1b[0m ${filename}`)
-        if (fullPath) term.writeln(`\x1b[36m路径: ${fullPath}\x1b[0m`)
+      if (!fullPath) {
+        termRef.current?.writeln(`\r\n\x1b[32m[Nexus: 文件已上传]\x1b[0m ${filename}`)
       }
     } catch (error: any) {
       console.error('Upload failed:', error)
