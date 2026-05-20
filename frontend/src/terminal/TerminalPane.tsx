@@ -204,7 +204,7 @@ export function TerminalPane({
           </div>
         ) : pane.target ? (
           <div className="relative flex min-h-0 min-w-0 flex-1">
-            <div ref={runtime.containerRef} className="min-h-0 min-w-0 flex-1 overflow-hidden px-2 py-1" />
+            <div ref={runtime.containerRef} className="nexus-split-terminal min-h-0 min-w-0 flex-1 overflow-hidden px-2 py-1" />
             {runtime.connectionState === 'loading' && (
               <div className="pointer-events-none absolute right-3 top-3 rounded border border-nexus-border bg-nexus-bg/90 px-2 py-1 text-xs text-nexus-text-2">
                 连接中...
