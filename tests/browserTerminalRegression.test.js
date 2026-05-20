@@ -328,6 +328,39 @@ async function waitForTerminalViewportAtBottom(page, selector, label) {
   )
 }
 
+async function assertSplitPaneTerminalScrollbarGutter(page, paneSelector) {
+  const metrics = await page.evaluate((selector) => {
+    const pane = document.querySelector(selector)
+    const terminal = pane?.querySelector('.nexus-split-terminal .xterm')
+    const viewport = pane?.querySelector('.xterm-viewport')
+    if (!(terminal instanceof HTMLElement) || !(viewport instanceof HTMLElement)) return null
+
+    const terminalRect = terminal.getBoundingClientRect()
+    const screen = terminal.querySelector('.xterm-screen')
+    const screenRight = screen instanceof HTMLElement ? screen.getBoundingClientRect().right : null
+    const scrollbarWidth = viewport.offsetWidth - viewport.clientWidth
+
+    return {
+      paddingRight: Number.parseFloat(getComputedStyle(terminal).paddingRight),
+      screenRight,
+      scrollbarWidth,
+      terminalRight: terminalRect.right,
+    }
+  }, paneSelector)
+
+  assert.ok(metrics, `expected ${paneSelector} split terminal metrics`)
+  assert.ok(
+    metrics.paddingRight >= Math.max(16, metrics.scrollbarWidth),
+    `expected split terminal right gutter to cover scrollbar, got ${JSON.stringify(metrics)}`,
+  )
+  if (metrics.screenRight !== null) {
+    assert.ok(
+      metrics.screenRight <= metrics.terminalRight - Math.max(0, metrics.scrollbarWidth - 2),
+      `expected split terminal screen to stay left of scrollbar, got ${JSON.stringify(metrics)}`,
+    )
+  }
+}
+
 function installWebSocketCapture() {
   const NativeWebSocket = window.WebSocket
   window.__nexusWsInstances = []
@@ -841,6 +874,7 @@ test('browser regression: desktop split pane replay defaults to bottom', { timeo
   await page.waitForFunction(() => (window.__nexusWsInstances || []).some((socket) => String(socket.__nexusUrl || '').includes('window=1')))
   await dispatchCapturedWebSocketMessages(page, 'window=1', replayChunks)
   await waitForTerminalViewportAtBottom(page, '[data-testid="terminal-pane-pane-1"] .xterm-viewport', 'desktop replay')
+  await assertSplitPaneTerminalScrollbarGutter(page, '[data-testid="terminal-pane-pane-1"]')
 
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),

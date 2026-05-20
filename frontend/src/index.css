@@ -108,3 +108,12 @@ select {
   width: 100% !important;
   overflow: hidden !important;
 }
+
+/*
+ * Split panes use the browser's native xterm scrollbar. Keep a small gutter
+ * inside the terminal element so the scrollbar cannot cover the last column.
+ */
+.nexus-split-terminal .xterm {
+  box-sizing: border-box;
+  padding-right: 18px;
+}
