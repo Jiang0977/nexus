@@ -15,7 +15,30 @@ pub fn resolve_project_root() -> Result<PathBuf, String> {
             .map_err(|error| format!("failed to resolve project root: {error}"));
     }
 
-    env::current_dir().map_err(|error| format!("failed to read current directory: {error}"))
+    let cwd = env::current_dir().map_err(|error| format!("failed to read current directory: {error}"))?;
+    if looks_like_project_root(&cwd) {
+        return Ok(cwd);
+    }
+
+    if let Some(root) = project_root_from_executable() {
+        return Ok(root);
+    }
+
+    Ok(cwd)
+}
+
+fn looks_like_project_root(path: &Path) -> bool {
+    path.join("start.sh").is_file() && path.join("rust-runtime/Cargo.toml").is_file()
+}
+
+fn project_root_from_executable() -> Option<PathBuf> {
+    let executable = env::current_exe().ok()?;
+    for ancestor in executable.ancestors() {
+        if looks_like_project_root(ancestor) {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+    None
 }
 
 pub fn load_dotenv(project_root: &Path) -> HashMap<String, String> {
@@ -134,7 +157,10 @@ fn upsert_proxy_var(proxy_vars: &mut Vec<(String, String)>, key: &str, value: &s
 
 #[cfg(test)]
 mod tests {
-    use super::{load_dotenv, parse_json_array_env, resolve_data_dir, resolve_runtime_path};
+    use super::{
+        load_dotenv, parse_json_array_env, project_root_from_executable, resolve_data_dir,
+        resolve_runtime_path,
+    };
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -187,5 +213,12 @@ mod tests {
         assert_eq!(values.get("ACC_PASSWORD_HASH"), Some(&"xyz".to_string()));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn can_infer_project_root_from_release_binary_location() {
+        let inferred = project_root_from_executable().unwrap();
+        assert!(inferred.join("start.sh").is_file());
+        assert!(inferred.join("rust-runtime/Cargo.toml").is_file());
     }
 }

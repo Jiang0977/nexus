@@ -911,19 +911,23 @@ pub fn default_registry_path() -> PathBuf {
 }
 
 fn data_dir() -> PathBuf {
-    let configured = env::var("NEXUS_DATA_DIR")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "data".to_string());
-    let candidate = PathBuf::from(configured);
-    if candidate.is_absolute() {
-        candidate
-    } else {
-        env::current_dir()
-            .unwrap_or_else(|_| Path::new(".").to_path_buf())
-            .join(candidate)
-    }
+    let Ok(project_root) = crate::config::resolve_project_root() else {
+        let candidate = env::var("NEXUS_DATA_DIR")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("data"));
+        return if candidate.is_absolute() {
+            candidate
+        } else {
+            env::current_dir()
+                .unwrap_or_else(|_| Path::new(".").to_path_buf())
+                .join(candidate)
+        };
+    };
+    let dotenv = crate::config::load_dotenv(&project_root);
+    crate::config::resolve_data_dir(&project_root, &dotenv)
 }
 
 fn clean_required<'a>(value: &'a str, message: &str) -> Result<&'a str, String> {

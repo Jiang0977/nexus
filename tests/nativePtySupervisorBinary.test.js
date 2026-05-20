@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdtempSync, rmSync, mkdirSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -531,6 +531,119 @@ test('native session CLI lists and attaches to supervisor sessions', { skip: pro
   }
   assert.match(attachStdout, /cli one\r?\n/, attachStderr)
   assert.equal(supervisor.exitCode, null, stderr)
+})
+
+test('native session CLI resolves repo data when launched outside the repo', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'nexus-native-session-cwd-'))
+  const outsideCwd = mkdtempSync(join(tmpdir(), 'nexus-native-session-outside-'))
+  t.after(() => {
+    rmSync(fixtureRoot, { recursive: true, force: true })
+    rmSync(outsideCwd, { recursive: true, force: true })
+  })
+
+  mkdirSync(join(fixtureRoot, 'rust-runtime', 'target', 'release'), { recursive: true })
+  mkdirSync(join(fixtureRoot, 'data', 'native-sessions'), { recursive: true })
+  copyFileSync(NATIVE_SESSION_CLI, join(fixtureRoot, 'rust-runtime', 'target', 'release', 'nexus-native-session'))
+  symlinkSync(
+    join(fixtureRoot, 'rust-runtime', 'target', 'release', 'nexus-native-session'),
+    join(fixtureRoot, 'nexus-native-session'),
+  )
+  copyFileSync(join(ROOT, 'rust-runtime', 'Cargo.toml'), join(fixtureRoot, 'rust-runtime', 'Cargo.toml'))
+  copyFileSync(join(ROOT, 'start.sh'), join(fixtureRoot, 'start.sh'))
+
+  const registryPath = join(fixtureRoot, 'data', 'native-sessions', 'session.db')
+  const db = new DatabaseSync(registryPath)
+  t.after(() => db.close())
+  db.exec(`
+    PRAGMA foreign_keys=ON;
+    CREATE TABLE native_projects (
+        name TEXT PRIMARY KEY,
+        cwd TEXT NOT NULL,
+        active_channel_index INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE TABLE native_channels (
+        project_name TEXT NOT NULL,
+        channel_index INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        shell_cmd TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        launch_program TEXT,
+        launch_args_json TEXT,
+        launch_env_json TEXT,
+        launch_cwd TEXT,
+        shell_type TEXT,
+        profile TEXT,
+        PRIMARY KEY(project_name, channel_index),
+        FOREIGN KEY(project_name) REFERENCES native_projects(name) ON DELETE CASCADE
+    );
+    CREATE TABLE process_instances (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_name TEXT NOT NULL,
+        channel_index INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        os_pid INTEGER,
+        platform_handle TEXT,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        exit_code INTEGER,
+        start_fingerprint TEXT NOT NULL,
+        FOREIGN KEY(project_name, channel_index)
+          REFERENCES native_channels(project_name, channel_index)
+          ON DELETE CASCADE
+    );
+    CREATE TABLE channel_metadata (
+        project_name TEXT NOT NULL,
+        channel_index INTEGER NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY(project_name, channel_index, key),
+        FOREIGN KEY(project_name, channel_index)
+          REFERENCES native_channels(project_name, channel_index)
+          ON DELETE CASCADE
+    );
+  `)
+  db.prepare(`
+    INSERT INTO native_projects (name, cwd, active_channel_index, created_at, updated_at)
+    VALUES (?, ?, 0, ?, ?)
+  `).run('cwd-independent-project', fixtureRoot, '2026-05-20T00:00:00Z', '2026-05-20T00:00:00Z')
+  db.prepare(`
+    INSERT INTO native_channels (
+      project_name,
+      channel_index,
+      name,
+      cwd,
+      shell_cmd,
+      created_at,
+      updated_at
+    )
+    VALUES (?, 0, ?, ?, ?, ?, ?)
+  `).run(
+    'cwd-independent-project',
+    'shell',
+    fixtureRoot,
+    'cat',
+    '2026-05-20T00:00:00Z',
+    '2026-05-20T00:00:00Z',
+  )
+
+  const list = spawnSync(join(fixtureRoot, 'nexus-native-session'), ['list'], {
+    cwd: outsideCwd,
+    env: {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      USER: process.env.USER,
+      SHELL: process.env.SHELL,
+    },
+    encoding: 'utf8',
+  })
+  assert.equal(list.status, 0, list.stderr || list.stdout)
+  assert.match(list.stdout, /cwd-independent-project\tchannels=1/)
 })
 
 test('native pty supervisor refuses a second owner for the same socket', { skip: process.platform === 'win32' }, async (t) => {
