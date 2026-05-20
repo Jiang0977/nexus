@@ -2,6 +2,8 @@
 
 **版本**: v1.0.0  **状态**: Complete  **锚点**: `docs/NORTH-STAR.md`  **完成日期**: 2026-04-01
 
+> 当前状态说明（2026-05-20）：本文是 v1 功能规格和历史验收记录。默认生产 session backend 仍是 `tmux`，但仓库已经有 opt-in/staging 的 native PTY backend；当前真实架构以 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [session-backend-contract.md](designs/session-backend-contract.md) 为准。
+
 ---
 
 ## Problem Statement

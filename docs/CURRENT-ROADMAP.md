@@ -1,6 +1,6 @@
 # CURRENT ROADMAP — Nexus
 
-最后整理：2026-05-02
+最后整理：2026-05-20
 
 目的：给“当前到底还有哪些 TODO、下一步该做什么”一个短而硬的答案，避免继续被历史文档误导。
 
@@ -14,6 +14,8 @@
 2. [TODOS.md](../TODOS.md)
 3. 最新设计文档
    - [codex-history-sessions-tab.md](designs/codex-history-sessions-tab.md)
+   - [session-backend-contract.md](designs/session-backend-contract.md)
+   - [native-session-backend-cross-platform.md](designs/native-session-backend-cross-platform.md)
 4. [ARCHITECTURE.md](ARCHITECTURE.md)
 5. [README.md](../README.md) / [README_CN.md](../README_CN.md)
 
@@ -28,6 +30,7 @@
 ## 当前 Open TODO
 
 - 当前没有新的 open TODO。
+- native session backend 已有 opt-in/staging 实现，但不算“默认生产化已完成”。如果要推进为默认 backend，需要重新建账，至少覆盖跨平台验证、生产 rollout、回滚和 NORTH-STAR 边界确认。
 
 ## 已完成，不再算 Open Backlog
 
@@ -43,10 +46,13 @@
 - systemd residue 关闭证据见 [systemd-residue-smoke-2026-04-21.md](verification/systemd-residue-smoke-2026-04-21.md)。
 - `/api/tasks` SSE 断连不再取消后台任务；已于 2026-05-02 通过 Rust server 任务回归验证闭环。
 - 任务运行期 `stdout/stderr` 改为有界滚动缓冲；已于 2026-05-02 通过 Rust 单测与 server 任务回归验证闭环。
+- README / README_CN 已在 2026-05-20 删除旧视频演示和旧营销叙事，改为当前 Rust runtime + tmux/native backend 事实说明。
 
 ## 当前主开发方向
 
 按当前仓库状态，没有未闭环的 P1 任务 runtime backlog。后续工作应基于新需求或新回归重新建账，而不是继续追这两条已闭环项。
+
+native backend 当前只应按 opt-in/staging 处理。它不是当前默认生产主线，也不应在 README 或部署文档里写成“tmux 已被替换”。
 
 ## 暂不建议当主线推进的事项
 
@@ -82,6 +88,12 @@
 - 已同步为当前 Rust runtime、`server/` 模块和前端源码/产物双层结构的导览。
 - 后续如果继续拆 `rust-runtime/src/server/` 或前端主入口，还要继续同步模块地图。
 
+### `README.md` / `README_CN.md`
+
+- 已重写为当前项目入口说明。
+- 已删除旧视频 showcase、旧竞品比较表和“纯 tmux”单一路径叙事。
+- 当前口径：`tmux` 是默认稳定 backend；`native` 是 opt-in/staging backend。
+
 ## 文档维护顺序
 
 1. 先改 [TODOS.md](../TODOS.md) 和最新设计文档
@@ -94,7 +106,7 @@
 
 - 重启 `nexus` 服务后再验证
 - 确认 `frontend/dist/index.html` 仍存在
-- Rust 改动先 `cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime`
+- Rust 改动先 `cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home`
 - 服务不可达就立即回滚
 
 权威操作说明见 [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)。

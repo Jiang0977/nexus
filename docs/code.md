@@ -1,6 +1,6 @@
 # Nexus 源码导览
 
-最后更新：2026-04-21
+最后更新：2026-05-20
 
 目标：告诉维护者“现在该从哪里读”，同时区分源码层和运行时入口。
 
@@ -8,7 +8,7 @@
 
 1. 真实启动链是 `start.sh -> rust-runtime/target/release/nexus-server`
 2. 浏览器运行时 UI 来自 `frontend/dist/`
-3. tmux 是会话事实源，`data/` 只保存配置和任务历史
+3. tmux 是默认会话事实源；native backend 是 opt-in/staging，并在 `data/native-sessions/` 保存 registry/scrollback
 
 ## 推荐阅读顺序
 
@@ -21,7 +21,9 @@
 7. `rust-runtime/src/bin/nexus-window-launch-runtime.rs`
 8. `rust-runtime/src/bin/nexus-pty-runtime.rs`
 9. `rust-runtime/src/bin/nexus-task-runtime.rs`
-10. `rust-runtime/tests/*.rs`
+10. `rust-runtime/src/native_session_registry.rs`
+11. `rust-runtime/src/native_session_cli.rs`
+12. `rust-runtime/tests/*.rs`
 
 ## 根目录里最重要的文件
 
@@ -37,6 +39,7 @@
 | `frontend/dist/` | vendored 前端静态资源 |
 | `public/` | PWA 静态资源 |
 | `rust-runtime/src/bin/*.rs` | 运行时与 child runtimes |
+| `scripts/nexus-native-pty-service.sh` | native PTY supervisor 守护脚本 |
 | `rust-runtime/tests/*.rs` | Rust integration tests |
 
 ## Rust 模块地图
@@ -71,6 +74,8 @@
 | `rust-runtime/src/project_defaults.rs` | 默认 shell / profile 持久化 |
 | `rust-runtime/src/sanitize.rs` | 字符串与文件名清洗 |
 | `rust-runtime/src/auth.rs` | JWT helper |
+| `rust-runtime/src/native_session_registry.rs` | native project/channel/process/metadata SQLite registry |
+| `rust-runtime/src/native_session_cli.rs` | `nexus-native-session list/attach` |
 
 ### runtimes
 
@@ -78,10 +83,12 @@
 |---|---|
 | `rust-runtime/src/bin/nexus-session-runtime.rs` | project / channel / session / Codex 历史 |
 | `rust-runtime/src/bin/nexus-window-launch-runtime.rs` | 新建窗口和 shell 启动 |
-| `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / broker |
+| `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / broker；默认 tmux，native 模式走 Rust PTY/supervisor |
 | `rust-runtime/src/bin/nexus-task-runtime.rs` | task 执行协议 |
 | `rust-runtime/src/bin/nexus-codex-home.rs` | Codex 隔离 HOME 物化；把共享 history/skills/plugins 等状态链接进 runtime HOME |
 | `rust-runtime/src/bin/nexus-setup.rs` | `.env` + systemd + tmux bootstrap |
+| `rust-runtime/src/bin/nexus-native-pty-supervisor.rs` | native backend 的持久 PTY supervisor |
+| `rust-runtime/src/bin/nexus-native-session.rs` | 宿主机终端 attach native session 的 CLI |
 
 ## 当前前端现实
 
@@ -133,14 +140,15 @@
 
 1. 浏览器建 WebSocket 到 `/ws`
 2. `nexus-server` 把请求转给 `nexus-pty-runtime`
-3. PTY runtime attach 到目标 `tmux session:window`
-4. 浏览器和 tmux 双向 I/O
+3. PTY runtime attach 到目标 project/channel
+4. tmux backend 下连接 `tmux session:window`；native backend 下连接 Rust PTY/supervisor
+5. 浏览器和后端 PTY 双向 I/O
 
 ### 新建 project / channel
 
 1. 浏览器调 `/api/projects` 或 `/api/sessions`
 2. `nexus-server` 协调 `nexus-session-runtime` / `nexus-window-launch-runtime`
-3. child runtime 操作 tmux
+3. child runtime 操作当前 session backend：默认 tmux；native 模式操作 native registry
 4. 浏览器刷新列表
 
 ## 验证入口
@@ -152,7 +160,7 @@ npm run check
 如果改动启动链或安装器，再额外跑：
 
 ```bash
-cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-setup
+cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home --bin nexus-setup
 ```
 
 ## 别再踩的坑
@@ -160,5 +168,6 @@ cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server
 - 不要把 `frontend/src/` 当线上入口，线上仍只服务 `frontend/dist/`
 - 不要忽略 `scripts/nexus-paths.sh`；`start.sh` 和 `scripts/nexus-tmux-service.sh` 都会先经过它修正 agent CLI 路径
 - 不要把 `pm2` 当成有效运维入口
-- 不要把 `data/` 当数据库
+- 不要把 `native` 写成默认生产路径；它仍是 opt-in/staging
+- 不要把 `data/` 当通用业务数据库；native registry 是受限 session metadata
 - 不要把“零 Node 仓库”的旧文档当当前事实

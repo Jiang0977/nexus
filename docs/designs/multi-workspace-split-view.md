@@ -4,6 +4,8 @@ Status: Implemented
 Date: 2026-05-04
 Branch: codex/multi-workspace-split-view
 
+Current note (2026-05-20): this design was implemented against the default tmux backend. The UI contract remains `session + windowIndex`; native backend is now opt-in/staging and should preserve that public contract.
+
 Task context:
 - `.context/tasks/multi-workspace-split-view-plan/`
 - UI design: `../../.context/tasks/multi-workspace-split-view-plan/ui-design-split-view-sidebar-actual.png`
@@ -26,7 +28,7 @@ PC 端支持多工作区、多 channel 同屏查看和操作。用户可以把�
 ## Non-Goals
 
 - 不重做左侧侧边栏。`工作区` header、项目树、`窗口 / 历史会话` tabs、`+ 新建工作区`、快捷键区和底部工具栏都保持现状。
-- 不替换 tmux；session/window 仍由 tmux 负责。
+- 第一版不替换 tmux；session/window 由当时的默认 tmux backend 负责。当前 native backend 已有 opt-in/staging 路径，但不能破坏本设计依赖的 `session + windowIndex` UI contract。
 - 不做多用户、权限体系或团队共享。
 - 不做完整 C 版 Agent Control Plane：多命名布局、全局 command center、CPU/MEM 仪表盘、完整快捷键系统都不在第一版。
 - 不做移动端多 pane。

@@ -1,8 +1,8 @@
 # Nexus Architecture
 
-最后更新：2026-05-04
+最后更新：2026-05-20
 
-目标：给维护者一个当前真实可运行的结构图，不保留已经删除的 Node/npm/PM2 叙事。
+目标：给维护者一个当前真实可运行的结构图，不保留已经删除的 Node/npm/PM2 叙事，也不把 tmux-only 的旧边界误当成当前事实。
 
 ## 当前运行形态
 
@@ -11,9 +11,17 @@ Browser / PWA
   ↕ WebSocket / REST
 Rust server (nexus-server)
   ↕ Rust child runtimes
-tmux session:window
+Session backend
+  ├─ tmux session:window        default / stable
+  └─ native Rust PTY registry   opt-in / staging
   ↕ shell / claude / codex
 ```
+
+后端选择：
+
+- 默认是 `tmux`，生产路径仍按 `nexus-tmux.service` 持久化 session。
+- `native` 已有 opt-in 路径：`NEXUS_SESSION_BACKEND=native`、`nexus-native-pty-supervisor`、SQLite native session registry、native scrollback、`nexus-native-session` CLI attach。
+- `native` 仍在收敛阶段，不是默认生产路径；文档、发布和回滚都必须保留 tmux 回退路径。
 
 静态资源与前端源码的当前现实：
 
@@ -42,7 +50,9 @@ bash start.sh
   -> cargo run --bin nexus-setup --release
   -> 写入 systemd user units
   -> 启动 nexus-tmux.service
+  -> 启动 nexus-native-pty.service（未启用 native backend 时保持空闲轮询）
   -> 启动 nexus.service
+  -> 安装 ~/.local/bin/nexus-native-session symlink
 ```
 
 ### 关键约束
@@ -52,6 +62,7 @@ bash start.sh
 - Rust 代码改动后要先显式 `cargo build --release`
 - 前端代码改动后要在 `frontend/` 下显式构建
 - `frontend/dist/` 缺失时服务直接失败
+- 切换 session backend 需要重启 `nexus`，因为 child runtimes 启动时读取 `NEXUS_SESSION_BACKEND`
 
 ## Rust 模块边界
 
@@ -74,7 +85,7 @@ bash start.sh
 | `rust-runtime/src/server/layouts.rs` | PC split-view active layout API 与 `data/workspace-layouts.json` 持久化 |
 | `rust-runtime/src/server/workspace.rs` | workspace / 文件系统相关 handler |
 | `rust-runtime/src/server/version.rs` | 版本与更新检查 |
-| `rust-runtime/src/server/session_ws.rs` | tmux session / window / websocket 入口 |
+| `rust-runtime/src/server/session_ws.rs` | project / channel / websocket 入口；默认映射到 tmux，native 模式走 Rust PTY runtime |
 
 ### 共享逻辑
 
@@ -93,10 +104,21 @@ bash start.sh
 |---|---|
 | `rust-runtime/src/bin/nexus-session-runtime.rs` | projects / channels / sessions / Codex 历史 |
 | `rust-runtime/src/bin/nexus-window-launch-runtime.rs` | 新建窗口和 shell 启动 |
-| `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / broker |
+| `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / broker；tmux attach 与 native PTY attach 都在这里收口 |
 | `rust-runtime/src/bin/nexus-task-runtime.rs` | 任务执行协议 |
 | `rust-runtime/src/bin/nexus-codex-home.rs` | Codex 隔离 home 物化 |
 | `rust-runtime/src/bin/nexus-setup.rs` | `.env` + systemd user units + tmux bootstrap |
+| `rust-runtime/src/bin/nexus-native-pty-supervisor.rs` | native backend 的持久 PTY supervisor |
+| `rust-runtime/src/bin/nexus-native-session.rs` | 从宿主机终端列出/attach native session 的 CLI |
+
+### Native session 支撑模块
+
+| 文件 | 作用 |
+|---|---|
+| `rust-runtime/src/native_session_registry.rs` | SQLite native project/channel/process/metadata registry，默认落到 `data/native-sessions/session.db` |
+| `rust-runtime/src/native_session_cli.rs` | `nexus-native-session list/attach` CLI 实现 |
+| `rust-runtime/src/pty_runtime.rs` | `NEXUS_SESSION_BACKEND` selector、native supervisor client、native scrollback、PTY 生命周期 |
+| `scripts/nexus-native-pty-service.sh` | 根据 `.env` 或 `data/session-backend.json` 等配置决定是否 exec supervisor |
 
 ## 静态资源与前端
 
@@ -147,17 +169,22 @@ bash start.sh
 | `data/toolbar-config.json` | 工具栏配置 |
 | `data/project-shell-defaults.json` | 项目默认 shell / profile |
 | `data/workspace-layouts.json` | PC split-view active layout；坏文件/非法内容 fail-open 到默认 single |
+| `data/session-backend.json` | UI 保存的目标 session backend；`tmux` 或 `native` |
 | `data/configs/` | Claude profile |
 | `data/codex-configs/` | Codex profile |
 | `data/uploads/` | 上传文件 |
 | `data/codex-runtime/` | Codex profile channel 的隔离 HOME；`.codex/skills` 等共享状态应链接回真实 `~/.codex` |
+| `data/native-sessions/session.db` | native backend project/channel/process registry |
+| `data/native-sessions/supervisor.sock` | native PTY supervisor Unix socket |
+| `data/native-sessions/scrollback/` | native backend 有界 scrollback |
 
 事实源说明：
 
-- tmux 是交互会话事实源
+- tmux 是默认 backend 的交互会话事实源
+- native 模式下 `data/native-sessions/session.db` 是 native project/channel/process metadata 事实源
 - `~/.codex` 是共享 Codex 历史与 skills 事实源
 - `nexus-codex-home` 负责物化 Codex 隔离 HOME；部署链必须构建它，否则 profile channel 可能拿到旧的 `.codex` 物化逻辑
-- `data/` 主要保存配置和任务历史，不是业务数据库
+- `data/` 主要保存配置和任务历史；只有 native backend 引入了受限的 SQLite registry，不要把它扩张成通用业务数据库
 
 ## 运维现实
 
@@ -171,8 +198,10 @@ bash start.sh
 | `setup.sh` | 安装器入口 |
 | `scripts/nexus-paths.sh` | 运行时补齐 Claude / Codex CLI PATH |
 | `scripts/nexus-tmux-service.sh` | tmux 守护脚本 |
+| `scripts/nexus-native-pty-service.sh` | native PTY supervisor 守护脚本；仅在 backend 为 native 时 exec supervisor |
 | `deploy/systemd/nexus.service` | systemd 服务样例 |
 | `deploy/systemd/nexus-tmux.service` | tmux 服务样例 |
+| `deploy/systemd/nexus-native-pty.service` | native PTY supervisor 服务样例 |
 
 ## 验证面
 
@@ -188,6 +217,7 @@ npm run check
 - `nexus-setup` 不再依赖 Node/PM2
 - `start.sh` 对 vendored frontend bundle 的行为
 - `frontend/dist/` 资源完整性 smoke
+- native PTY runtime / supervisor / CLI 的 binary-level 回归
 
 默认值真相源：
 
@@ -199,3 +229,5 @@ npm run check
 - 不要把 PM2 重新带回默认运行链
 - 不要把前端源码误当成运行时入口，线上仍靠 `frontend/dist/`
 - 不要把过时文档里的 `npm run setup` / `pm2 start` 当成有效指令
+- 不要把 `native` 写成默认生产 backend；当前仍是 opt-in/staging
+- 不要在 native 模式出问题时删除 tmux 回退路径

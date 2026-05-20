@@ -66,6 +66,7 @@ Reviewed by:
 - `cargo test --manifest-path rust-runtime/Cargo.toml --test setup_systemd`
 - `cargo test --manifest-path rust-runtime/Cargo.toml --test startup_paths`
 - `cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server`
+- 2026-05-20 note：当前完整部署构建还应包含 child runtimes、native PTY binaries 和 `nexus-codex-home`；本条是当时该功能的最小验证记录。
 - `npm --prefix frontend run build`
 - 正式部署后服务可达验证通过
 - 浏览器级 smoke 已完成，见 [codex-history-browser-smoke-2026-04-21.md](../verification/codex-history-browser-smoke-2026-04-21.md)
