@@ -1,15 +1,16 @@
 # Nexus 部署与更新 Runbook
 
-最后验证日期：2026-05-11
+最后验证日期：2026-05-20
 
-目标：线上更新时只按这份文档执行。不要再走 `npm`、`pm2`、前端现场构建这类旧路径。
+目标：线上更新时只按这份文档执行。不要再走旧 Node 后端、PM2、前端现场临时构建这类旧路径。
 
 ## 当前部署形态
 
 - 服务管理：`systemd`
 - 默认启动链：`bash start.sh -> rust-runtime/target/release/nexus-server`
 - 静态资源：仓库内 vendored `frontend/dist/`
-- tmux 守护：`nexus-tmux.service`
+- tmux 守护：`nexus-tmux.service`，默认 session backend
+- native PTY 守护：`nexus-native-pty.service`，仅在 backend 为 `native` 时 exec supervisor，否则空闲轮询
 - 默认端口：`59000`
 
 关键事实：
@@ -21,6 +22,8 @@
 - `start.sh` 会在 `frontend/dist/index.html` 缺失时直接失败。
 - 如果这次改动触及 `frontend/src/`，发布前还要先在 `frontend/` 下执行前端构建，确保新的 `frontend/dist/` 已产出。
 - Codex profile channel 依赖 `rust-runtime/target/release/nexus-codex-home` 物化隔离 HOME；它和 server/runtime binaries 一样属于部署必构建产物。
+- native backend 依赖 `nexus-native-pty-supervisor`、`nexus-native-session`、`data/native-sessions/` 和 `nexus-native-pty.service`；部署脚本默认构建 native binaries 并安装 `~/.local/bin/nexus-native-session`。
+- 部署脚本默认不重启正在运行的 `nexus-native-pty.service`，以免中断 native sessions；需要刷新 supervisor 进程时显式传 `--restart-native-pty`。
 - 所以发布前仍建议显式重建 Rust release binary，并确认 `frontend/dist/` 仍存在。
 
 ## 标准上线步骤
@@ -32,7 +35,7 @@ git status --short
 test -f frontend/dist/index.html
 npm run check
 cargo fmt --manifest-path rust-runtime/Cargo.toml --check
-cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
+cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
 ```
 
 如果本次改了前端源码，再额外执行：
@@ -98,13 +101,15 @@ npm run deploy:service -- --frontend
 行为：
 
 - 先备份当前 Rust release binaries 到 `/tmp/nexus-deploy-backup.*`
-- 重新构建 `nexus-server`、4 个 runtime binary 与 `nexus-codex-home`
+- 重新构建 `nexus-server`、runtime binaries、native PTY binaries 与 `nexus-codex-home`
+- 安装或更新 `~/.local/bin/nexus-native-session` symlink
 - 调用 `npm run restart:service`
 - 如果重启或探活失败，自动恢复旧 release binaries 并再次重启服务
 
 注意：
 
 - 这个脚本只自动回滚 Rust release binaries，不会自动回滚工作树里的 shell 脚本或文档改动。
+- 这个脚本默认保留正在跑的 native supervisor；如果 native supervisor binary 必须随部署重启，并且你接受中断 native sessions，使用 `npm run deploy:service -- --restart-native-pty`。
 - 如果脚本最终失败但服务已被回滚拉起，修复问题后再重新部署。
 
 ### 5. 手动重启服务
@@ -126,6 +131,7 @@ npm run restart:service
 ```bash
 sudo cp deploy/systemd/nexus.service /etc/systemd/system/nexus.service
 sudo cp deploy/systemd/nexus-tmux.service /etc/systemd/system/nexus-tmux.service
+sudo cp deploy/systemd/nexus-native-pty.service /etc/systemd/system/nexus-native-pty.service
 sudo systemctl daemon-reload
 ```
 
@@ -140,6 +146,7 @@ systemctl --user status nexus --no-pager
 
 ```bash
 sudo systemctl restart nexus-tmux
+sudo systemctl restart nexus-native-pty
 sudo systemctl restart nexus
 sudo systemctl status nexus --no-pager
 ```
@@ -163,6 +170,7 @@ curl --silent --show-error --max-time 5 http://127.0.0.1:59000 | head -n 5
 - 日志里出现 `启动 Nexus Rust server on :59000`
 - 首页返回 `200 OK`
 - `nexus-tmux.service` 处于 `active (running)`，并且 `tmux -D` 归属在 `nexus-tmux.service`，不是 `nexus.service`
+- 如果 `NEXUS_SESSION_BACKEND=native` 或 `data/session-backend.json` 配为 native，`nexus-native-pty.service` 也必须可用，且 `data/native-sessions/supervisor.sock` 存在
 
 补充说明：
 
@@ -208,7 +216,7 @@ test -x rust-runtime/target/release/nexus-codex-home
 
 ```bash
 git checkout <last-known-good-commit>
-cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
+cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
 systemctl --user restart nexus
 ```
 
@@ -219,7 +227,7 @@ dirty worktree 回滚：
 ```bash
 git restore .
 git clean -fd
-cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
+cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
 systemctl --user restart nexus
 ```
 

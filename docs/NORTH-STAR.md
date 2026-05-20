@@ -31,7 +31,7 @@ AI Agent 能在我的任意项目目录中运行，拥有完整的文件系统�
 
 ## 明确不做的事（Out of Scope）
 
-- **不替换 tmux**：Session 持久化、scrollback 全部由 tmux 负责
+- **不把 native backend 冒充成默认生产路径**：默认稳定后端仍是 tmux；native 只能作为 opt-in/staging 路径推进，必须保留 tmux 回退能力
 - **不做多用户系统**：单密码 JWT，不做注册/权限/团队功能
 - **不做通用 Web SSH**：功能边界是 claude CLI 工作流，非通用终端工具
 - **不暴露 Docker socket 到前端**

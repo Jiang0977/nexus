@@ -1,191 +1,172 @@
 # Nexus
 
-### 自托管、移动优先的 AI 编码工作台。
+自托管的本地 AI 编码工作台：用桌面、手机或浏览器终端管理运行在自己机器上的 coding agent。
 
 [![Rust](https://img.shields.io/badge/rust-stable-orange?style=flat-square)](https://www.rust-lang.org/)
-[![License: GPL v3](https://img.shields.io/badge/license-GPL%20v3%20%2F%20商业授权-blue?style=flat-square)](LICENSE.md)
+[![License: GPL v3 / 商业授权](https://img.shields.io/badge/license-GPL%20v3%20%2F%20商业授权-blue?style=flat-square)](LICENSE.md)
 [![GitHub stars](https://img.shields.io/github/stars/Jiang0977/nexus?style=flat-square)](https://github.com/Jiang0977/nexus/stargazers)
-[![PRs Welcome](https://img.shields.io/badge/PRs-欢迎-brightgreen?style=flat-square)](CONTRIBUTING.md)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](CONTRIBUTING.md)
 
 [English](README.md)
 
----
+## 这是什么
 
-### 演示
+Nexus 是单用户、自托管的本地 AI agent 控制台。它运行在你自己的机器上，通过 PWA / 浏览器 UI 暴露终端、项目、频道、任务和文件管理能力；浏览器关掉后，底层 agent session 仍然继续运行。
 
-<p>
-  <video src="https://github.com/user-attachments/assets/083495f7-d840-4733-9307-eaa815c2756f" width="45%" controls muted align="center">
-    Your browser does not support the video tag.
-  </video>
-</p>
+当前运行形态：
 
----
-
-## 亮点
-
-| | |
-|---|---|
-| **随时指挥 AI** | 你的时间是碎片化的，你的 AI 不应该被困住。在地铁上、会议间隙、出差途中，随时给本地 coding agent 下指令。 |
-| **专为触控打造** | 不是把桌面终端硬塞进手机。左右滑动切换会话、双指缩放、可配置软键盘工具栏——从第一天起就为手指设计。 |
-| **完整记忆，始终在线** | 你的 agent runtime 运行在电脑上，跑在 tmux 会话里——完整的代码库、完整的对话历史、完整的项目上下文。不是云端聊天，不会忘事。 |
-| **发射后不管** | 下达指令，锁上手机。AI 继续执行。回来时，一切就在你离开的地方。 |
-
----
-
-## 为什么选 Nexus？
-
-|                              | Anthropic Remote Control | Happy Coder | Omnara  | **Nexus** |
-|------------------------------|:---:|:---:|:---:|:---:|
-| 自托管                       | ❌ | ❌ | ⚠️ | ✅ |
-| 无需订阅                     | ❌ ($100+/月) | ✅ | ❌ ($9/月) | ✅ |
-| 数据留在本地                 | ❌ | ❌ | ❌ | ✅ |
-| 真实终端（xterm）            | ❌ | ❌ | ❌ | ✅ |
-| 项目与频道管理               | ❌ | ⚠️ | ⚠️ | ✅ |
-| 发射后不管                   | ⚠️ (10分钟超时) | ✅ (经中继) | ✅ (经中继) | ✅ (纯 tmux) |
-| PWA / 可安装                 | ❌ | ✅ (原生 App) | ✅ (原生 App) | ✅ |
-| 开源                         | ❌ | ⚠️ 部分开源 | ✅ | ✅ |
-
-> **项目与频道管理：** 以目录为单位组织项目，每个项目下有多个频道式会话——像 Slack 频道一样即时切换，专属于你的终端工作流。
-
----
+```text
+Browser / PWA
+  <-> Rust server (HTTP / WebSocket)
+  <-> Rust child runtimes
+  <-> session backend
+      - tmux：默认稳定路径
+      - native：opt-in Rust PTY 后端，仍在收敛
+```
 
 ## 功能
 
-- 🔌 **WebSocket ↔ tmux 桥接** — 每个 tmux 窗口一个 PTY，实时双向 I/O
-- 📱 **移动端优先终端** — xterm.js + 滑动导航 + 双指缩放 + 可配置软键盘
-- 🤖 **异步任务执行** — 通过 `/api/tasks`、SSE 和 Telegram bridge 发起“发射后不管”的 agent 任务
-- 📂 **文件浏览器** — 浏览、编辑、上传工作区文件
-- 🗂️ **项目与频道管理** — 以目录为单位组织项目，多个频道式会话，像 Slack 频道一样切换
-- 🔀 **多会话管理** — 秒切 tmux session
-- 🎨 **PWA** — 可安装、深色/浅色主题
-- ⚡ **零延迟体感** — WebSocket 直连，无 SSH 开销
+- 基于 xterm.js 的浏览器终端：移动端触控、scrollback、上传、可配置工具栏。
+- 项目与频道管理：项目对应目录，每个项目下有多个终端频道。
+- PC split view：single / vertical / horizontal / 2x2 / 3x3 多 pane 终端。
+- 异步任务执行：`/api/tasks`、SSE streaming、Telegram bridge。
+- 文件浏览器：浏览、编辑、上传、重命名、移动、复制、删除工作区文件。
+- Codex / Claude profile 启动器，包含 Codex history / resume 流程。
+- PWA、深色/浅色主题。
+- Rust 优先运行链：`nexus-server` 直接伺服 `frontend/dist/`。
 
----
+## 终端后端
+
+| 后端 | 状态 | 说明 |
+|---|---|---|
+| `tmux` | 默认 / 稳定 | 生产路径。通过 `nexus-tmux.service` 保持会话，浏览器关闭或 `nexus` 服务重启后仍可接续。 |
+| `native` | opt-in / staging | Rust PTY 后端，包含 `nexus-native-pty-supervisor`、SQLite native session registry、有界 scrollback 和 `nexus-native-session` CLI attach。它还不是默认生产路径。 |
+
+切换方式：
+
+- UI：Settings -> Terminal Backend -> 保存 -> 重启 `nexus`。
+- 配置：在 `.env` 设置 `NEXUS_SESSION_BACKEND=native`，或写入 `data/session-backend.json`。
+- native 模式还需要 `nexus-native-pty.service` 正在运行。
+
+从另一个终端进入 native session：
+
+```bash
+nexus-native-session list
+nexus-native-session attach <project> <channel-index>
+```
 
 ## 快速开始
 
 ```bash
-git clone https://github.com/Jiang0977/nexus.git && cd nexus
+git clone https://github.com/Jiang0977/nexus.git
+cd nexus
 cp .env.example .env
 ./setup.sh
-# 在任意设备打开 http://localhost:59000 🚀
 ```
 
-`./setup.sh` 会处理 `.env`、`systemd --user` unit 安装，并启动 `nexus` 与 `nexus-tmux`。
+打开：
 
-如果你想直接前台启动：
+```text
+http://localhost:59000
+```
+
+`./setup.sh` 会处理 `.env`、安装 `systemd --user` unit、安装 native session CLI symlink，并启动：
+
+- `nexus.service`
+- `nexus-tmux.service`
+- `nexus-native-pty.service`（未启用 native backend 时保持空闲）
+
+直接前台启动：
 
 ```bash
 bash start.sh
 ```
 
-重要说明：
+完整配置指南见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
 
-- 运行链仍是 Rust 优先：Rust 直接伺服 `frontend/dist/`。
-- 仓库现在重新携带可维护的前端源码，位于 `frontend/src/`。
-- 前端源码改动后，需要通过 `frontend/` 下的构建链重新产出 `frontend/dist/`。
-- `bash start.sh` 只负责 Rust 二进制，不会重建前端静态资源。
-- 仓库级验证入口统一为 `npm run check`。
-- GitHub Actions CI 会执行同一套 `npm run check` 约束。
-- 默认值已经统一到 `.env.example` 和 Rust 配置：`PORT=59000`、`GITHUB_REPO=Jiang0977/nexus`。
+## 开发
 
-> 完整配置指南（会话 Profile、systemd、移动端访问、故障排查）：**[QUICKSTART.md →](docs/QUICKSTART.md)**
+关键约束：
 
----
+- 运行时伺服 `frontend/dist/`；`frontend/src/` 是源码，不是生产入口。
+- 改前端源码后必须重建 `frontend/dist/`。
+- Rust release binary 是部署产物。
+- 仓库级验证入口是 `npm run check`。
 
-## 使用 AI 助手一键安装
-
-如果你是正在帮用户安装 Nexus 的 AI 助手，按以下步骤执行：
-
-1. 克隆本仓库并 `cd` 进入目录
-2. 运行 `./setup.sh`
-3. 验证：`systemctl --user status nexus` 显示服务运行中
-4. 打开 `http://localhost:59000`
-
-前置要求：Rust toolchain（`cargo`）、tmux、Linux / WSL2。`setup.sh` 依赖 `systemd --user`；直接 `bash start.sh` 不依赖。
-默认登录密码：`nexus123`（安装完成后可在 `.env` 中修改）。
-
----
-
-## 部署建议
-
-通过 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) 或 [Tailscale](https://tailscale.com/) 安全暴露服务，无需端口转发。
-
-线上更新、重启、验证与回滚请直接按 **[DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md)** 执行。
-
-本地改动在提 PR 或上线前，先跑：
+常用命令：
 
 ```bash
 npm run check
+npm run build:frontend
+npm run build:rust-runtimes
+npm run smoke:login-upload
 ```
 
----
+登录/上传 smoke 会读取 `.context/secrets/e2e.env`：
+
+```text
+NEXUS_E2E_PASSWORD=<当前 Nexus 登录密码>
+```
+
+## 部署
+
+部署权威说明见 [docs/DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md)。
+
+常规部署：
+
+```bash
+npm run deploy:service
+```
+
+如果改了前端源码：
+
+```bash
+npm run deploy:service -- --frontend
+```
+
+如果可以中断 native sessions，且需要刷新 native supervisor binary：
+
+```bash
+npm run deploy:service -- --restart-native-pty
+```
+
+建议通过 Cloudflare Tunnel、Tailscale 或内网访问，不要直接暴露到公网。
 
 ## 环境要求
 
-| 依赖 | 版本 | 说明 |
-|---|---|---|
-| Rust | stable toolchain | 用于构建 `nexus-server`、各个 runtime 和 `nexus-setup` |
-| Node.js + npm | 近期 LTS | 仅在改前端源码并重建 `frontend/dist` 时需要 |
-| tmux | 任意近期版本 | |
-| systemd user services | 可用即可 | `./setup.sh` 需要；直接 `bash start.sh` 可不依赖 |
-| 操作系统 | Linux / WSL2 | |
+| 依赖 | 说明 |
+|---|---|
+| Rust stable toolchain | 构建 `nexus-server`、child runtimes、setup 和 native PTY binaries。 |
+| tmux | 默认后端需要。 |
+| systemd user services | `./setup.sh` 需要；`bash start.sh` 前台运行不需要。 |
+| Node.js + npm | 前端开发、测试和 `npm run check` 需要。 |
+| Linux / WSL2 | 当前主要部署目标。native backend 的更广平台支持仍在硬化。 |
+| Claude / Codex CLI | 可选；只有在 Nexus 内启动对应 agent 时才需要。 |
 
----
+## 安全
 
-## 安全说明
+Nexus 是单用户工具，不是多租户平台。
 
-Nexus 是**单用户自托管工具**，不是多租户平台。
-
-- 🔒 bcrypt（12 轮）密码哈希 + JWT（30天）
-- ⚠️ WebSocket token 通过 query string 传递 — 生产环境请启用 TLS
-- 🛡️ 在防火墙、VPN 或隧道后运行，不要直接暴露在公网
-
----
+- bcrypt 密码哈希 + 30 天 JWT。
+- WebSocket token 通过 query string 传递；生产环境必须配 TLS。
+- 放在防火墙、VPN 或 tunnel 后面运行。
+- 浏览器终端等价于对 `WORKSPACE_ROOT` 的本地 shell 访问。
 
 ## 文档
 
-| 文档 | 说明 |
+| 文档 | 用途 |
 |---|---|
-| [QUICKSTART.md](docs/QUICKSTART.md) | 手把手配置指南 |
-| [DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md) | 线上更新、重启、验证、回滚标准操作 |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构设计 |
-| [ROADMAP.md](docs/ROADMAP.md) | 未来规划 |
-| [CURRENT-ROADMAP.md](docs/CURRENT-ROADMAP.md) | 当前真实 roadmap 与文档漂移说明 |
-| [📖 Nexus 的故事](docs/story.md) | 为什么造了这个东西 |
-
----
-
-## 社区
-
-<p>
-  <img src="https://github.com/user-attachments/assets/6960ca95-f26d-484b-aa66-56b5315e39d3" width="225" />
-</p>
-
-欢迎加微信（librae8226）深入交流。
-
----
-
-## 关于作者
-
-我是 Librae——软件工程师、创业者、早期科技 VC 投资人。
-
-这三个角色有一个共同点：**最好的想法，从来不在办公桌前产生。**
-
-Nexus 诞生于我自己的真实需求：在机场、出租车、会议间隙，随时能指挥和管理我的 AI 军团在电脑上工作。现在，它是开源的，也是你的。
-
----
+| [QUICKSTART.md](docs/QUICKSTART.md) | 安装、配置、profile、native backend、smoke test。 |
+| [DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md) | 更新、重启、验证、回滚。 |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 当前运行架构与模块边界。 |
+| [CURRENT-ROADMAP.md](docs/CURRENT-ROADMAP.md) | 当前执行状态与文档权威顺序。 |
+| [NORTH-STAR.md](docs/NORTH-STAR.md) | 产品边界和非目标。 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 本地开发和贡献规则。 |
 
 ## 贡献
 
-欢迎 PR 和 Issue。见 [CONTRIBUTING.md](CONTRIBUTING.md) 了解本地开发环境和贡献规范。
-
----
+欢迎 PR 和 Issue。保持改动范围单一，提交前运行 `npm run check`；运行时行为变化必须同步文档。
 
 ## 许可证
 
-双重授权：**[GPL v3](LICENSE.md)**（开源使用）· **商业授权**（用于商业/SaaS 产品）— 联系 [librae8226](https://github.com/librae8226) 或 [faywong](https://github.com/faywong)
-
----
-
-*用 AI agent 构建，为远程 AI 工作而生。*
+双重授权：[GPL v3](LICENSE.md) 用于开源使用，商业 / SaaS 使用可联系获取商业授权。

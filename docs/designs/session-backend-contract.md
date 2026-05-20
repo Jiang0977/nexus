@@ -1,17 +1,23 @@
 # Session Backend Contract
 
-最后更新：2026-05-12
+最后更新：2026-05-20
 
 ## 范围
 
-本文冻结 Nexus 当前 tmux-backed session backend 的产品 contract。它不是 native backend 设计，也不是 tmux 命令清单。
+本文冻结 Nexus session backend 的产品 contract。它不是 tmux 命令清单，也不是 native backend 的内部设计。
 
-第一阶段只要求当前 `TmuxSessionBackend` 跑过这些行为。未来 `NativeBackend` 必须实现同一 Nexus 行为 contract，前端和公开 HTTP/WS 协议不应感知 backend 类型。
+当前状态：
+
+- `tmux` 仍是默认稳定 backend。
+- `native` backend 已有 opt-in/staging 实现，必须继续满足本文的公开产品 contract。
+- 前端和公开 HTTP/WS 协议不应感知 backend 类型。
+
+历史第一阶段只要求当前 `TmuxSessionBackend` 跑过这些行为。现在 native path 已经存在，后续改动应同时保护默认 tmux 行为和 opt-in native 行为。
 
 ## 非目标
 
 - 不定义完整 tmux 兼容层。
-- 不要求 backend selector；Phase 2 的 opt-in native host 可以使用 selector，但不能改变本文冻结的默认 tmux contract。
+- 不要求把 backend selector 暴露进公开 HTTP/WS 协议；Phase 2 的 opt-in native host 可以使用 `NEXUS_SESSION_BACKEND`，但不能改变本文冻结的默认 tmux contract。
 - 不改变默认 backend。
 - 不要求 native backend 导入外部 tmux session。
 - 不要求 scrollback 精确模拟 tmux pane 历史；只冻结 Nexus 当前 snapshot/reconnect 语义。
@@ -30,8 +36,8 @@
 
 | 字段 | 语义 |
 |---|---|
-| `session` | Nexus project 名；当前等价 tmux session 名 |
-| `window` | Nexus channel index；当前等价 tmux window index |
+| `session` | Nexus project 名；默认 tmux backend 下等价 tmux session 名 |
+| `window` | Nexus channel index；默认 tmux backend 下等价 tmux window index |
 
 连接成功后，PTY runtime 负责：
 
@@ -83,12 +89,12 @@
 不变量：
 
 - 隐藏内部 `nexus-pty-*` session。
-- 当前 tmux discovery 失败时，回退到当前 `TMUX_SESSION` 和 `WORKSPACE_ROOT`。
+- 默认 tmux backend discovery 失败时，回退到当前 `TMUX_SESSION` 和 `WORKSPACE_ROOT`。
 - 保持当前 UI 依赖的 reverse ordering。
 
 ### `listAllSessionNames`
 
-返回所有 tmux session 名，不做 project 级过滤。当前用于需要完整 session name 集合的 server-side 路径。
+返回 backend 暴露的所有 session/project 名，不做 project 级过滤。默认 tmux backend 下是 tmux session 名；当前用于需要完整 session name 集合的 server-side 路径。
 
 ## Channel Contract
 

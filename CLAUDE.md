@@ -1,6 +1,6 @@
 # CLAUDE.md — Nexus Development Standards
 
-Project: **Nexus** — WebSocket tmux 桥接，AI 终端移动端面板
+Project: **Nexus** — Rust 本地 AI agent 工作台，默认 tmux 后端，native PTY 后端 opt-in
 Anchor: `docs/NORTH-STAR.md` — 修改任何文档前先对照锚点三原则
 
 ---
@@ -10,30 +10,36 @@ Anchor: `docs/NORTH-STAR.md` — 修改任何文档前先对照锚点三原则
 | Layer | Tech |
 |---|---|
 | Backend | Rust `nexus-server` + Rust child runtimes |
-| Frontend delivery | Vendored static bundle in `frontend/dist/` |
+| Frontend | React / TypeScript source in `frontend/src/`; vendored static bundle in `frontend/dist/` |
 | Auth | JWT (30d) + bcrypt password hash |
 | Runtime | 宿主机（WSL2）直接运行，`start.sh` 默认拉起 Rust server |
 | Config | `.env` 由 Rust `nexus-server` 读取 |
-| Persist | `./data/`（toolbar config、session configs） |
+| Persist | `./data/`（toolbar config、session configs、tasks、uploads、native registry） |
 
 ## Architecture Constraints
 
-- **多 PTY 架构**（F-11）：每个 `tmux session:window` 独立 PTY 实例，`ptyMap` 管理
+- **多 PTY 架构**（F-11）：每个 project/channel 独立 PTY；默认映射到 `tmux session:window`，native 模式映射到 Rust PTY/supervisor
 - Rust `nexus-server` 静态伺服 `frontend/dist/` + `public/`
-- **no database**：会话状态从 tmux 实时读取，持久化只用 JSON 文件
+- 默认稳定 session backend 是 `tmux`
+- `native` backend 是 opt-in/staging；不要写成默认生产路径，必须保留 tmux 回退能力
+- `data/native-sessions/session.db` 只服务 native session registry，不是通用业务数据库
 - `WORKSPACE_ROOT` 指向宿主机工作区根目录，由 Rust server 直接访问
-- 不要把 Node/npm/pm2 重新带回仓库；当前默认运行链只允许 Rust + shell + systemd/tmux
+- 不要把 PM2 重新带回默认运行链；Node/npm 只用于前端开发、测试和构建，不是线上服务管理入口
 
 ## Key Files
 
 ```
 rust-runtime/src/bin/
   nexus-server.rs          # 默认后端入口：HTTP + WS + runtimes + Telegram
+  nexus-pty-runtime.rs     # tmux/native PTY attach
+  nexus-native-pty-supervisor.rs
+  nexus-native-session.rs
 rust-runtime/tests/        # Rust integration tests for startup/setup/bundle paths
 data/                      # 持久化数据（toolbar、tasks、configs）
 public/
   sw.js                    # Service Worker（cache-first 静态资源）
   icon.svg                 # PWA 图标
+frontend/src/              # React / TypeScript source
 frontend/dist/             # vendored 前端静态资源
 docs/
   NORTH-STAR.md            # 锚点文件（核心问题/用户/Out-of-Scope）
@@ -92,9 +98,10 @@ Rules: English subject, imperative mood, no trailing period, blank line before b
 - No speculative features, no opportunistic cleanup
 - One logical change per commit
 
-### Frontend Bundle
-- 当前仓库只保留编译后的 `frontend/dist/`
-- 不要把 Node toolchain、Vite 配置或 TS/React 源码重新带回仓库
+### Frontend
+- 当前仓库同时保留 `frontend/src/` 和 `frontend/dist/`
+- 改 `frontend/src/` 后必须重建 `frontend/dist/`
+- 线上 Rust server 仍只伺服 `frontend/dist/` + `public/`
 - 任何前端 bundle 变更都要同步更新运行文档和验证记录
 
 ### Security

@@ -1,18 +1,28 @@
 # Native Session Backend Cross-Platform Plan
 
-最后更新：2026-05-12
+最后更新：2026-05-20
 
 ## 长期方向与当前边界
 
 长期方向是评估并逐步演进出 Rust 原生 session backend，接管 tmux 目前在 Nexus 中承担的交互会话职责，并最终支持 Linux、macOS、Windows 和 WSL2。
 
-当前已批准范围不是替换 tmux，而是冻结现有行为、收口 tmux 边界，并为未来 native backend 留出可验证落点。
+当前真实状态：
+
+- Phase 1 contract / tmux 边界收口已经不是唯一事实；代码里已经有 Phase 2 opt-in native path。
+- 默认 backend 仍是 `tmux`。
+- `NEXUS_SESSION_BACKEND=native` 已可启用 native project/channel/PTY 路径，但只允许作为 opt-in/staging 使用。
+- `nexus-native-pty-supervisor`、`nexus-native-session`、`data/native-sessions/session.db`、native scrollback 和 `nexus-native-pty.service` 已存在。
+- 本文中早期 “Approved Phase 1 Scope” 小节仍保留为历史决策记录；不要把其中“第一阶段不新增 `NEXUS_SESSION_BACKEND`”误读为当前仓库事实。
+
+当前边界不是“替换 tmux 已完成”，而是：保留 tmux 默认稳定路径，同时让 native backend 在受控、可回滚的 opt-in 路径继续验证。
 
 ## CEO Review 决策
 
 2026-05-12 的 `/plan-ceo-review` 结论：**先收缩 scope，不批准完整 native backend 主线直接开工。**
 
-实现者注意：**PR1 / PR2 只执行 `Approved Phase 1 Scope`。** 本文后面的 `NativeBackend`、SQLite、cross-platform installer 等内容只记录长期方向，不能作为当前实现范围。
+历史实现者注意：**PR1 / PR2 只执行 `Approved Phase 1 Scope`。** 本文后面的 `NativeBackend`、SQLite、cross-platform installer 等内容当时只记录长期方向。
+
+2026-05-20 更新：仓库已经越过 Phase 1，进入了可 opt-in 的 Phase 2 native path。继续推进 native 时，以本文靠后的 production readiness checklist、当前代码和最新 runbook 为准，不要回到 Phase 1 的旧限制。
 
 批准的第一阶段只做：
 
@@ -23,13 +33,15 @@
 
 长期方向仍保留：`NativeBackend`、跨平台 `PlatformAdapter`、SQLite registry、scrollback store、process supervisor 都作为后续可选路线设计，但不进入第一阶段实现范围。
 
-战略闸门：
+历史 Phase 1 战略闸门（已过期，仅作当时决策记录）：
 
 - 第一阶段完成前，不实现 `NativeBackend`。
 - 第一阶段完成前，不改默认 backend。
 - 第一阶段完成前，不新增 `NEXUS_SESSION_BACKEND` 配置项。
 - 第一阶段完成前，不修改 `NORTH-STAR.md` 的“不替换 tmux”边界。
 - 如果后续决定进入 native backend 主线，必须先显式更新 `NORTH-STAR.md` 和 `CLAUDE.md`，承认这是从 “tmux bridge” 到 “cross-platform agent supervisor” 的战略升级。
+
+当前约束见本文顶部“当前真实状态”：`NEXUS_SESSION_BACKEND=native` 已存在，但只能作为 opt-in/staging；默认 backend 仍是 `tmux`。
 
 长期核心目标：
 
@@ -54,11 +66,13 @@ Browser / PWA
   <-> WebSocket / REST
 Rust server (nexus-server)
   <-> Rust child runtimes
-tmux session:window
+Session backend
+  |-- tmux session:window       default / stable
+  `-- native Rust PTY registry  opt-in / staging
   <-> shell / claude / codex
 ```
 
-tmux 现在承担的不是一个功能，而是一组生产语义：
+默认 tmux backend 现在承担的不是一个功能，而是一组生产语义：
 
 - session/window 事实源
 - 持久进程容器

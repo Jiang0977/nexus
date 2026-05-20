@@ -202,7 +202,7 @@ Nexus 的架构天然免疫这些问题：
 
 Nexus 的 Project-Channel 架构让你能够优雅地管理多个项目：
 
-- 每个项目是一个独立的 tmux session
+- 默认后端下，每个项目是一个独立的 tmux session；native 后端仍保持相同的 Project/Channel 心智模型
 
 - 每个项目下可以有多个 Channel（窗口），分别运行不同的任务
 
