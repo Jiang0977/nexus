@@ -15,7 +15,8 @@ pub fn resolve_project_root() -> Result<PathBuf, String> {
             .map_err(|error| format!("failed to resolve project root: {error}"));
     }
 
-    let cwd = env::current_dir().map_err(|error| format!("failed to read current directory: {error}"))?;
+    let cwd =
+        env::current_dir().map_err(|error| format!("failed to read current directory: {error}"))?;
     if looks_like_project_root(&cwd) {
         return Ok(cwd);
     }
@@ -77,11 +78,15 @@ pub fn env_or_dotenv(key: &str, dotenv: &HashMap<String, String>) -> Option<Stri
 
 pub fn resolve_data_dir(project_root: &Path, dotenv: &HashMap<String, String>) -> PathBuf {
     let configured = env_or_dotenv("NEXUS_DATA_DIR", dotenv).unwrap_or_default();
+    resolve_data_dir_path(project_root, &configured)
+}
+
+fn resolve_data_dir_path(project_root: &Path, configured: &str) -> PathBuf {
     if configured.is_empty() {
         return project_root.join("data");
     }
 
-    let configured_path = PathBuf::from(&configured);
+    let configured_path = PathBuf::from(configured);
     if configured_path.is_absolute() {
         configured_path
     } else {
@@ -158,7 +163,7 @@ fn upsert_proxy_var(proxy_vars: &mut Vec<(String, String)>, key: &str, value: &s
 #[cfg(test)]
 mod tests {
     use super::{
-        load_dotenv, parse_json_array_env, project_root_from_executable, resolve_data_dir,
+        load_dotenv, parse_json_array_env, project_root_from_executable, resolve_data_dir_path,
         resolve_runtime_path,
     };
     use std::fs;
@@ -186,10 +191,8 @@ mod tests {
 
     #[test]
     fn resolves_data_dir_from_dotenv() {
-        let mut dotenv = std::collections::HashMap::new();
-        dotenv.insert("NEXUS_DATA_DIR".to_string(), "var/data".to_string());
         assert_eq!(
-            resolve_data_dir(Path::new("/repo"), &dotenv),
+            resolve_data_dir_path(Path::new("/repo"), "var/data"),
             PathBuf::from("/repo/var/data")
         );
     }

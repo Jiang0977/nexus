@@ -969,37 +969,31 @@ fn write_desktop_state_projection(
             .with_context(|| format!("failed removing stale temp db {}", temp_path.display()))?;
     }
 
-    let template_home = match create_desktop_state_template(state_db_path) {
+    let mut template_home = match create_desktop_state_template(state_db_path) {
         Ok(template_home) => Some(template_home),
         Err(error) => {
             if temp_path.exists() {
                 let _ = fs::remove_file(&temp_path);
             }
-            let normalized_sources = rows.iter().filter(|row| row.normalized_source).count();
-            let projected_target_provider_threads =
-                rows.iter().filter(|row| row.projected_to_target).count();
             eprintln!(
-                "[nexus] skipped Codex state DB projection because template initialization failed: {error:#}"
+                "[nexus] rebuilding Codex state DB projection with Nexus schema because template initialization failed: {error:#}"
             );
-            return Ok(DesktopStateProjectionOutput {
-                state_db_path: state_db_path.to_path_buf(),
-                backup_path,
-                written_threads: 0,
-                normalized_sources,
-                projected_target_provider_threads,
-                target_model_provider,
-            });
+            None
         }
     };
-    if let Some(template_home) = template_home.as_ref() {
-        let template_state_db_path = latest_versioned_sqlite(template_home, "state", 5);
-        fs::copy(&template_state_db_path, &temp_path).with_context(|| {
-            format!(
-                "failed copying template state db {} -> {}",
+    if let Some(template_home_path) = template_home.as_ref() {
+        let template_state_db_path = latest_versioned_sqlite(template_home_path, "state", 5);
+        if let Err(error) = fs::copy(&template_state_db_path, &temp_path) {
+            eprintln!(
+                "[nexus] rebuilding Codex state DB projection with Nexus schema because template copy failed from {} to {}: {error}",
                 template_state_db_path.display(),
                 temp_path.display()
-            )
-        })?;
+            );
+            if temp_path.exists() {
+                let _ = fs::remove_file(&temp_path);
+            }
+            template_home = None;
+        }
     }
 
     let connection = Connection::open(&temp_path)

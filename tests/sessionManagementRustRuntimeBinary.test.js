@@ -263,6 +263,8 @@ function createClient(baseDir, extraEnv = {}) {
     runtimeExecutable: RUNTIME,
     env: {
       ...process.env,
+      NEXUS_SESSION_BACKEND: 'tmux',
+      NEXUS_DATA_DIR: join(baseDir, 'data'),
       PATH: `${baseDir}:${process.env.PATH || ''}`,
       ...extraEnv,
     },

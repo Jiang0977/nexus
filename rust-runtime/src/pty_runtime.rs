@@ -669,7 +669,7 @@ fn command_available(program: &str) -> bool {
     } else {
         Command::new("sh")
             .arg("-c")
-            .arg(format!("command -v \"$1\" >/dev/null 2>&1"))
+            .arg("command -v \"$1\" >/dev/null 2>&1")
             .arg("sh")
             .arg(program)
             .stdin(Stdio::null())
@@ -2016,10 +2016,10 @@ pub fn run_stdio_runtime() {
 }
 
 fn create_stdio_host(event_tx: Sender<String>) -> Box<dyn PtyHost> {
-    if backend_mode() == BackendMode::Native {
-        if let Some(host) = create_supervisor_client_host(event_tx.clone()) {
-            return host;
-        }
+    if backend_mode() == BackendMode::Native
+        && let Some(host) = create_supervisor_client_host(event_tx.clone())
+    {
+        return host;
     }
 
     let output = RuntimeOutput::new(Arc::new(ChannelOutputSink::new(event_tx)));

@@ -18,7 +18,7 @@
     "check:frontend-dist": "npm run build:frontend && node ./scripts/check-frontend-dist.mjs",
     "check": "npm run test:rust && npm run test:node && npm run check:frontend-dist",
     "setup": "cargo run --manifest-path rust-runtime/Cargo.toml --release --bin nexus-setup --",
-    "build:rust-setup": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-setup",
+    "build:rust-setup": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-setup --bin nexus-native-session",
     "build:rust-server": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server",
     "build:rust-codex-home": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-codex-home",
     "build:rust-task-runtime": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-task-runtime",

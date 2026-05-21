@@ -36,7 +36,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
     match args.next().as_deref() {
         Some("list") | Some("ls") => list_sessions(),
         Some("attach") | Some("a") => {
-            let session = args.next().ok_or_else(|| usage())?;
+            let session = args.next().ok_or_else(usage)?;
             let channel = args
                 .next()
                 .as_deref()
