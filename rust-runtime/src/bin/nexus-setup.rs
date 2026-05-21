@@ -206,7 +206,10 @@ fn install_native_session_cli(root: &Path) -> Result<(), String> {
             target.display()
         )
     })?;
-    ok(&format!("native session CLI installed at {}", link.display()));
+    ok(&format!(
+        "native session CLI installed at {}",
+        link.display()
+    ));
     Ok(())
 }
 

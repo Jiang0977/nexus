@@ -118,6 +118,14 @@ pub fn resolve_native_pty_supervisor_socket(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
+    resolve_native_pty_supervisor_socket_path(project_root, data_dir, configured)
+}
+
+fn resolve_native_pty_supervisor_socket_path(
+    project_root: &Path,
+    data_dir: &Path,
+    configured: Option<String>,
+) -> PathBuf {
     let path = configured
         .map(PathBuf::from)
         .unwrap_or_else(|| data_dir.join("native-sessions").join("supervisor.sock"));
@@ -228,11 +236,7 @@ impl RuntimeServiceConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DEFAULT_GITHUB_REPO, DEFAULT_PORT, NATIVE_PTY_SUPERVISOR_SOCKET_ENV,
-        resolve_native_pty_supervisor_socket,
-    };
-    use std::collections::HashMap;
+    use super::{DEFAULT_GITHUB_REPO, DEFAULT_PORT, resolve_native_pty_supervisor_socket_path};
     use std::path::Path;
 
     #[test]
@@ -243,12 +247,11 @@ mod tests {
 
     #[test]
     fn native_supervisor_socket_defaults_under_data_dir() {
-        let dotenv = HashMap::new();
         assert_eq!(
-            resolve_native_pty_supervisor_socket(
+            resolve_native_pty_supervisor_socket_path(
                 Path::new("/repo"),
                 Path::new("/repo/data"),
-                &dotenv
+                None
             ),
             Path::new("/repo/data/native-sessions/supervisor.sock")
         );
@@ -256,16 +259,11 @@ mod tests {
 
     #[test]
     fn native_supervisor_socket_honors_env_override() {
-        let mut dotenv = HashMap::new();
-        dotenv.insert(
-            NATIVE_PTY_SUPERVISOR_SOCKET_ENV.to_string(),
-            "var/native.sock".to_string(),
-        );
         assert_eq!(
-            resolve_native_pty_supervisor_socket(
+            resolve_native_pty_supervisor_socket_path(
                 Path::new("/repo"),
                 Path::new("/repo/data"),
-                &dotenv
+                Some("var/native.sock".to_string())
             ),
             Path::new("/repo/var/native.sock")
         );

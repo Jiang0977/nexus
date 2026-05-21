@@ -13,6 +13,7 @@ test('profile Claude launcher materializes profile env overrides without droppin
   const fakeBinDir = join(tempDir, 'bin')
   const homeDir = join(tempDir, 'home')
   const pollutedHome = join(tempDir, 'runtime-home')
+  const dataDir = join(tempDir, 'data')
   const projectDir = join(tempDir, 'project')
   const runtimeDir = join(tempDir, 'claude-runtime')
   const argsLog = join(tempDir, 'claude-args.log')
@@ -28,6 +29,7 @@ test('profile Claude launcher materializes profile env overrides without droppin
     mkdirSync(join(homeDir, '.claude', 'skills', 'my-custom-skill'), { recursive: true })
     mkdirSync(join(homeDir, '.claude', 'plugins'), { recursive: true })
     mkdirSync(join(homeDir, '.claude', 'hooks'), { recursive: true })
+    mkdirSync(join(dataDir, 'configs'), { recursive: true })
     mkdirSync(projectDir, { recursive: true })
     writeFileSync(join(homeDir, '.cargo', 'bin', 'cargo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
     writeFileSync(join(homeDir, '.claude', 'CLAUDE.md'), '# global claude\n', 'utf8')
@@ -35,6 +37,10 @@ test('profile Claude launcher materializes profile env overrides without droppin
     writeFileSync(join(homeDir, '.claude', 'hooks', 'rtk-rewrite.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
     writeFileSync(join(homeDir, '.claude', 'skills', 'my-custom-skill', 'SKILL.md'), '# custom skill\n', 'utf8')
     writeFileSync(join(homeDir, '.claude', 'plugins', 'installed_plugins.json'), '{"plugins":["openai-codex"]}\n', 'utf8')
+    writeFileSync(join(dataDir, 'configs', 'cc-switch-claude-official.json'), JSON.stringify({
+      label: 'Official Claude',
+      API_TIMEOUT_MS: '3000000',
+    }, null, 2), 'utf8')
     writeFileSync(join(homeDir, '.claude', 'settings.json'), JSON.stringify({
       env: {
         ANTHROPIC_BASE_URL: 'https://user.example.com',
@@ -89,6 +95,7 @@ exit 0
         ...process.env,
         HOME: pollutedHome,
         NEXUS_SOURCE_HOME: homeDir,
+        NEXUS_DATA_DIR: dataDir,
         PATH: `${fakeBinDir}:/usr/bin:/bin`,
         CARGO_HOME: '',
         NEXUS_CLAUDE_RUNTIME_DIR: runtimeDir,

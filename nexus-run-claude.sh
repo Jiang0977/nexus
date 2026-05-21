@@ -16,7 +16,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/scripts/nexus-paths.sh"
 SOURCE_HOME="$(resolve_source_home)"
 ensure_rust_toolchain_on_path "${SOURCE_HOME}"
-CONFIG_FILE="${SCRIPT_DIR}/data/configs/${PROFILE}.json"
+DATA_DIR="${NEXUS_DATA_DIR:-${SCRIPT_DIR}/data}"
+if [[ "$DATA_DIR" != /* ]]; then
+    DATA_DIR="${SCRIPT_DIR}/${DATA_DIR}"
+fi
+CONFIG_FILE="${DATA_DIR}/configs/${PROFILE}.json"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "[Nexus] Config profile '${PROFILE}' not found at ${CONFIG_FILE}"
     exit 1
@@ -169,7 +173,7 @@ cd "$PROJECT"
 
 declare -a CLAUDE_LAUNCH_ARGS
 CLAUDE_LAUNCH_ARGS=(--dangerously-skip-permissions)
-CLAUDE_RUNTIME_ROOT="${NEXUS_CLAUDE_RUNTIME_DIR:-${SCRIPT_DIR}/data/claude-runtime}"
+CLAUDE_RUNTIME_ROOT="${NEXUS_CLAUDE_RUNTIME_DIR:-${DATA_DIR}/claude-runtime}"
 CLAUDE_RUNTIME_SETTINGS_FILE="$(materialize_claude_runtime_settings "$SOURCE_HOME" "$CLAUDE_RUNTIME_ROOT" || true)"
 if [ -n "$CLAUDE_RUNTIME_SETTINGS_FILE" ]; then
     CLAUDE_LAUNCH_ARGS+=(--settings "$CLAUDE_RUNTIME_SETTINGS_FILE")

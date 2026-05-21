@@ -18,11 +18,15 @@ source "${SCRIPT_DIR}/scripts/nexus-paths.sh"
 SOURCE_HOME="$(resolve_source_home)"
 ensure_codex_cli_on_path "${SOURCE_HOME}"
 ensure_rust_toolchain_on_path "${SOURCE_HOME}"
+DATA_DIR="${NEXUS_DATA_DIR:-${SCRIPT_DIR}/data}"
+if [[ "$DATA_DIR" != /* ]]; then
+    DATA_DIR="${SCRIPT_DIR}/${DATA_DIR}"
+fi
 DEFAULT_CODEX_HOME_EXECUTABLE="${SCRIPT_DIR}/rust-runtime/target/release/nexus-codex-home"
 CODEX_HOME_EXECUTABLE="${NEXUS_CODEX_HOME_EXECUTABLE:-$DEFAULT_CODEX_HOME_EXECUTABLE}"
 CONFIG_FILE=""
 if [ -n "$PROFILE" ]; then
-    CONFIG_FILE="${SCRIPT_DIR}/data/codex-configs/${PROFILE}.json"
+    CONFIG_FILE="${DATA_DIR}/codex-configs/${PROFILE}.json"
     if [ ! -f "$CONFIG_FILE" ]; then
         echo "[Nexus] Codex profile '${PROFILE}' not found at ${CONFIG_FILE}"
         exit 1
@@ -34,9 +38,9 @@ if [ -z "$window_id" ]; then
     window_id="window-$$"
 fi
 safe_window_id="$(printf '%s' "$window_id" | sed 's/[^a-zA-Z0-9._-]/-/g')"
-runtime_home="${SCRIPT_DIR}/data/codex-runtime/${safe_window_id}"
+runtime_home="${DATA_DIR}/codex-runtime/${safe_window_id}"
 
-mkdir -p "${SCRIPT_DIR}/data/codex-runtime"
+mkdir -p "${DATA_DIR}/codex-runtime"
 export NEXUS_SOURCE_HOME="${SOURCE_HOME}"
 export NEXUS_CODEX_SOURCE_HOME="${SOURCE_HOME}/.codex"
 if [ -z "${NEXUS_CODEX_HOME_EXECUTABLE:-}" ] && [ ! -x "$DEFAULT_CODEX_HOME_EXECUTABLE" ]; then

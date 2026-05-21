@@ -309,6 +309,9 @@ fn nexus_native_pty_service_reads_backend_from_configured_data_dir() {
     let output = Command::new("bash")
         .arg(&script_path)
         .current_dir(root)
+        .env_remove("NEXUS_DATA_DIR")
+        .env_remove("NEXUS_SESSION_BACKEND")
+        .env_remove("NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET")
         .env("NEXUS_NATIVE_PTY_SUPERVISOR_EXECUTABLE", &supervisor_path)
         .output()
         .unwrap();
