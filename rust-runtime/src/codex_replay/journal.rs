@@ -37,7 +37,7 @@ pub fn load_activation_journal(path: &Path) -> Result<Vec<ActivationEvent>> {
         }
     }
 
-    events.sort_by(|lhs, rhs| lhs.timestamp.cmp(&rhs.timestamp));
+    events.sort_by_key(|event| event.timestamp);
     Ok(events)
 }
 

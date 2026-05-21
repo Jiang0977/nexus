@@ -44,11 +44,12 @@ pub fn remap_to_target_account(
 ) {
     for item in items {
         match item.attribution.as_mut() {
-            Some(account) => {
-                if account.provider_id == "codex" && provider_ids.contains(&account.account_id) {
-                    account.account_id = target_account_id.to_string();
-                }
+            Some(account)
+                if account.provider_id == "codex" && provider_ids.contains(&account.account_id) =>
+            {
+                account.account_id = target_account_id.to_string();
             }
+            Some(_) => {}
             None if !keep_unknown => {
                 item.attribution = Some(AccountRef {
                     provider_id: "codex".to_string(),
