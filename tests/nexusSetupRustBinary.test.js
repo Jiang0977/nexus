@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 
@@ -13,6 +13,13 @@ const BINARY = join(
   'target',
   'release',
   process.platform === 'win32' ? 'nexus-setup.exe' : 'nexus-setup',
+)
+const NATIVE_SESSION_BINARY = join(
+  ROOT,
+  'rust-runtime',
+  'target',
+  'release',
+  process.platform === 'win32' ? 'nexus-native-session.exe' : 'nexus-native-session',
 )
 let buildChecked = false
 
@@ -25,6 +32,7 @@ function ensureBuilt() {
 
   assert.equal(build.status, 0, build.stderr || build.stdout)
   assert.equal(existsSync(BINARY), true)
+  assert.equal(existsSync(NATIVE_SESSION_BINARY), true)
   buildChecked = true
 }
 
@@ -39,6 +47,13 @@ function createSetupFixture() {
   const frontendDistDir = join(frontendDir, 'dist')
   const stateDir = join(fixtureRoot, 'state')
   const homeDir = join(fixtureRoot, 'home')
+  const fixtureNativeSessionBinary = join(
+    fixtureRoot,
+    'rust-runtime',
+    'target',
+    'release',
+    process.platform === 'win32' ? 'nexus-native-session.exe' : 'nexus-native-session',
+  )
   const systemctlLogFile = join(stateDir, 'systemctl.log')
   const tmuxLogFile = join(stateDir, 'tmux.log')
 
@@ -46,10 +61,12 @@ function createSetupFixture() {
   mkdirSync(frontendDistDir, { recursive: true })
   mkdirSync(stateDir, { recursive: true })
   mkdirSync(homeDir, { recursive: true })
+  mkdirSync(dirname(fixtureNativeSessionBinary), { recursive: true })
 
   writeFileSync(join(fixtureRoot, '.env.example'), 'JWT_SECRET=test\nACC_PASSWORD_HASH=test\n', 'utf8')
   writeFileSync(join(frontendDistDir, 'index.html'), '<!doctype html><html><body>fixture</body></html>\n', 'utf8')
   writeFileSync(join(fixtureRoot, 'start.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  copyFileSync(NATIVE_SESSION_BINARY, fixtureNativeSessionBinary)
   writeFileSync(systemctlLogFile, '', 'utf8')
   writeFileSync(tmuxLogFile, '', 'utf8')
 
@@ -83,7 +100,7 @@ exit 1
 set -eu
 printf '%s\\n' "$*" >> ${JSON.stringify(systemctlLogFile)}
 case "$*" in
-  "--user --version"|"--version"|"--user daemon-reload"|"--user enable --now nexus-tmux.service"|"--user enable --now nexus.service")
+  "--user --version"|"--version"|"--user daemon-reload"|"--user enable --now nexus-tmux.service"|"--user enable --now nexus-native-pty.service"|"--user enable --now nexus.service")
     exit 0
     ;;
 esac
@@ -131,17 +148,20 @@ test('real rust setup binary provisions env, frontend, systemd units, and tmux w
       '--user --version',
       '--user daemon-reload',
       '--user enable --now nexus-tmux.service',
+      '--user enable --now nexus-native-pty.service',
       '--user enable --now nexus.service',
     ])
 
     const userSystemdDir = join(fixture.homeDir, '.config', 'systemd', 'user')
     const nexusService = readFileSync(join(userSystemdDir, 'nexus.service'), 'utf8')
     const tmuxService = readFileSync(join(userSystemdDir, 'nexus-tmux.service'), 'utf8')
+    const nativePtyService = readFileSync(join(userSystemdDir, 'nexus-native-pty.service'), 'utf8')
     assert.match(nexusService, /Description=Nexus service/)
     assert.match(nexusService, /KillMode=control-group/)
     assert.match(tmuxService, /Persistent tmux server for Nexus/)
     assert.match(tmuxService, /start-foreground/)
     assert.match(tmuxService, /ensure-session/)
+    assert.match(nativePtyService, /Persistent native PTY supervisor for Nexus/)
 
     const tmuxLog = readFileSync(fixture.tmuxLogFile, 'utf8')
       .trim()

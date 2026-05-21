@@ -236,7 +236,7 @@ test('package.json keeps rust startup scripts and declares browser regression to
   )
   assert.equal(
     packageJson.scripts['build:rust-setup'],
-    'cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-setup',
+    'cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-setup --bin nexus-native-session',
   )
   assert.equal(packageJson.scripts['build:rust-codex-home'], 'cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-codex-home')
   assert.equal('build:server' in packageJson.scripts, false)

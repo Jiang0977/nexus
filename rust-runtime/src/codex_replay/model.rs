@@ -29,6 +29,7 @@ fn default_activation_type() -> String {
 
 impl ActivationEvent {
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         timestamp: DateTime<Utc>,
         provider_id: String,
