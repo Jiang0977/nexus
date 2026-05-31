@@ -107,6 +107,26 @@ pick_synced_resume_session() {
   return 0
 }
 
+codex_args_with_single_bypass() {
+  local arg
+  printf '%s\0' "--dangerously-bypass-approvals-and-sandbox"
+  for arg in "$@"; do
+    if [ "$arg" != "--dangerously-bypass-approvals-and-sandbox" ]; then
+      printf '%s\0' "$arg"
+    fi
+  done
+}
+
+exec_real_codex() {
+  local args=()
+  local arg
+  while IFS= read -r -d '' arg; do
+    args+=("$arg")
+  done < <(codex_args_with_single_bypass "$@")
+
+  exec "$REAL_CODEX_BIN" "${args[@]}"
+}
+
 REAL_CODEX_BIN="$(resolve_real_codex || true)"
 if [ -z "$REAL_CODEX_BIN" ]; then
   printf 'codex wrapper error: real codex binary not found in PATH\n' >&2
@@ -122,7 +142,7 @@ if [ "${1:-}" = "resume" ]; then
     set -e
 
     if [ "$PICK_STATUS" -eq 0 ]; then
-      exec "$REAL_CODEX_BIN" --dangerously-bypass-approvals-and-sandbox resume "$PICKED_SESSION_ID" "${NEXUS_PICKER_FORWARD_ARGS[@]}"
+      exec_real_codex resume "$PICKED_SESSION_ID" "${NEXUS_PICKER_FORWARD_ARGS[@]}"
     fi
 
     if [ "$PICK_STATUS" -ne 2 ]; then
@@ -132,4 +152,4 @@ if [ "${1:-}" = "resume" ]; then
   set -- resume "$@"
 fi
 
-exec "$REAL_CODEX_BIN" --dangerously-bypass-approvals-and-sandbox "$@"
+exec_real_codex "$@"

@@ -88,6 +88,23 @@ fi
 export NEXUS_REAL_CODEX_BIN="${CODEX_BIN}"
 export PATH="${SCRIPT_DIR}/scripts/runtime-bin:${PATH}"
 
+codex_bin_supplies_bypass() {
+    local sample=""
+    if [ -z "${CODEX_BIN:-}" ] || [ ! -r "$CODEX_BIN" ]; then
+        return 1
+    fi
+    sample="$(LC_ALL=C head -c 32768 "$CODEX_BIN" 2>/dev/null || true)"
+    [[ "$sample" == *"--dangerously-bypass-approvals-and-sandbox"* ]]
+}
+
+build_codex_args() {
+    CODEX_ARGS=()
+    if ! codex_bin_supplies_bypass; then
+        CODEX_ARGS+=("--dangerously-bypass-approvals-and-sandbox")
+    fi
+    CODEX_ARGS+=("$@")
+}
+
 label="${PROFILE:-Manual login}"
 if [ -n "$CONFIG_FILE" ]; then
     label="$(python3 - "$CONFIG_FILE" <<'PY'
@@ -119,9 +136,11 @@ while true; do
         NEXUS_CODEX_SOURCE_HOME="${SOURCE_HOME}/.codex"
     )
     if [ -n "$RESUME_SESSION_ID" ]; then
-        env "${codex_env[@]}" "$CODEX_BIN" resume "$RESUME_SESSION_ID" --dangerously-bypass-approvals-and-sandbox --no-alt-screen || true
+        build_codex_args resume "$RESUME_SESSION_ID" --no-alt-screen
+        env "${codex_env[@]}" "$CODEX_BIN" "${CODEX_ARGS[@]}" || true
     else
-        env "${codex_env[@]}" "$CODEX_BIN" --dangerously-bypass-approvals-and-sandbox --no-alt-screen || true
+        build_codex_args --no-alt-screen
+        env "${codex_env[@]}" "$CODEX_BIN" "${CODEX_ARGS[@]}" || true
     fi
     echo ""
     echo "[Nexus] Codex exited.  r=restart  b=bash shell  q=quit window"

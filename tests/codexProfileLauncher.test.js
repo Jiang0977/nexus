@@ -145,3 +145,57 @@ exit 0
     rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+test('profile Codex launcher does not duplicate bypass when resolved codex wrapper already adds it', { skip: process.platform === 'win32' }, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'nexus-codex-profile-wrapper-bypass-'))
+  const wrapperBinDir = join(tempDir, 'wrapper-bin')
+  const realBinDir = join(tempDir, 'real-bin')
+  const homeDir = join(tempDir, 'home')
+  const projectDir = join(tempDir, 'project')
+  const fakeCodexHome = join(tempDir, 'fake-codex-home.sh')
+  const argsLog = join(tempDir, 'codex-args.log')
+
+  try {
+    mkdirSync(wrapperBinDir, { recursive: true })
+    mkdirSync(realBinDir, { recursive: true })
+    mkdirSync(homeDir, { recursive: true })
+    mkdirSync(projectDir, { recursive: true })
+    writeFileSync(fakeCodexHome, `#!/bin/sh
+mkdir -p "$2/.codex"
+exit 0
+`, { mode: 0o755 })
+    writeFileSync(join(realBinDir, 'codex-real'), `#!/bin/sh
+printf '%s\\n' "$*" > "${argsLog}"
+exit 0
+`, { mode: 0o755 })
+    writeFileSync(join(wrapperBinDir, 'codex'), `#!/usr/bin/env bash
+set -euo pipefail
+exec "${join(realBinDir, 'codex-real')}" --dangerously-bypass-approvals-and-sandbox --disable apps "$@"
+`, { mode: 0o755 })
+
+    const result = spawnSync('bash', [join(ROOT, 'nexus-run-codex.sh'), '', projectDir, ''], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        NEXUS_SOURCE_HOME: homeDir,
+        PATH: `${wrapperBinDir}:/usr/bin:/bin`,
+        NEXUS_CODEX_HOME_EXECUTABLE: fakeCodexHome,
+      },
+      input: 'q\n',
+      encoding: 'utf8',
+      timeout: 5000,
+    })
+
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const args = readFileSync(argsLog, 'utf8').trim().split(/\s+/)
+    assert.deepEqual(args, [
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--disable',
+      'apps',
+      '--no-alt-screen',
+    ])
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})

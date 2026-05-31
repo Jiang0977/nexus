@@ -180,6 +180,37 @@ test('synced Codex resume picker falls through to the native CLI for resume --la
   }
 })
 
+test('codex wrapper forwards the bypass flag only once when caller already supplied it', { skip: process.platform === 'win32' }, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'nexus-codex-wrapper-bypass-'))
+  const fakeRealCodex = join(tempDir, 'real-codex')
+  const argsLog = join(tempDir, 'codex-args.log')
+
+  try {
+    writeFakeCodex(fakeRealCodex, argsLog)
+
+    const result = spawnSync('bash', [
+      WRAPPER,
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--no-alt-screen',
+    ], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        NEXUS_REAL_CODEX_BIN: fakeRealCodex,
+        NEXUS_REPO_ROOT: ROOT,
+      },
+      encoding: 'utf8',
+      timeout: 5000,
+    })
+
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    const args = readFileSync(argsLog, 'utf8').trim().split(/\s+/)
+    assert.deepEqual(args, ['--dangerously-bypass-approvals-and-sandbox', '--no-alt-screen'])
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})
+
 test('nexus synced resume picker script returns the selected session id', { skip: process.platform === 'win32' }, () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'nexus-codex-resume-picker-script-'))
   const sourceHome = join(tempDir, 'source-home')
