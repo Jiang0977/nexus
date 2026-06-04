@@ -310,6 +310,7 @@ trait PtyHost {
     fn close_connection(&self, params: ConnectionNotifyParams);
     fn detach_connection(&self, params: ConnectionNotifyParams);
     fn get_output_snapshot(&self, params: SnapshotParams) -> SnapshotResult;
+    fn get_scrollback_snapshot(&self, params: SnapshotParams) -> SnapshotResult;
     fn shutdown(&self);
 }
 
@@ -349,6 +350,10 @@ impl PtyHost for InProcessPtyHost {
 
     fn get_output_snapshot(&self, params: SnapshotParams) -> SnapshotResult {
         get_output_snapshot(&self.state, params)
+    }
+
+    fn get_scrollback_snapshot(&self, params: SnapshotParams) -> SnapshotResult {
+        get_scrollback_snapshot(&self.state, params)
     }
 
     fn shutdown(&self) {
@@ -548,6 +553,19 @@ impl PtyHost for SupervisorClientPtyHost {
     fn get_output_snapshot(&self, params: SnapshotParams) -> SnapshotResult {
         self.request::<SnapshotResult>(
             "getOutputSnapshot",
+            serde_json::to_value(params).unwrap_or_default(),
+        )
+        .unwrap_or_else(|_| SnapshotResult {
+            connected: false,
+            output: String::new(),
+            clients: 0,
+            idle_ms: None,
+        })
+    }
+
+    fn get_scrollback_snapshot(&self, params: SnapshotParams) -> SnapshotResult {
+        self.request::<SnapshotResult>(
+            "getScrollbackSnapshot",
             serde_json::to_value(params).unwrap_or_default(),
         )
         .unwrap_or_else(|_| SnapshotResult {
@@ -1159,9 +1177,7 @@ fn append_native_scrollback(path: &Path, data: &str) {
 }
 
 fn read_native_scrollback(path: &Path) -> String {
-    fs::read_to_string(path)
-        .map(|output| replay_output(&output))
-        .unwrap_or_default()
+    fs::read_to_string(path).unwrap_or_default()
 }
 
 fn pty_key(session: &str, window_index: u32) -> String {
@@ -1716,6 +1732,34 @@ fn get_output_snapshot(state: &SharedState, params: SnapshotParams) -> SnapshotR
     }
 }
 
+fn get_scrollback_snapshot(state: &SharedState, params: SnapshotParams) -> SnapshotResult {
+    let output = if backend_mode() == BackendMode::Native {
+        read_native_scrollback(&native_scrollback_path(&params.session, params.window_index))
+    } else {
+        String::new()
+    };
+    let key = pty_key(&params.session, params.window_index);
+    let Some(entry) = state.get_entry(&key) else {
+        return SnapshotResult {
+            connected: false,
+            output,
+            clients: 0,
+            idle_ms: None,
+        };
+    };
+
+    SnapshotResult {
+        connected: true,
+        output,
+        clients: entry
+            .clients
+            .lock()
+            .map(|clients| clients.len())
+            .unwrap_or(0),
+        idle_ms: Some(now_ms().saturating_sub(entry.last_activity_ms.load(Ordering::SeqCst))),
+    }
+}
+
 fn send_response<T>(
     event_tx: &Sender<String>,
     id: String,
@@ -1969,6 +2013,24 @@ pub fn run_stdio_runtime() {
                             ),
                         }
                     }
+                    "getScrollbackSnapshot" => {
+                        match serde_json::from_value::<SnapshotParams>(message.params) {
+                            Ok(params) => send_response(
+                                &tx,
+                                id,
+                                true,
+                                Some(host.get_scrollback_snapshot(params)),
+                                None,
+                            ),
+                            Err(error) => send_response::<Value>(
+                                &tx,
+                                id,
+                                false,
+                                None,
+                                Some(error.to_string()),
+                            ),
+                        }
+                    }
                     "shutdown" => {
                         host.shutdown();
                         send_response(&tx, id, true, Some(serde_json::json!({ "ok": true })), None);
@@ -2188,6 +2250,24 @@ fn handle_supervisor_client(
                                 id,
                                 true,
                                 Some(host.get_output_snapshot(params)),
+                                None,
+                            ),
+                            Err(error) => send_response::<Value>(
+                                &tx,
+                                id,
+                                false,
+                                None,
+                                Some(error.to_string()),
+                            ),
+                        }
+                    }
+                    "getScrollbackSnapshot" => {
+                        match serde_json::from_value::<SnapshotParams>(message.params) {
+                            Ok(params) => send_response(
+                                &tx,
+                                id,
+                                true,
+                                Some(host.get_scrollback_snapshot(params)),
                                 None,
                             ),
                             Err(error) => send_response::<Value>(

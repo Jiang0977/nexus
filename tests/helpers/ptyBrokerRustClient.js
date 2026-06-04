@@ -224,6 +224,9 @@ export function createPtyBrokerRustClient(options = {}) {
     getOutputSnapshot(params) {
       return request('getOutputSnapshot', params)
     },
+    getScrollbackSnapshot(params) {
+      return request('getScrollbackSnapshot', params)
+    },
     async close() {
       if (closed || closing) return
       closing = true
@@ -396,6 +399,9 @@ export function createPtyBrokerSocketClient(options = {}) {
     },
     getOutputSnapshot(params) {
       return request('getOutputSnapshot', params)
+    },
+    getScrollbackSnapshot(params) {
+      return request('getScrollbackSnapshot', params)
     },
     close() {
       closed = true

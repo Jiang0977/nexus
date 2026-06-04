@@ -1156,6 +1156,91 @@ test('real rust pty runtime returns native cold snapshot from durable scrollback
   assert.equal(coldSnapshot.clients, 0)
 })
 
+test('real rust pty runtime returns full native scrollback separately from output replay', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-full-scrollback-'))
+  const dbPath = join(baseDir, 'session.db')
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
+    NEXUS_NATIVE_SCROLLBACK_DIR: join(baseDir, 'scrollback'),
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  const ptyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await ptyClient.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await sessionClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-full-scrollback',
+    cwd: ROOT,
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: {},
+  })
+
+  await ptyClient.ready()
+  await ptyClient.attachConnection({
+    connectionId: 'native-full-scrollback-writer',
+    session: 'native-full-scrollback',
+    windowIndex: 0,
+  })
+
+  const longOutput = [
+    'native scrollback earliest line',
+    ...Array.from({ length: 900 }, (_unused, index) => `native scrollback filler ${String(index + 1).padStart(4, '0')}`),
+    'native scrollback latest line',
+    '',
+  ].join('\n')
+  ptyClient.handleConnectionMessage({
+    connectionId: 'native-full-scrollback-writer',
+    key: 'native-full-scrollback:0',
+    rawMessage: longOutput,
+  })
+
+  let scrollbackSnapshot = null
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    scrollbackSnapshot = await ptyClient.getScrollbackSnapshot({
+      session: 'native-full-scrollback',
+      windowIndex: 0,
+    })
+    if (
+      scrollbackSnapshot.output.includes('native scrollback earliest line')
+      && scrollbackSnapshot.output.includes('native scrollback latest line')
+    ) break
+    await delay(20)
+  }
+  const outputSnapshot = await ptyClient.getOutputSnapshot({
+    session: 'native-full-scrollback',
+    windowIndex: 0,
+  })
+
+  assert.equal(scrollbackSnapshot.connected, true)
+  assert.match(scrollbackSnapshot.output, /native scrollback earliest line/)
+  assert.match(scrollbackSnapshot.output, /native scrollback latest line/)
+  assert.ok(
+    outputSnapshot.output.length < scrollbackSnapshot.output.length,
+    'ordinary output replay should remain smaller than the full native scrollback snapshot',
+  )
+})
+
 test('real rust pty runtime isolates same-session windows with grouped tmux sessions', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
   const { baseDir, logFile } = createFakeTmuxBin()

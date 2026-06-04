@@ -939,7 +939,8 @@ test('rust nexus-server serves native scrollback from the pty runtime snapshot',
     NEXUS_PTY_BROKER_RUST_ARGS: JSON.stringify([PTY_FIXTURE]),
     FAKE_PTY_RUNTIME_SNAPSHOT_JSON: JSON.stringify({
       'demo-project:3': {
-        output: '\x1b[31mnative alpha\x1b[0m\r\nprogress 1\rprogress done\n\x1b[?25lCodex text\x1b[?25h\n',
+        outputSnapshot: 'recent native tail\n',
+        scrollbackSnapshot: '\x1b[31mnative alpha\x1b[0m\r\nprogress 1\rprogress done\n\x1b[?25lCodex text\x1b[?25h\nrecent native tail\n',
         clients: 0,
       },
     }),
@@ -962,7 +963,7 @@ test('rust nexus-server serves native scrollback from the pty runtime snapshot',
 
   assert.equal(scrollbackResponse.status, 200)
   assert.deepEqual(await scrollbackResponse.json(), {
-    content: 'native alpha\nprogress done\nCodex text\n',
+    content: 'native alpha\nprogress done\nCodex text\nrecent native tail\n',
   })
 
   const log = existsSync(tmuxFixture.logFile) ? readFileSync(tmuxFixture.logFile, 'utf8') : ''

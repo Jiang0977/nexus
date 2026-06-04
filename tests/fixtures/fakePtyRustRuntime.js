@@ -27,6 +27,8 @@ function preloadEntries() {
       const entry = {
         key,
         output: String(value.output || ''),
+        outputSnapshot: typeof value.outputSnapshot === 'string' ? value.outputSnapshot : undefined,
+        scrollbackSnapshot: typeof value.scrollbackSnapshot === 'string' ? value.scrollbackSnapshot : undefined,
         clients: new Set(),
       }
       const clientCount = Number(value.clients || 0)
@@ -115,6 +117,22 @@ rl.on('line', (line) => {
       case 'getOutputSnapshot': {
         const key = `${params.session}:${params.windowIndex}`
         const entry = entries.get(key)
+        if (entry && typeof entry.outputSnapshot === 'string') {
+          response(id, true, { connected: true, output: entry.outputSnapshot, clients: entry.clients.size, idleMs: 0 })
+          return
+        }
+        response(id, true, entry
+          ? { connected: true, output: entry.output, clients: entry.clients.size, idleMs: 0 }
+          : { connected: false, output: '', clients: 0 })
+        return
+      }
+      case 'getScrollbackSnapshot': {
+        const key = `${params.session}:${params.windowIndex}`
+        const entry = entries.get(key)
+        if (entry && typeof entry.scrollbackSnapshot === 'string') {
+          response(id, true, { connected: true, output: entry.scrollbackSnapshot, clients: entry.clients.size, idleMs: 0 })
+          return
+        }
         response(id, true, entry
           ? { connected: true, output: entry.output, clients: entry.clients.size, idleMs: 0 }
           : { connected: false, output: '', clients: 0 })

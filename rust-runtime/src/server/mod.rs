@@ -330,7 +330,7 @@ async fn api_session_scrollback(
             state
                 .runtime_manager
                 .pty_broker_request(
-                    "getOutputSnapshot",
+                    "getScrollbackSnapshot",
                     json!({
                         "session": session,
                         "windowIndex": window_index,
