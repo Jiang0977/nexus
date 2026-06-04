@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import GhostShield from './GhostShield'
 import useOverlayGuard from './useOverlayGuard'
 import { Icon } from './icons'
+import { getTerminalBufferText } from './terminal/terminalClipboard'
 import type { Terminal } from '@xterm/xterm'
 import {
   KeyDef,
@@ -260,14 +261,7 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
       try {
         const term = _termRef.current
         if (!term) return
-        const buffer = (term as any).buffer?.active
-        if (!buffer) return
-        const lines: string[] = []
-        for (let i = buffer.viewportY; i < buffer.length; i++) {
-          const line = buffer.getLine(i)
-          if (line) lines.push(line.translateToString(true))
-        }
-        const text = lines.join('\n')
+        const text = getTerminalBufferText(term)
         await navigator.clipboard.writeText(text)
       } catch (error: unknown) {
         reportToolbarError('Failed to copy terminal content', error)

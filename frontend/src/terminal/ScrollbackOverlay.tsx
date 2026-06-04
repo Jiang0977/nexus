@@ -11,6 +11,7 @@ interface ScrollbackOverlayProps {
   loading: boolean
   loadingLabel: string
   muted: string
+  bottomSpacerPx?: number
   onClose: () => void
   onScroll: (event: UIEvent<HTMLDivElement>) => void
   overlayRef: RefObject<HTMLDivElement>
@@ -19,8 +20,12 @@ interface ScrollbackOverlayProps {
   background: string
 }
 
+export const MOBILE_SCROLLBACK_BOTTOM_SPACER_PX = 320
+export const MOBILE_SCROLLBACK_INITIAL_BOTTOM_OFFSET_PX = 160
+
 export function ScrollbackOverlay({
   background,
+  bottomSpacerPx = 0,
   content,
   fontFamily,
   fontSize,
@@ -49,6 +54,7 @@ export function ScrollbackOverlay({
       </div>
       <div
         ref={overlayRef}
+        data-scrollback-overlay="true"
         onScroll={onScroll}
         className="flex-1 overflow-auto py-2 select-text"
         style={{ WebkitOverflowScrolling: 'touch', userSelect: 'text', WebkitUserSelect: 'text', cursor: 'text' }}
@@ -56,12 +62,22 @@ export function ScrollbackOverlay({
         {loading ? (
           <div className="p-8 text-center" style={{ color: muted, fontFamily, fontSize }}>{loadingLabel}</div>
         ) : (
-          <pre
-            className="m-0 whitespace-pre p-3 leading-tight select-text"
-            style={{ color: foreground, cursor: 'text', fontFamily, fontSize, userSelect: 'text', WebkitUserSelect: 'text' }}
-          >
-            {content}
-          </pre>
+          <>
+            <pre
+              data-scrollback-content="true"
+              className="m-0 whitespace-pre p-3 leading-tight select-text"
+              style={{ color: foreground, cursor: 'text', fontFamily, fontSize, userSelect: 'text', WebkitUserSelect: 'text' }}
+            >
+              {content}
+            </pre>
+            {bottomSpacerPx > 0 && (
+              <div
+                aria-hidden="true"
+                data-scrollback-bottom-spacer="true"
+                style={{ height: bottomSpacerPx }}
+              />
+            )}
+          </>
         )}
       </div>
     </div>

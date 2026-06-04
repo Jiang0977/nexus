@@ -6,6 +6,13 @@ type SelectedLogicalLine = {
   text: string
 }
 
+type JoinOptions = {
+  columns?: number
+  term?: XTerm
+}
+
+export const TERMINAL_SCROLLBACK_COPY_LINES = 10_000
+
 const CONTINUATION_INDENT_PATTERN = /^ {1,4}(?=\S)/
 const CJK_PATTERN = /[\u3400-\u9fff\uf900-\ufaff]/
 const ASCII_WORD_PATTERN = /[A-Za-z0-9]/
@@ -92,7 +99,7 @@ function getSelectedLogicalLines(term: XTerm, text: string): SelectedLogicalLine
   }))
 }
 
-function shouldJoinIndentedHardWrap(term: XTerm, previous: SelectedLogicalLine, next: SelectedLogicalLine): boolean {
+function shouldJoinIndentedHardWrap(previous: SelectedLogicalLine, next: SelectedLogicalLine, options: JoinOptions = {}): boolean {
   if (!CONTINUATION_INDENT_PATTERN.test(next.text)) return false
 
   const previousLast = lastNonWhitespaceChar(previous.text)
@@ -108,9 +115,12 @@ function shouldJoinIndentedHardWrap(term: XTerm, previous: SelectedLogicalLine, 
     || (isAsciiWord(previousLast) && isAsciiWord(nextFirst))
   if (!isWordContinuation) return false
 
-  if (lineEndsNearRightEdge(term, previous.lastRow)) return true
+  if (options.term && lineEndsNearRightEdge(options.term, previous.lastRow)) return true
 
-  return isCjkWordSplit && cellWidth(previous.text) >= FALLBACK_CJK_WRAP_MIN_WIDTH
+  const previousWidth = cellWidth(previous.text)
+  if (options.columns && previousWidth >= options.columns - RIGHT_EDGE_TOLERANCE_COLUMNS) return true
+
+  return isCjkWordSplit && previousWidth >= FALLBACK_CJK_WRAP_MIN_WIDTH
 }
 
 function joinContinuationText(previous: string, next: string): string {
@@ -121,16 +131,13 @@ function joinContinuationText(previous: string, next: string): string {
   return `${previous.trimEnd()}${separator}${nextBody}`
 }
 
-export function getTerminalSelectionText(term: XTerm): string {
-  if (!term.hasSelection()) return ''
-  const text = term.getSelection()
-  const lines = getSelectedLogicalLines(term, text)
-  if (!lines || lines.length < 2) return text
+function normalizeLogicalLines(lines: SelectedLogicalLine[], newline: string, options: JoinOptions = {}): string {
+  if (lines.length < 2) return lines.map((line) => line.text).join(newline)
 
   const mergedLines: SelectedLogicalLine[] = []
   for (const line of lines) {
     const previous = mergedLines[mergedLines.length - 1]
-    if (previous && shouldJoinIndentedHardWrap(term, previous, line)) {
+    if (previous && shouldJoinIndentedHardWrap(previous, line, options)) {
       previous.text = joinContinuationText(previous.text, line.text)
       previous.lastRow = line.lastRow
       continue
@@ -138,7 +145,49 @@ export function getTerminalSelectionText(term: XTerm): string {
     mergedLines.push({ ...line })
   }
 
-  return mergedLines.map((line) => line.text).join(text.includes('\r\n') ? '\r\n' : '\n')
+  return mergedLines.map((line) => line.text).join(newline)
+}
+
+export function getTerminalSelectionText(term: XTerm): string {
+  if (!term.hasSelection()) return ''
+  const text = term.getSelection()
+  const lines = getSelectedLogicalLines(term, text)
+  if (!lines || lines.length < 2) return text
+
+  return normalizeLogicalLines(lines, text.includes('\r\n') ? '\r\n' : '\n', { term })
+}
+
+export function normalizeTerminalScrollbackText(text: string, options: { columns?: number } = {}): string {
+  const newline = text.includes('\r\n') ? '\r\n' : '\n'
+  const rawLines = text.split(/\r\n|\n/)
+  const lines = rawLines.map((line, index) => ({
+    firstRow: index,
+    lastRow: index,
+    text: line.replace(NON_BREAKING_SPACE_PATTERN, ' '),
+  }))
+  return normalizeLogicalLines(lines, newline, { columns: options.columns })
+}
+
+export function getTerminalBufferText(term: XTerm): string {
+  const buffer = term.buffer.active
+  const lines: SelectedLogicalLine[] = []
+
+  for (let row = 0; row < buffer.length; row += 1) {
+    const bufferLine = buffer.getLine(row)
+    if (!bufferLine) continue
+
+    const text = bufferLine.translateToString(true).replace(NON_BREAKING_SPACE_PATTERN, ' ')
+    if (row !== 0 && bufferLine.isWrapped && lines.length > 0) {
+      const previous = lines[lines.length - 1]
+      previous.text += text
+      previous.lastRow = row
+      continue
+    }
+
+    lines.push({ firstRow: row, lastRow: row, text })
+  }
+
+  return normalizeLogicalLines(lines, '\n', { columns: term.cols, term })
 }
 
 function positionTextareaAtPointer(textarea: HTMLTextAreaElement, screen: HTMLElement, event: MouseEvent) {

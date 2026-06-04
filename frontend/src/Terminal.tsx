@@ -12,7 +12,7 @@ import { DesktopSidebar } from './terminal/DesktopSidebar'
 import { MobileSessionDrawer } from './terminal/MobileSessionDrawer'
 import { TerminalModalStack, preloadCodexSessionsPanel, preloadSessionManagerV2 } from './terminal/TerminalModalStack'
 import { ProfileGuideOverlay } from './terminal/ProfileGuideOverlay'
-import { ScrollbackOverlay } from './terminal/ScrollbackOverlay'
+import { MOBILE_SCROLLBACK_BOTTOM_SPACER_PX, ScrollbackOverlay } from './terminal/ScrollbackOverlay'
 import { TerminalViewport } from './terminal/TerminalViewport'
 import { SplitWorkspaceView } from './terminal/SplitWorkspaceView'
 import { applyNexusCssVars, getInitialTheme, THEME_KEY, THEMES, type ThemeMode } from './terminal/theme'
@@ -674,6 +674,7 @@ export default function Terminal({ token }: Props) {
       <ScrollbackOverlay
         visible={showScrollback}
         background={scrollbackBackground}
+        bottomSpacerPx={MOBILE_SCROLLBACK_BOTTOM_SPACER_PX}
         content={scrollbackContent}
         fontFamily={scrollbackFontFamily}
         fontSize={scrollbackFontSize}

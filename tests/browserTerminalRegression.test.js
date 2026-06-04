@@ -917,6 +917,107 @@ test('browser regression: desktop split pane header opens selectable terminal te
   assert.equal(scrollbackRequests.length, 1)
   assert.match(scrollbackRequests[0], /\/api\/sessions\/1\/scrollback\?/)
   assert.match(scrollbackRequests[0], /session=nexus-preview-rust/)
+  assert.match(scrollbackRequests[0], /lines=10000/)
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: mobile selectable terminal text requests full scrollback and joins hard-wrapped prose', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
+  await loginAndWaitForTerminal(page, port, password)
+
+  const wrappedProse = '首页已经引用新 bundle，bundle 可下载，服务仍 active。由于部署验证成\n  功，不需要回滚。'
+  const normalizedProse = '首页已经引用新 bundle，bundle 可下载，服务仍 active。由于部署验证成功，不需要回滚。'
+  const archivedLines = Array.from({ length: 3500 }, (_unused, index) => `archived mobile line ${String(index + 1).padStart(4, '0')}`)
+  const fullScrollback = `${wrappedProse}\n${archivedLines.join('\n')}\nmobile scrollback tail\n`
+  const scrollbackRequests = []
+
+  await page.route('**/api/sessions/0/scrollback?**', async (route) => {
+    const url = new URL(route.request().url())
+    const requestedLines = Number(url.searchParams.get('lines') || '0')
+    scrollbackRequests.push(route.request().url())
+    const content = requestedLines >= 10000
+      ? fullScrollback
+      : `${archivedLines.slice(-3000).join('\n')}\nmobile scrollback tail\n`
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ content }),
+    })
+  })
+
+  await page.getByRole('button', { name: 'Select text' }).click()
+
+  const scrollbackText = page.locator('pre').filter({ hasText: normalizedProse }).first()
+  await scrollbackText.waitFor()
+  const text = await scrollbackText.textContent()
+
+  assert.equal(scrollbackRequests.length, 1)
+  assert.match(scrollbackRequests[0], /\/api\/sessions\/0\/scrollback\?/)
+  assert.match(scrollbackRequests[0], /session=nexus-preview-rust/)
+  assert.match(scrollbackRequests[0], /lines=10000/)
+  assert.ok(text?.includes(normalizedProse), 'expected hard-wrapped Chinese prose to be joined for mobile selection copy')
+  assert.ok(text?.includes('archived mobile line 0001'), 'expected mobile selectable text to include full scrollback, not only the tail')
+  assert.doesNotMatch(text || '', /部署验证成\n  功/)
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: mobile selectable terminal text keeps bottom selection room', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
+  await loginAndWaitForTerminal(page, port, password)
+
+  const scrollbackContent = Array.from({ length: 160 }, (_unused, index) => (
+    `selectable bottom room line ${String(index + 1).padStart(3, '0')}`
+  )).join('\n') + '\n'
+
+  await page.route('**/api/sessions/0/scrollback?**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ content: scrollbackContent }),
+    })
+  })
+
+  await page.getByRole('button', { name: 'Select text' }).click()
+  await page.locator('pre').filter({ hasText: 'selectable bottom room line 160' }).waitFor()
+
+  const metrics = await page.locator('[data-scrollback-overlay="true"]').evaluate((overlay) => {
+    if (!(overlay instanceof HTMLElement)) return null
+    const content = overlay.querySelector('[data-scrollback-content="true"]')
+    const spacer = overlay.querySelector('[data-scrollback-bottom-spacer="true"]')
+    if (!(content instanceof HTMLElement) || !(spacer instanceof HTMLElement)) return null
+    const overlayRect = overlay.getBoundingClientRect()
+    const contentRect = content.getBoundingClientRect()
+    const spacerRect = spacer.getBoundingClientRect()
+    return {
+      bottomGap: overlayRect.bottom - contentRect.bottom,
+      distanceFromAbsoluteBottom: overlay.scrollHeight - overlay.clientHeight - overlay.scrollTop,
+      spacerHeight: spacerRect.height,
+    }
+  })
+
+  assert.ok(metrics, 'expected scrollback overlay metrics to be available')
+  assert.ok(metrics.spacerHeight >= 300, `expected mobile scrollback spacer to provide selection room: ${JSON.stringify(metrics)}`)
+  assert.ok(metrics.bottomGap >= 150, `expected final lines to sit above the viewport bottom: ${JSON.stringify(metrics)}`)
+  assert.ok(
+    metrics.distanceFromAbsoluteBottom >= 120,
+    `expected selectable text overlay to open before the close-at-bottom zone: ${JSON.stringify(metrics)}`,
+  )
+
+  await page.locator('[data-scrollback-overlay="true"]').evaluate((overlay) => {
+    if (overlay instanceof HTMLElement) overlay.scrollTop += 40
+  })
+  await delay(150)
+  await page.locator('pre').filter({ hasText: 'selectable bottom room line 160' }).waitFor()
 
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),

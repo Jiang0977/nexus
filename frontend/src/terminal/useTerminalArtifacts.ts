@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type MutableRefObject, type UIEvent } from 'react'
 import type { Terminal as XTerm } from '@xterm/xterm'
 import type { UploadNotification } from './UploadNotifications'
+import { MOBILE_SCROLLBACK_INITIAL_BOTTOM_OFFSET_PX } from './ScrollbackOverlay'
+import { normalizeTerminalScrollbackText, TERMINAL_SCROLLBACK_COPY_LINES } from './terminalClipboard'
 
 const MAX_UPLOAD_NOTIFICATIONS = 5
 
@@ -155,12 +157,12 @@ export function useTerminalArtifacts({
 
     const windowIndex = activeWindowIndexRef.current
     const session = activeTmuxSessionRef.current
-    fetch(`/api/sessions/${windowIndex}/scrollback?session=${encodeURIComponent(session)}&lines=3000`, {
+    fetch(`/api/sessions/${windowIndex}/scrollback?session=${encodeURIComponent(session)}&lines=${TERMINAL_SCROLLBACK_COPY_LINES}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((response) => response.ok ? response.json() : Promise.reject(response.status))
       .then(({ content }: { content: string }) => {
-        setScrollbackContent(content.trimEnd())
+        setScrollbackContent(normalizeTerminalScrollbackText(content.trimEnd(), { columns: termRef.current?.cols }))
         setScrollbackLoading(false)
       })
       .catch((error: unknown) => {
@@ -177,7 +179,7 @@ export function useTerminalArtifacts({
   useEffect(() => {
     if (!scrollbackContent || !scrollbackOverlayRef.current) return
     const el = scrollbackOverlayRef.current
-    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - 50)
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - MOBILE_SCROLLBACK_INITIAL_BOTTOM_OFFSET_PX)
   }, [scrollbackContent])
 
   triggerScrollbackRef.current = fetchScrollback

@@ -3,6 +3,7 @@ import type { Terminal as XTerm } from '@xterm/xterm'
 import { Icon } from '../icons'
 import { ScrollbackOverlay } from './ScrollbackOverlay'
 import { TerminalPane, type FocusedPaneRuntime, type PaneStatus } from './TerminalPane'
+import { normalizeTerminalScrollbackText, TERMINAL_SCROLLBACK_COPY_LINES } from './terminalClipboard'
 import { useWorkspaceLayout } from './useWorkspaceLayout'
 import {
   LAYOUT_MODES,
@@ -145,7 +146,14 @@ export function SplitWorkspaceView({
       visible: true,
     })
 
-    fetch(`/api/sessions/${target.windowIndex}/scrollback?session=${encodeURIComponent(target.session)}&lines=3000`, {
+    const focusedRuntime = focusedRuntimeRef.current
+    const focusedTarget = focusedRuntime?.target
+    const columns = focusedTarget?.session === target.session
+      && focusedTarget.windowIndex === target.windowIndex
+      ? focusedRuntime?.termRef.current?.cols
+      : undefined
+
+    fetch(`/api/sessions/${target.windowIndex}/scrollback?session=${encodeURIComponent(target.session)}&lines=${TERMINAL_SCROLLBACK_COPY_LINES}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((response) => response.ok ? response.json() : Promise.reject(response.status))
@@ -153,7 +161,7 @@ export function SplitWorkspaceView({
         if (scrollbackRequestIdRef.current !== requestId) return
         setPaneScrollback((current) => ({
           ...current,
-          content: content.trimEnd(),
+          content: normalizeTerminalScrollbackText(content.trimEnd(), { columns }),
           loading: false,
         }))
       })
