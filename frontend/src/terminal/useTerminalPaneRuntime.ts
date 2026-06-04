@@ -5,6 +5,11 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { THEMES, type ThemeMode } from './theme'
 import type { PaneTarget } from './splitLayoutTypes'
+import {
+  getTerminalSelectionText,
+  prepareTerminalSelectionForNativeCopy,
+  writeTerminalSelectionToClipboardEvent,
+} from './terminalClipboard'
 
 const FONT_SIZE_KEY = 'nexus_font_size'
 const USER_SCROLL_HOLD_MS = 1200
@@ -137,6 +142,7 @@ export function useTerminalPaneRuntime({
 
     const container = containerRef.current
     if (!container) return
+    const containerEl: HTMLDivElement = container
 
     const storedFontSize = parseInt(localStorage.getItem(FONT_SIZE_KEY) || '16', 10)
     const fontSize = compact ? Math.min(storedFontSize, 12) : Math.min(storedFontSize, 15)
@@ -176,7 +182,7 @@ export function useTerminalPaneRuntime({
       const noOtherMod = !event.shiftKey && !event.altKey
       if (clipboardMod && clipboardKey === 'c' && noOtherMod && term.hasSelection()) {
         event.preventDefault()
-        navigator.clipboard.writeText(term.getSelection()).catch((error: unknown) => {
+        navigator.clipboard.writeText(getTerminalSelectionText(term)).catch((error: unknown) => {
           console.error('[TerminalPane] Failed to copy selected terminal text', error)
         })
         return false
@@ -200,14 +206,26 @@ export function useTerminalPaneRuntime({
       }
     }
 
-    container.addEventListener('wheel', onWheel, { passive: true })
+    function onContextMenu(event: MouseEvent) {
+      prepareTerminalSelectionForNativeCopy(term, containerEl, event)
+    }
+
+    function onCopy(event: ClipboardEvent) {
+      writeTerminalSelectionToClipboardEvent(term, event)
+    }
+
+    containerEl.addEventListener('wheel', onWheel, { passive: true })
     viewport?.addEventListener('wheel', onWheel, { passive: true })
+    containerEl.addEventListener('contextmenu', onContextMenu)
+    containerEl.addEventListener('copy', onCopy)
 
     requestAnimationFrame(() => fitAddon.fit())
 
     return () => {
-      container.removeEventListener('wheel', onWheel)
+      containerEl.removeEventListener('wheel', onWheel)
       viewport?.removeEventListener('wheel', onWheel)
+      containerEl.removeEventListener('contextmenu', onContextMenu)
+      containerEl.removeEventListener('copy', onCopy)
       term.dispose()
       termRef.current = null
       fitAddonRef.current = null

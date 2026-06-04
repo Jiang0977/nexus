@@ -745,6 +745,131 @@ test('browser regression: desktop split panes can copy selected terminal text', 
   )
 })
 
+test('browser regression: desktop split pane right-click copy preserves soft-wrapped terminal lines', { timeout: 120000 }, async (t) => {
+  const longLine = `soft-wrap-${'x'.repeat(180)}-done`
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    ptySnapshots: {
+      'nexus-preview-rust:1': {
+        output: `${longLine}\n`,
+        clients: 0,
+      },
+    },
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const shellSource = page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first()
+  await shellSource.waitFor()
+  await shellSource.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await page.waitForFunction(() => document.body.textContent?.includes('soft-wrap-'))
+  await page.waitForFunction(() => document.body.textContent?.includes('-done'))
+
+  const row = page.getByTestId('terminal-pane-pane-1').locator('.xterm-rows').first()
+  const box = await row.boundingBox()
+  assert.ok(box, 'expected xterm rows to be measurable')
+
+  await page.mouse.move(box.x + 1, box.y + 12)
+  await page.mouse.down()
+  await page.mouse.move(box.x + Math.min(box.width - 24, 840), box.y + 54, { steps: 12 })
+  await page.mouse.up()
+  await page.mouse.click(box.x + 64, box.y + 12, { button: 'right' })
+
+  const preparedText = await page.getByTestId('terminal-pane-pane-1').locator('.xterm-helper-textarea').first().evaluate((textarea) => {
+    if (!(textarea instanceof HTMLTextAreaElement)) return null
+    return textarea.value.substring(textarea.selectionStart, textarea.selectionEnd)
+  })
+
+  const copyResult = await page.getByTestId('terminal-pane-pane-1').locator('.nexus-split-terminal').first().evaluate((element) => {
+    const data = new DataTransfer()
+    const event = new ClipboardEvent('copy', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: data,
+    })
+    element.dispatchEvent(event)
+    return {
+      defaultPrevented: event.defaultPrevented,
+      text: data.getData('text/plain'),
+    }
+  })
+
+  assert.equal(preparedText, longLine)
+  assert.equal(copyResult.defaultPrevented, true)
+  assert.equal(copyResult.text, longLine)
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: desktop split pane right-click copy joins indented hard-wrapped prose', { timeout: 120000 }, async (t) => {
+  const hardWrappedText = '首页已经引用新 bundle，bundle 可下载，服务仍 active。由于部署验证成\r\n  功，不需要回滚。'
+  const expectedText = '首页已经引用新 bundle，bundle 可下载，服务仍 active。由于部署验证成功，不需要回滚。\n'
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    ptySnapshots: {
+      'nexus-preview-rust:1': {
+        output: `${hardWrappedText}\n`,
+        clients: 0,
+      },
+    },
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const shellSource = page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first()
+  await shellSource.waitFor()
+  await shellSource.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await page.waitForFunction(() => document.body.textContent?.includes('由于部署验证成'))
+  await page.waitForFunction(() => document.body.textContent?.includes('功，不需要回滚'))
+
+  const row = page.getByTestId('terminal-pane-pane-1').locator('.xterm-rows').first()
+  const box = await row.boundingBox()
+  assert.ok(box, 'expected xterm rows to be measurable')
+
+  await page.mouse.move(box.x + 1, box.y + 12)
+  await page.mouse.down()
+  await page.mouse.move(box.x + Math.min(box.width - 24, 840), box.y + 38, { steps: 10 })
+  await page.mouse.up()
+  await page.mouse.click(box.x + 64, box.y + 12, { button: 'right' })
+
+  const preparedText = await page.getByTestId('terminal-pane-pane-1').locator('.xterm-helper-textarea').first().evaluate((textarea) => {
+    if (!(textarea instanceof HTMLTextAreaElement)) return null
+    return textarea.value.substring(textarea.selectionStart, textarea.selectionEnd)
+  })
+
+  const copyResult = await page.getByTestId('terminal-pane-pane-1').locator('.nexus-split-terminal').first().evaluate((element) => {
+    const data = new DataTransfer()
+    const event = new ClipboardEvent('copy', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: data,
+    })
+    element.dispatchEvent(event)
+    return {
+      defaultPrevented: event.defaultPrevented,
+      text: data.getData('text/plain'),
+    }
+  })
+
+  assert.equal(preparedText, expectedText)
+  assert.equal(copyResult.defaultPrevented, true)
+  assert.equal(copyResult.text, expectedText)
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
 test('browser regression: desktop split pane header opens selectable terminal text', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
   await page.addInitScript(() => {

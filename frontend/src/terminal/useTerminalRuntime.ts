@@ -6,6 +6,11 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { THEMES, getInitialTheme } from './theme'
 import type { TmuxWindow } from './useTerminalSessions'
+import {
+  getTerminalSelectionText,
+  prepareTerminalSelectionForNativeCopy,
+  writeTerminalSelectionToClipboardEvent,
+} from './terminalClipboard'
 
 const FONT_SIZE_KEY = 'nexus_font_size'
 const TAP_THRESHOLD = 8
@@ -249,7 +254,7 @@ export function useTerminalRuntime({
       if (clipboardMod && clipboardKey === 'c' && noOtherMod) {
         if (term.hasSelection()) {
           event.preventDefault()
-          navigator.clipboard.writeText(term.getSelection()).catch((error: unknown) => {
+          navigator.clipboard.writeText(getTerminalSelectionText(term)).catch((error: unknown) => {
             console.error('[Terminal] Failed to copy selected terminal text', error)
           })
           return
@@ -594,6 +599,17 @@ export function useTerminalRuntime({
     containerEl.addEventListener('dragleave', onDragLeave)
     containerEl.addEventListener('drop', onDrop)
 
+    function onContextMenu(event: MouseEvent) {
+      prepareTerminalSelectionForNativeCopy(term, containerEl, event)
+    }
+
+    function onCopy(event: ClipboardEvent) {
+      writeTerminalSelectionToClipboardEvent(term, event)
+    }
+
+    containerEl.addEventListener('contextmenu', onContextMenu)
+    containerEl.addEventListener('copy', onCopy)
+
     function onInputTouchStart(event: TouchEvent) {
       if (!keyboardVisibleRef.current) event.preventDefault()
     }
@@ -617,6 +633,8 @@ export function useTerminalRuntime({
       containerEl.removeEventListener('dragenter', onDragEnter)
       containerEl.removeEventListener('dragleave', onDragLeave)
       containerEl.removeEventListener('drop', onDrop)
+      containerEl.removeEventListener('contextmenu', onContextMenu)
+      containerEl.removeEventListener('copy', onCopy)
       if (input) input.removeEventListener('touchstart', onInputTouchStart)
       term.dispose()
       termRef.current = null
