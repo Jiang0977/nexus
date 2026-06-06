@@ -199,3 +199,54 @@ exec "${join(realBinDir, 'codex-real')}" --dangerously-bypass-approvals-and-sand
     rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+test('profile Codex launcher uses explicit native runtime id before tmux window id', { skip: process.platform === 'win32' }, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'nexus-codex-profile-native-runtime-'))
+  const fakeBinDir = join(tempDir, 'bin')
+  const homeDir = join(tempDir, 'home')
+  const dataDir = join(tempDir, 'data')
+  const projectDir = join(tempDir, 'project')
+  const fakeCodexHome = join(tempDir, 'fake-codex-home.sh')
+  const envLog = join(tempDir, 'codex-env.log')
+  const tmuxLog = join(tempDir, 'tmux.log')
+
+  try {
+    mkdirSync(fakeBinDir, { recursive: true })
+    mkdirSync(homeDir, { recursive: true })
+    mkdirSync(projectDir, { recursive: true })
+    writeFileSync(fakeCodexHome, `#!/bin/sh
+mkdir -p "$2/.codex"
+exit 0
+`, { mode: 0o755 })
+    writeFileSync(join(fakeBinDir, 'codex'), `#!/bin/sh
+printf 'HOME=%s\\n' "$HOME" > "${envLog}"
+exit 0
+`, { mode: 0o755 })
+    writeFileSync(join(fakeBinDir, 'tmux'), `#!/bin/sh
+printf '%s\\n' "$*" > "${tmuxLog}"
+exit 1
+`, { mode: 0o755 })
+
+    const result = spawnSync('bash', [join(ROOT, 'nexus-run-codex.sh'), '', projectDir, ''], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        NEXUS_SOURCE_HOME: homeDir,
+        NEXUS_DATA_DIR: dataDir,
+        NEXUS_CODEX_RUNTIME_ID: 'native:native-codex:1',
+        PATH: `${fakeBinDir}:/usr/bin:/bin`,
+        NEXUS_CODEX_HOME_EXECUTABLE: fakeCodexHome,
+      },
+      input: 'q\n',
+      encoding: 'utf8',
+      timeout: 5000,
+    })
+
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.equal(readFileSync(envLog, 'utf8'), `HOME=${join(dataDir, 'codex-runtime', 'native-native-codex-1')}\n`)
+    assert.throws(() => readFileSync(tmuxLog, 'utf8'), { code: 'ENOENT' })
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})

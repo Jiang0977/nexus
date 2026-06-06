@@ -720,18 +720,28 @@ fn native_command_spec(session: &str, window_index: u32) -> Result<NativeCommand
     if let Ok(registry) = NativeSessionRegistry::open_default()
         && let Ok(launch) = registry.channel_launch(session, window_index)
     {
-        return native_command_from_launch(launch);
+        return native_command_from_launch(session, window_index, launch);
     }
 
     default_native_command_spec()
 }
 
-fn native_command_from_launch(launch: NativeChannelLaunch) -> Result<NativeCommandSpec, String> {
+fn native_command_from_launch(
+    session: &str,
+    window_index: u32,
+    launch: NativeChannelLaunch,
+) -> Result<NativeCommandSpec, String> {
     if let Some(plan) = launch.launch_plan {
+        let mut env = plan.env;
+        let runtime_id = format!("native:{session}:{window_index}");
+        env.entry("NEXUS_NATIVE_CHANNEL_ID".to_string())
+            .or_insert_with(|| runtime_id.clone());
+        env.entry("NEXUS_CODEX_RUNTIME_ID".to_string())
+            .or_insert(runtime_id);
         return Ok(NativeCommandSpec {
             program: plan.program,
             args: plan.args,
-            env: plan.env,
+            env,
             cwd: plan
                 .cwd
                 .map(PathBuf::from)

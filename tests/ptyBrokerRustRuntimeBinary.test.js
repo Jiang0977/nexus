@@ -687,7 +687,7 @@ test('real rust pty runtime launches native channels from a structured launch pl
   const scriptPath = join(baseDir, 'print-launch-plan.js')
   writeFileSync(
     scriptPath,
-    'process.stdout.write(`${process.argv[2]}|${process.env.NEXUS_PLAN_TOKEN}\\n`);\n',
+    'process.stdout.write(`${process.argv[2]}|${process.env.NEXUS_PLAN_TOKEN}|${process.env.NEXUS_CODEX_RUNTIME_ID}|${process.env.NEXUS_NATIVE_CHANNEL_ID}\\n`);\n',
   )
   const env = {
     ...process.env,
@@ -744,11 +744,11 @@ test('real rust pty runtime launches native channels from a structured launch pl
       session: 'native-launch-plan',
       windowIndex: 0,
     })
-    if (snapshot.output.includes('two words|env value')) break
+    if (snapshot.output.includes('two words|env value|native:native-launch-plan:0|native:native-launch-plan:0')) break
     await delay(20)
   }
 
-  assert.match(snapshot.output, /two words\|env value\r?\n/)
+  assert.match(snapshot.output, /two words\|env value\|native:native-launch-plan:0\|native:native-launch-plan:0\r?\n/)
 })
 
 test('real rust pty runtime records native process lifecycle in the registry', { skip: process.platform === 'win32' }, async (t) => {

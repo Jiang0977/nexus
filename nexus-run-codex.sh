@@ -1,5 +1,5 @@
 #!/bin/bash
-# nexus-run-codex.sh — 以隔离 HOME 启动 codex，会话绑定到 tmux window_id
+# nexus-run-codex.sh — 以隔离 HOME 启动 codex，会话绑定到显式 runtime id 或 tmux window_id
 # 用法: nexus-run-codex.sh <profile_id?> <project_absolute_path> <resume_session_id?>
 
 set -euo pipefail
@@ -33,11 +33,14 @@ if [ -n "$PROFILE" ]; then
     fi
 fi
 
-window_id="$(tmux display-message -p '#{window_id}' 2>/dev/null || true)"
-if [ -z "$window_id" ]; then
-    window_id="window-$$"
+runtime_id="${NEXUS_CODEX_RUNTIME_ID:-${NEXUS_NATIVE_CHANNEL_ID:-}}"
+if [ -z "$runtime_id" ]; then
+    runtime_id="$(tmux display-message -p '#{window_id}' 2>/dev/null || true)"
 fi
-safe_window_id="$(printf '%s' "$window_id" | sed 's/[^a-zA-Z0-9._-]/-/g')"
+if [ -z "$runtime_id" ]; then
+    runtime_id="window-$$"
+fi
+safe_window_id="$(printf '%s' "$runtime_id" | sed 's/[^a-zA-Z0-9._-]/-/g')"
 runtime_home="${DATA_DIR}/codex-runtime/${safe_window_id}"
 
 mkdir -p "${DATA_DIR}/codex-runtime"
