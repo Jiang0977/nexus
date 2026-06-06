@@ -34,7 +34,7 @@ export const ALL_KEYS: KeyDef[] = [
 
   // === Editing (edit) ===
   { id: 'backspace',  label: '⌫',    seq: '\x7f',     desc: 'toolbarKeys.backspace', category: 'edit' },
-  { id: 'tab',        label: '⇥',     seq: '\t',       desc: 'toolbarKeys.acceptSuggestion', category: 'edit' },
+  { id: 'tab',        label: 'Tab',   seq: '\t',       desc: 'toolbarKeys.acceptSuggestion', category: 'edit' },
   { id: 'ctrl-u',     label: 'Ctrl+U', seq: '\x15',     desc: 'toolbarKeys.deleteLine', category: 'edit' },
   { id: 'ctrl-k',     label: 'Ctrl+K', seq: '\x0b',     desc: 'toolbarKeys.deleteToEnd', category: 'edit' },
   { id: 'ctrl-y',     label: 'Ctrl+Y', seq: '\x19',     desc: 'toolbarKeys.yank', category: 'edit' },
@@ -76,8 +76,21 @@ export function isToolbarTerminalInput(key: KeyDef): boolean {
   return !isToolbarLocalAction(key)
 }
 
+const ICON_ONLY_KEY_IDS = new Set([
+  'esc',
+  'up',
+  'down',
+  'left',
+  'right',
+  'backslash',
+  'slash',
+  'tab',
+  'enter',
+])
+
 export function getToolbarButtonText(key: KeyDef, t: ToolbarTranslate): string {
   if (isToolbarLocalAction(key)) return t(key.desc)
+  if (ICON_ONLY_KEY_IDS.has(key.id)) return key.label
   return `${key.label} · ${t(key.desc)}`
 }
 
