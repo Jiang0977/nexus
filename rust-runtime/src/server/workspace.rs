@@ -336,6 +336,28 @@ pub(super) fn workspace_json_response(result: Result<Value, WorkspaceRouteError>
     }
 }
 
+fn utf8_text_content_type(path: &Path) -> Option<HeaderValue> {
+    let mime = from_path(path).first_or_octet_stream();
+    let essence = mime.essence_str();
+    if !is_utf8_text_mime(essence) {
+        return None;
+    }
+
+    HeaderValue::from_str(&format!("{essence}; charset=utf-8")).ok()
+}
+
+fn is_utf8_text_mime(essence: &str) -> bool {
+    essence.starts_with("text/")
+        || matches!(
+            essence,
+            "application/javascript"
+                | "application/json"
+                | "application/xml"
+                | "application/xhtml+xml"
+                | "image/svg+xml"
+        )
+}
+
 pub(super) async fn serve_workspace_file_response(
     state: Arc<AppState>,
     headers: HeaderMap,
@@ -355,17 +377,21 @@ pub(super) async fn serve_workspace_file_response(
     {
         Ok(full_path) => {
             let mut response = serve_file(full_path.clone()).await;
-            if response.status() == StatusCode::OK
-                && query.dl.as_deref() == Some("1")
-                && let Some(file_name) = full_path.file_name().and_then(|value| value.to_str())
-                && let Ok(header_value) = HeaderValue::from_str(&format!(
-                    "attachment; filename*=UTF-8''{}",
-                    percent_encode_utf8(file_name)
-                ))
-            {
-                response
-                    .headers_mut()
-                    .insert(CONTENT_DISPOSITION, header_value);
+            if response.status() == StatusCode::OK {
+                if let Some(header_value) = utf8_text_content_type(&full_path) {
+                    response.headers_mut().insert(CONTENT_TYPE, header_value);
+                }
+                if query.dl.as_deref() == Some("1")
+                    && let Some(file_name) = full_path.file_name().and_then(|value| value.to_str())
+                    && let Ok(header_value) = HeaderValue::from_str(&format!(
+                        "attachment; filename*=UTF-8''{}",
+                        percent_encode_utf8(file_name)
+                    ))
+                {
+                    response
+                        .headers_mut()
+                        .insert(CONTENT_DISPOSITION, header_value);
+                }
             }
             response
         }

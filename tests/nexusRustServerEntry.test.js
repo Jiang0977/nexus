@@ -1253,7 +1253,7 @@ test('rust nexus-server serves config and workspace routes', async (t) => {
   mkdirSync(docsDir, { recursive: true })
   mkdirSync(hiddenDir, { recursive: true })
   writeFileSync(notesFile, 'alpha\n', 'utf8')
-  writeFileSync(binaryFile, '# guide\n', 'utf8')
+  writeFileSync(binaryFile, '# 指南\n中文内容\n', 'utf8')
   writeFileSync(join(workspaceRoot, '.secret'), 'hidden\n', 'utf8')
   writeFileSync(join(dataDir, 'project-shell-defaults.json'), `${JSON.stringify({
     [demoDir]: {
@@ -1461,6 +1461,14 @@ test('rust nexus-server serves config and workspace routes', async (t) => {
     servedFileResponse.headers.get('content-disposition') || '',
     /attachment; filename\*=UTF-8''notes-renamed\.txt/,
   )
+
+  const servedMarkdownResponse = await fetch(
+    `http://127.0.0.1:${port}/workspace?path=${encodeURIComponent(binaryFile)}&token=${encodeURIComponent(token)}`,
+  )
+  assert.equal(servedMarkdownResponse.status, 200)
+  assert.match(servedMarkdownResponse.headers.get('content-type') || '', /^text\/markdown(?:;|$)/)
+  assert.match(servedMarkdownResponse.headers.get('content-type') || '', /charset=utf-8/i)
+  assert.equal(await servedMarkdownResponse.text(), '# 指南\n中文内容\n')
 })
 
 test('rust nexus-server persists session backend config and keeps current backend until restart', async (t) => {
