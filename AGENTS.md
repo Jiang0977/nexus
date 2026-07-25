@@ -20,11 +20,18 @@
 - If the change only touches frontend source, use `npm run build:frontend` at minimum because production serves `frontend/dist/`, not `frontend/src/`.
 - If the change only touches frontend types, `npm run typecheck:frontend` is the narrowest typed check.
 - If the change only touches Rust runtime code, use `npm run test:rust`.
+- For CI parity on Rust changes, also run `cargo fmt --manifest-path rust-runtime/Cargo.toml --check` and `cargo clippy --manifest-path rust-runtime/Cargo.toml --all-targets --all-features -- -D warnings`.
 - If the change only touches Node/server scripts or tests, use `npm run test:node`.
+- If the change touches browser terminal regression behavior, add `npm run test:browser`.
+- If the change touches installed runtime binaries, add `npm run build:rust-runtimes`; for server or Codex HOME binary changes use `npm run build:rust-server` or `npm run build:rust-codex-home`; for setup/installer changes also run `npm run build:rust-setup`.
 
 ## Deployment Notes
 
 - Preferred deployment entrypoint: `npm run deploy:service`.
 - If frontend source changed, deploy with `npm run deploy:service -- --frontend`.
 - If native supervisor binaries must be refreshed and interrupting native sessions is acceptable, deploy with `npm run deploy:service -- --restart-native-pty`.
+- `npm run restart:service` restarts `nexus` and checks `/api/version`, accepting HTTP 200 or 401; override with `NEXUS_HEALTHCHECK_URL`, `NEXUS_HOST`, or `PORT` when needed.
 - `nexus.service` restart does not refresh already-running tmux/Codex channels under `nexus-tmux.service`; when verifying deployment-sensitive Codex behavior, verify with a newly created channel or explicitly account for existing runtime state.
+- `start.sh` and `scripts/nexus-tmux-service.sh` both rely on `scripts/nexus-paths.sh` to repair agent CLI `PATH`; keep that path in scope for startup or Codex/Claude launcher changes.
+- Do not use `pm2` as an operations path; current service management is via systemd scripts and `npm run deploy:service` / `npm run restart:service`.
+- Native backend remains opt-in/staging; do not treat `native` as the default production path unless the docs and config explicitly say so.
