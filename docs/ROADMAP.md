@@ -1,110 +1,40 @@
 # ROADMAP — Nexus
 
-**锚点**: `docs/NORTH-STAR.md` | **PRD**: `docs/PRD.md` (v1 Complete) | **更新**: 2026-04-20
+最后更新：2026-07-25
 
----
+锚点：[NORTH-STAR.md](NORTH-STAR.md)
 
-## Current Priorities (2026-04)
+执行事实源：[TODOS.md](../TODOS.md)
 
-当前没有新的 open backlog。
+详细状态：[CURRENT-ROADMAP.md](CURRENT-ROADMAP.md)
 
-权威状态以 [TODOS.md](../TODOS.md) 和 [CURRENT-ROADMAP.md](CURRENT-ROADMAP.md) 为准；这里不再重复计账已关闭事项。
+## 当前优先级
 
-## Later Backlog
+### P2：统一剩余 tmux command helper
 
-| Item | Notes |
-|---|---|
-| ANSI output in task history | Add `-e` flag; frontend ansi-to-html |
-| Open-source polish | Git history rewrite, rate limits, etc. |
+当前重复点：
 
-## Moved Out Of Backlog
+- `rust-runtime/src/bin/nexus_session_runtime/tmux_backend.rs`
+- `rust-runtime/src/bin/nexus-window-launch-runtime.rs`
+- `rust-runtime/src/server/runtime.rs`
 
-- `F-19 Project-Window hierarchy`
-- `F-20 Unified session manager`
-- `Codex history sessions tab`
+目标是统一 command、capture、stderr 与进程失败语义，不改变默认 tmux backend、native opt-in 边界或公开 HTTP/WS 协议。准入条件和完成标准以 [TODOS.md](../TODOS.md) 为准。
 
-这些能力已经落地，不再按“待实现功能”管理。
+## 候选方向
 
-## Notes
+以下只是候选，不是已承诺 backlog；进入开发前必须重新写目标、边界和验证计划：
 
-- `ROADMAP.md` 是当前优先级摘要，不替代 [TODOS.md](../TODOS.md) 的 Done when。
-- 运行时默认值已统一到 `PORT=59000`、`GITHUB_REPO=Jiang0977/nexus`。
-- Rust 仍直接服务 `frontend/dist/`；前端源码变更后必须把新的 bundle 一起纳入 git 基线。
+- native backend 生产化：真实 macOS / Windows / WSL2 验证、native browser smoke、registry migration/repair、灰度与回滚演练。
+- task history ANSI output。
+- 开源发布完善：rate limit、安全基线和发布流程。
 
----
+native 当前仍是 opt-in/staging。默认生产路径保持 tmux，详见 [native-session-backend-cross-platform.md](designs/native-session-backend-cross-platform.md)。
 
-## v1 Complete (F-01 to F-18)
+## 已完成能力去哪里查
 
-| Feature | Commit |
-|---|---|
-| **F-21 独立文件上传** | `dev` — 上传到 `data/uploads/日期/` 目录；API: `POST /api/files/upload`, `GET /api/files`, `DELETE /api/files/:date/:filename`；前端: 拖拽上传+粘贴图片+文件选择+文件列表面板；终端显示上传路径 |
-| WebSocket tmux 桥 + JWT 认证 | `48c13ca` |
-| xterm.js + 移动端滚动/缩放 | `48c13ca` |
-| 可配置工具栏（服务端持久化） | `3bf29f9` |
-| Session 管理 UI + API | `9eb36fc` |
-| DELETE /api/sessions/:id | `48e3725` |
-| claude 配置路径修复 | `dcb4836` |
-| 窗口切换/会话创建修复 | `622096a` |
-| 关闭后保持窗口 | `9b9dacf` |
-| claude -c 会话历史自动检测 | `e676766` |
-| 移动端底导航（BottomNav.tsx） | `fb21eee` |
-| 主题跟随系统 + CSS vars 修复 | 本会话 |
-| 加载遮罩 + 窗口切换 race 修复 | 本会话 |
-| F-13 TaskPanel 前端（SSE 流式）| 本会话 |
-| F-16 Telegram Bot webhook 后端 | 本会话 |
-| F-14 文件上传 (`POST /api/upload`) | 本会话 |
-| 登录页主题适配 CSS vars | 本会话 |
-| 移动端上传入口（TabBar 📎）| 本会话 |
-| F-15 Agent 状态指示器（运行中绿点）| 本会话 |
-| F-11 独立 Window PTY | 本会话 |
-| F-16 Telegram 接收文件（photo/document）| 本会话 |
-| 前端 Code-splitting（lazy load 面板）| 本会话 |
-| 窗口重命名（TabBar/Sidebar/BottomNav）| 本会话 |
-| WebSocket 指数退避重连 | 本会话 |
-| 滚动位置记忆（窗口切换）| 本会话 |
-| 点击终端聚焦输入框 | 本会话 |
-| 复制终端内容按钮 | 本会话 |
-| F-15 完整状态卡片 — Tab 悬浮输出预览 | 本会话 |
-| 修复：窗口不存在时自动 fallback | 本会话 |
-| 优化：响应式断点 1024px→768px | 本会话 |
-| 修复：WebSocket 无限重连循环（intentionalClose flag）| 本会话 |
-| 修复：移动端 terminal 不填满高度（display:flex）| 本会话 |
-| 优化：in-place WS 重连（不刷新页面，指数退避）| 本会话 |
-| 修复：初始空状态闪烁（windowsLoaded guard）| 本会话 |
-| F-15 完整：动态 Agent 状态（运行/等待/shell）| 本会话 |
-| TabBar 移动端 session 切换（多 session 时显示）| 本会话 |
-| 动态页面标题（显示窗口名+状态图标）| 本会话 |
-| 浏览器通知：任务完成时推送（TaskPanel）| `016771b` |
-| 浮动「回底部」按钮（term.onScroll 追踪）| `d2f73f6` |
-| 优化：xterm/WS 双 Effect 分离（窗口切换无抖动）| `dcac810` |
-| 修复：多客户端 resize 改用最小尺寸策略 | `3b56134` |
-| PWA：注册 Service Worker + SVG 图标 | `793543c` |
-| 跟随系统深色/浅色模式自动切换 | `3f736a0` |
-| 布局：100dvh 修复 iOS Safari 高度 | `3f736a0` |
-| 任务取消按钮（AbortController + SIGTERM）| `34d9f0f` |
-| TaskPanel 5s 轮询 + Telegram TG 来源标识 | `0854359` |
-| 工具栏新增 ^Z / ^A / ^E 快捷键 | `19e7cb1` |
-| 修复：tasks cwd 路径含冒号解析错误 | `e346c8b` |
-| F-18 多 tmux session 支持 | 本会话 |
-| 修复：/api/tasks 支持多 tmux session（tmux_session 参数）| `aab1aaf` |
-| 修复：窗口切换时滚动位置恢复（userScrolledRef 保持）| `aab1aaf` |
-| Telegram 增量进度更新（editMessageText 每 5 秒）| `053fad6` |
-| 移动端水平滑动切换 tmux 窗口 | `5f33934` |
-| Telegram /switch 命令切换目标窗口 | `6387cdc` |
-| 修复：sanitize /switch target（防命令注入）| `cc9fb01` |
-| feat: 任务 running 状态实时可见（Web+Telegram）| `608e77b` |
-| feat: 任务删除按钮 + 服务启动清理孤儿任务 | `5f09814` |
-| feat: 任务输出复制按钮 + 一键重新执行 | `586df3c` |
-| style: running 状态改用 pulse 动画 | `5b59f4d` |
-| fix(mobile): TabBar 新增任务面板按钮（移动端 TaskPanel 入口） | `b754914` |
-| fix(perf): 消除 TabBar 重复轮询（统一从 Terminal.tsx 传入） | `b754914` |
-| feat(tasks): 运行中任务徽标（Sidebar + TabBar 📋 按钮绿点） | `24e95a4` |
-| fix(tasks): TaskPanel 首次打开时申请浏览器通知权限 | `667fc8f` |
-| feat(ui): 页面标题显示运行中任务数量 `(N)` | `524c9fa` |
-| fix: tasks.json 上限 200 条；窗口输出轮询加 session 参数 | `8cf0aba` |
-| refactor: 抽取 windowStatus.ts，消除 Terminal/TabBar 重复定义 | `044c542` |
-| F-17: 统一 runTask() 抽象（Web + Telegram 共享执行入口） | `605b057` |
-| fix(toolbar): ctrl-a/ctrl-e/ctrl-z 加入出厂展开列表 | `a8c4e6b` |
-| fix(pwa): 仅缓存静态资源，跳过 index.html（修复构建后 404） | `c31cc20` |
-| fix(tasks): 恢复 profile 参数；修复通知图标/正文 | `56f226d` |
-| fix(mobile): GhostShield 全局幽灵点击防护（所有 overlay） | `ff542a0` |
+- 当前架构与模块边界：[ARCHITECTURE.md](ARCHITECTURE.md)
+- v1 产品验收范围：[PRD.md](PRD.md)
+- 具体设计与验证：`docs/designs/`、`docs/verification/`
+- 精确变更历史：Git commits / tags
+
+本文件不再维护逐会话完成清单，也不复制 Git 历史。

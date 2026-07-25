@@ -1,6 +1,6 @@
 # Session Backend Contract
 
-最后更新：2026-05-20
+最后更新：2026-07-25
 
 ## 范围
 
@@ -12,7 +12,7 @@
 - `native` backend 已有 opt-in/staging 实现，必须继续满足本文的公开产品 contract。
 - 前端和公开 HTTP/WS 协议不应感知 backend 类型。
 
-历史第一阶段只要求当前 `TmuxSessionBackend` 跑过这些行为。现在 native path 已经存在，后续改动应同时保护默认 tmux 行为和 opt-in native 行为。
+当前 `nexus-session-runtime` 已按 catalog、lifecycle、cleanup 三类 capability port 装配 tmux/native adapter；后续改动应同时保护默认 tmux 行为和 opt-in native 行为。
 
 ## 非目标
 
@@ -223,7 +223,7 @@ HTTP/WS 上层只依赖：
 - backend capture 失败时保持当前错误形状；
 - snapshot 不创建或删除 project/channel。
 
-第一阶段 `tmux capture-pane` 仍在 server fallback 路径中；不要求 PR2 把 server fallback 移入 `nexus-session-runtime`。
+默认 tmux 的 `capture-pane` 仍在 server fallback 路径中；native snapshot 则由 PTY runtime / supervisor 提供。两条路径必须保持相同的上层结果语义。
 
 ## Failure Contract
 
@@ -242,6 +242,7 @@ HTTP/WS 上层只依赖：
 
 | Contract area | Current evidence |
 |---|---|
+| catalog / lifecycle / cleanup capability ports | `rust-runtime/src/bin/nexus_session_runtime/backend/{catalog,lifecycle,cleanup}.rs` 内的 local fake contract tests |
 | stdio envelope / ready / client mapping | `tests/sessionManagementRustClient.test.js` |
 | project/channel lifecycle | `tests/sessionManagementRustRuntimeBinary.test.js` |
 | discovery filtering/fallback/ordering | `tests/sessionManagementRustRuntimeBinary.test.js` |

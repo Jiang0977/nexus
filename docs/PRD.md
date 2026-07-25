@@ -2,7 +2,7 @@
 
 **版本**: v1.0.0  **状态**: Complete  **锚点**: `docs/NORTH-STAR.md`  **完成日期**: 2026-04-01
 
-> 当前状态说明（2026-05-20）：本文是 v1 功能规格和历史验收记录。默认生产 session backend 仍是 `tmux`，但仓库已经有 opt-in/staging 的 native PTY backend；当前真实架构以 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [session-backend-contract.md](designs/session-backend-contract.md) 为准。
+> 文档状态（2026-07-25）：本文保存 v1 功能规格和历史验收范围，不作为当前 backlog 或架构事实源。当前产品边界见 [NORTH-STAR.md](NORTH-STAR.md)，运行结构见 [ARCHITECTURE.md](ARCHITECTURE.md)，session contract 见 [session-backend-contract.md](designs/session-backend-contract.md)。
 
 ---
 
@@ -339,21 +339,11 @@ interface Channel {
 
 ---
 
-## Out of Scope
+## 当前产品边界
 
-- 多用户/团队功能、注册系统、权限管理
-- 替换 tmux（持久化/scrollback 继续由 tmux 负责）
-- 通用 Web SSH 工具（不针对 claude CLI 工作流的功能不做）
-- Session 数据库（JSON 文件 + tmux 实时读取）
-- Docker socket 暴露给前端
+- 单用户、自托管；不扩张为团队权限系统。
+- 默认稳定 session backend 是 tmux；native 只作为 opt-in/staging，必须保留 tmux 回退。
+- 不做通用 Web SSH。
+- 不向前端暴露 Docker socket。
 
----
-
-## Known Limitations（v1）
-
-| 问题 | 影响 | v2 解法 |
-|---|---|---|
-| 多客户端 resize 冲突 | 多设备同时连接时 PTY 尺寸以最后收到的为准 | 取最小尺寸策略 |
-| 单 PTY 全局切换 | window 切换所有设备同步跳转 | 独立 window PTY Map（F-11） |
-| claude 配置未挂载 | 容器内 claude 使用镜像内配置，非宿主机配置 | docker-compose volumes 增加挂载 |
-| 文件权限 | 容器 claude UID ≠ 宿主机 UID 时写文件失败 | Dockerfile usermod -u 1000 |
+v1 完成时记录的单 PTY、容器挂载和 resize 限制已经不再代表当前实现；当前限制只在对应设计文档、[CURRENT-ROADMAP.md](CURRENT-ROADMAP.md) 和 [TODOS.md](../TODOS.md) 维护。

@@ -33,7 +33,7 @@ npm run build
 
 ## Before You Submit
 
-1. Read [NORTH-STAR.md](NORTH-STAR.md).
+1. Read [NORTH-STAR.md](docs/NORTH-STAR.md).
 2. Run the relevant checks, at minimum `npm run check`.
 3. Manually verify the affected browser flow when UI or startup behavior changes.
 4. If the change touches terminal/session behavior, verify the relevant backend path:

@@ -1,6 +1,6 @@
 # Nexus 部署与更新 Runbook
 
-最后验证日期：2026-05-20
+最后验证日期：2026-07-25
 
 目标：线上更新时只按这份文档执行。不要再走旧 Node 后端、PM2、前端现场临时构建这类旧路径。
 
@@ -212,29 +212,16 @@ test -x rust-runtime/target/release/nexus-codex-home
 - `systemctl` 状态不是 `active (running)`
 - 首页探活失败
 
-推荐回滚：
+已提交版本的推荐回滚：
 
 ```bash
-git checkout <last-known-good-commit>
-cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
-systemctl --user restart nexus
+git revert <bad-commit>
+npm run deploy:service
 ```
 
-如果你用的是系统级服务，把最后一行换成 `sudo systemctl restart nexus`。
+`npm run deploy:service` 在重启或探活失败时会自动恢复部署前的 Rust release binaries，并再次重启；这是首选的即时回滚路径。
 
-dirty worktree 回滚：
-
-```bash
-git restore .
-git clean -fd
-cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
-systemctl --user restart nexus
-```
-
-警告：
-
-- 这会清掉未提交改动。
-- 先确保第 3 步的备份已经完成。
+dirty worktree 不要执行宽泛的 `git restore .`、`git clean -fd` 或切换整个工作树。先保留第 3 步生成的 patch / untracked 备份，再只恢复本次部署涉及的明确文件；如果无法准确枚举，停止并从独立的 known-good checkout 构建部署，不要覆盖当前工作树。
 
 ## 常见坑
 

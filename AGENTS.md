@@ -1,5 +1,18 @@
 # AGENTS.md
 
+## Project Knowledge Precedence
+
+When repository facts conflict with agent or external memory, use this order:
+
+1. Current source code and tests.
+2. This file for workflow, safety, verification, and deployment rules.
+3. `docs/ARCHITECTURE.md` and `docs/code.md`.
+4. Current documents under `docs/designs/`.
+5. `TODOS.md`, `docs/CURRENT-ROADMAP.md`, and `docs/ROADMAP.md`.
+6. Agent memory or external conversation context.
+
+Do not treat `~/.codex/memories/` as an authoritative project source.
+
 ## Deployment Constraints
 
 - Deployments require a service restart: restart the **nexus** service after deploying code changes.

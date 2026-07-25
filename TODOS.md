@@ -1,16 +1,16 @@
 # TODOS
 
-最后更新：2026-05-02
+最后更新：2026-07-25
 
 ## Open
 
 - 统一 tmux command helper（P2，M）
-  - What：在 Phase 1 contract/boundary 工作完成后，把 `nexus-session-runtime`、`nexus-window-launch-runtime`、`nexus-pty-runtime` 里重复的 tmux command helper 收口到共享实现。
-  - Why：当前多个 runtime 各自实现 `run_tmux` / `run_tmux_capture` / session existence 检查，长期会造成 stderr 处理、stdin/null 行为和错误格式分叉。
+  - What：把 `nexus_session_runtime/tmux_backend.rs`、`nexus-window-launch-runtime.rs` 和 `server/runtime.rs` 中剩余的 tmux command / capture helper 收口到共享实现。
+  - Why：当前三个生产路径仍各自执行 tmux，长期会造成 stderr、stdin/null、timeout 和错误格式分叉。
   - Pros：减少重复；后续 native backend 或 tmux compatibility work 更容易审计；错误行为更一致。
-  - Cons：会跨 runtime 触碰生产路径，不适合塞进 Phase 1 第一轮重构。
-  - Context：`/plan-eng-review` 已决定 Phase 1 先只在 `nexus-session-runtime` 内部收口 helper，`window_launch` 和 `pty_broker` 保持现状；此 TODO 是后续清债入口。
-  - Depends on：完成 session backend contract freeze 和 `TmuxSessionBackend` extraction。
+  - Cons：会跨 session、window launch 与 server snapshot 三条生产路径，必须逐切片锁定错误语义。
+  - Context：session backend capability boundary 已完成；这项工作只统一 tmux transport helper，不改变默认 backend 或公开协议。
+  - Ready when：为 command、capture、stderr 为空和进程失败建立共享 contract test 后再迁移调用点。
 
 ## Closed
 
@@ -26,3 +26,4 @@
 - `DESIGN.md`
 - `/api/tasks` SSE 断连不再取消后台任务；已在 2026-05-02 通过 Rust server 任务回归验证闭环
 - 任务运行期 `stdout/stderr` 改为有界滚动缓冲；已在 2026-05-02 通过 Rust 单测与 server 任务回归验证闭环
+- session backend capability ports、Codex HOME 物化、child runtime JSON-line protocol 和浏览器 terminal connection policy 已在 2026-07-25 完成架构收口
