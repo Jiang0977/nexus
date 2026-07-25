@@ -1,36 +1,25 @@
+use nexus_rust_runtime::child_runtime_protocol::{
+    ProtocolOutput, RuntimeControl, RuntimeMessage, StdioProtocol,
+};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Sender};
-use std::thread;
-use std::time::Duration;
 
-use nexus_rust_runtime::native_session_registry::{
-    NativeLaunchPlan, NativeProcessInstance, NativeSessionRegistry,
-};
+use nexus_rust_runtime::native_session_registry::NativeLaunchPlan;
 
+#[path = "nexus_session_runtime/backend.rs"]
+mod backend;
 #[path = "nexus_session_runtime/tmux_backend.rs"]
 mod tmux_backend;
 
-use tmux_backend::TmuxSessionBackend;
-
-const CODEX_RESUME_SESSION_METADATA_KEY: &str = "@nexus_codex_resume_session_id";
-
-#[derive(Deserialize)]
-struct Message {
-    kind: String,
-    id: Option<String>,
-    method: Option<String>,
-    #[serde(default)]
-    params: Value,
-}
+use backend::{CodexSessionCleanup, SessionCatalog, SessionLifecycle};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,28 +197,8 @@ struct ReadyPayload {
     windows_created: usize,
 }
 
-#[derive(Serialize)]
-struct ResponseMessage<T>
-where
-    T: Serialize,
-{
-    kind: &'static str,
-    id: String,
-    ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<T>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<ResponseError>,
-}
-
-#[derive(Serialize)]
-struct ResponseError {
-    message: String,
-}
-
 #[derive(Clone)]
 struct SharedState {
-    event_tx: Sender<String>,
     projects_created: Arc<AtomicUsize>,
     windows_created: Arc<AtomicUsize>,
 }
@@ -246,15 +215,6 @@ impl SharedState {
             },
             projects_created: self.projects_created.load(Ordering::SeqCst),
             windows_created: self.windows_created.load(Ordering::SeqCst),
-        }
-    }
-
-    fn send_json<T>(&self, value: &T)
-    where
-        T: Serialize,
-    {
-        if let Ok(line) = serde_json::to_string(value) {
-            let _ = self.event_tx.send(line);
         }
     }
 }
@@ -292,22 +252,25 @@ struct CodexCollectionResult {
     warning: Value,
 }
 
-fn send_response<T>(
-    state: &SharedState,
+fn respond_with(output: &ProtocolOutput, id: String, result: Result<Value, String>) {
+    match result {
+        Ok(result) => output.success(id, result),
+        Err(error) => output.failure(id, error),
+    }
+}
+
+fn parse_and_respond<P>(
+    output: &ProtocolOutput,
     id: String,
-    ok: bool,
-    result: Option<T>,
-    error: Option<String>,
+    params: Value,
+    action: impl FnOnce(P) -> Result<Value, String>,
 ) where
-    T: Serialize,
+    P: DeserializeOwned,
 {
-    state.send_json(&ResponseMessage {
-        kind: "response",
-        id,
-        ok,
-        result,
-        error: error.map(|message| ResponseError { message }),
-    });
+    match serde_json::from_value::<P>(params) {
+        Ok(params) => respond_with(output, id, action(params)),
+        Err(error) => output.failure(id, error.to_string()),
+    }
 }
 
 fn env_or_default(key: &str, default: &str) -> String {
@@ -318,44 +281,8 @@ fn env_or_default(key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
-fn current_tmux_session() -> String {
-    env_or_default("TMUX_SESSION", "nexus")
-}
-
-fn current_workspace_root() -> String {
-    env_or_default("WORKSPACE_ROOT", "")
-}
-
-fn native_backend_enabled() -> bool {
-    env::var("NEXUS_SESSION_BACKEND")
-        .ok()
-        .map(|value| value.trim().eq_ignore_ascii_case("native"))
-        .unwrap_or(false)
-}
-
-fn native_registry() -> Result<NativeSessionRegistry, String> {
-    NativeSessionRegistry::open_default()
-}
-
-fn resolve_project_path(session_name: &str) -> String {
-    let workspace_root = current_workspace_root();
-    TmuxSessionBackend::new().resolve_project_path(session_name, &workspace_root)
-}
-
 fn resolve_existing_project_path(project_name: &str) -> Result<String, String> {
-    let project_name = project_name.trim();
-    if project_name.is_empty() {
-        return Err("project not found".to_string());
-    }
-
-    if native_backend_enabled() {
-        return native_registry()?.get_project_cwd(project_name);
-    }
-
-    if !TmuxSessionBackend::new().session_exists(project_name) {
-        return Err("project not found".to_string());
-    }
-    Ok(resolve_project_path(project_name))
+    SessionCatalog::current()?.resolve_existing_project_path(project_name)
 }
 
 fn current_codex_home() -> String {
@@ -939,101 +866,6 @@ fn delete_codex_session_file(session_id: &str, codex_home: &str) -> Result<PathB
     Ok(meta.file_path.clone())
 }
 
-fn resolve_codex_runtime_dir(window_id: &str) -> PathBuf {
-    let safe_window_id = if window_id.trim().is_empty() {
-        "window-unknown".to_string()
-    } else {
-        window_id
-            .chars()
-            .map(|ch| {
-                if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
-                    ch
-                } else {
-                    '-'
-                }
-            })
-            .collect::<String>()
-    };
-
-    current_codex_runtime_dir().join(safe_window_id)
-}
-
-fn close_tmux_windows_for_codex_session(
-    session_name: &str,
-    session_id: &str,
-    default_shell_cmd: &str,
-) -> Result<Vec<tmux_backend::CodexResumeWindow>, String> {
-    if session_name.is_empty() || session_id.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let backend = TmuxSessionBackend::new();
-    let (windows, total_windows) = backend.list_codex_resume_windows_with_total(session_name);
-    let matched_windows = windows
-        .into_iter()
-        .filter(|window| window.resume_session_id == session_id)
-        .collect::<Vec<_>>();
-    if matched_windows.is_empty() {
-        return Ok(vec![]);
-    }
-
-    if total_windows <= matched_windows.len() {
-        backend.run(&[
-            "new-window".to_string(),
-            "-t".to_string(),
-            session_name.to_string(),
-            "-n".to_string(),
-            "shell".to_string(),
-            default_shell_cmd.to_string(),
-        ])?;
-    }
-
-    for window in &matched_windows {
-        backend.run(&[
-            "kill-window".to_string(),
-            "-t".to_string(),
-            window.window_id.clone(),
-        ])?;
-        let _ = fs::remove_dir_all(resolve_codex_runtime_dir(&window.window_id));
-    }
-
-    Ok(matched_windows)
-}
-
-fn close_native_channels_for_codex_session(
-    project_name: &str,
-    session_id: &str,
-    default_shell_cmd: &str,
-) -> Result<Vec<u32>, String> {
-    if project_name.is_empty() || session_id.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let registry = native_registry()?;
-    let matched_channels = registry.list_channels_by_metadata(
-        project_name,
-        CODEX_RESUME_SESSION_METADATA_KEY,
-        session_id,
-    )?;
-    let channel_count = registry.list_channels(project_name)?.len();
-    if channel_count <= matched_channels.len() && !default_shell_cmd.trim().is_empty() {
-        let cwd = registry.get_project_cwd(project_name)?;
-        registry.create_channel(project_name, &cwd, "shell", default_shell_cmd)?;
-    }
-
-    let mut closed_indexes = Vec::with_capacity(matched_channels.len());
-
-    for channel in matched_channels {
-        let processes = registry.running_processes_for_channel(project_name, channel.index)?;
-        terminate_native_processes(&processes)?;
-        registry.delete_channel(project_name, channel.index)?;
-        cleanup_codex_runtime(&native_window_id(project_name, channel.index));
-        closed_indexes.push(channel.index);
-    }
-
-    Ok(closed_indexes)
-}
-
 fn delete_project_codex_session(params: DeleteProjectCodexSessionParams) -> Result<Value, String> {
     let project_name = params.project_name.trim().to_string();
     let session_id = params.session_id.trim().to_string();
@@ -1049,20 +881,7 @@ fn delete_project_codex_session(params: DeleteProjectCodexSessionParams) -> Resu
     }
 
     delete_codex_session_file(&session_id, &codex_home)?;
-    if native_backend_enabled() {
-        let closed_window_indexes = close_native_channels_for_codex_session(
-            &project_name,
-            &session_id,
-            &params.default_shell_cmd,
-        )?;
-        return Ok(json!({
-            "ok": true,
-            "sessionId": session_id,
-            "closedWindowIndexes": closed_window_indexes,
-        }));
-    }
-
-    let closed_windows = close_tmux_windows_for_codex_session(
+    let closed_window_indexes = CodexSessionCleanup::current()?.close_resume_channels(
         &project_name,
         &session_id,
         &params.default_shell_cmd,
@@ -1071,1193 +890,162 @@ fn delete_project_codex_session(params: DeleteProjectCodexSessionParams) -> Resu
     Ok(json!({
         "ok": true,
         "sessionId": session_id,
-        "closedWindowIndexes": closed_windows.iter().map(|window| window.index).collect::<Vec<_>>(),
+        "closedWindowIndexes": closed_window_indexes,
     }))
-}
-
-fn list_discoverable_sessions() -> Vec<tmux_backend::DiscoverableSession> {
-    let tmux_session = current_tmux_session();
-    let workspace_root = current_workspace_root();
-    TmuxSessionBackend::new().list_discoverable_sessions(&tmux_session, &workspace_root)
 }
 
 fn list_tmux_sessions() -> Result<Value, String> {
-    if native_backend_enabled() {
-        let sessions = native_registry()?
-            .list_projects()?
-            .into_iter()
-            .map(|project| {
-                json!({
-                    "name": project.name,
-                    "windows": project.channel_count,
-                    "attached": false,
-                })
-            })
-            .collect::<Vec<_>>();
-        return Ok(Value::Array(sessions));
-    }
-
-    let sessions = list_discoverable_sessions()
-        .into_iter()
-        .map(|session| {
-            json!({
-                "name": session.name,
-                "windows": session.windows,
-                "attached": session.attached,
-            })
-        })
-        .collect::<Vec<_>>();
-    Ok(Value::Array(sessions))
+    SessionCatalog::current()?.list_sessions()
 }
 
 fn list_all_session_names() -> Result<Value, String> {
-    if native_backend_enabled() {
-        let sessions = native_registry()?
-            .list_projects()?
-            .into_iter()
-            .map(|project| Value::String(project.name))
-            .collect::<Vec<_>>();
-        return Ok(Value::Array(sessions));
-    }
-
-    let sessions = TmuxSessionBackend::new()
-        .list_all_session_names()?
-        .into_iter()
-        .map(Value::String)
-        .collect::<Vec<_>>();
-
-    Ok(Value::Array(sessions))
+    SessionCatalog::current()?.list_all_session_names()
 }
 
 fn list_projects() -> Result<Value, String> {
-    if native_backend_enabled() {
-        let projects = native_registry()?
-            .list_projects()?
-            .into_iter()
-            .map(|project| {
-                json!({
-                    "name": project.name,
-                    "path": project.cwd,
-                    "active": false,
-                    "channelCount": project.channel_count,
-                })
-            })
-            .collect::<Vec<_>>();
-        return Ok(Value::Array(projects));
-    }
-
-    let tmux_session = current_tmux_session();
-    let workspace_root = current_workspace_root();
-    let mut projects = list_discoverable_sessions()
-        .into_iter()
-        .map(|session| {
-            json!({
-                "name": session.name,
-                "path": if session.path.is_empty() { workspace_root.clone() } else { session.path },
-                "active": session.name == tmux_session,
-                "channelCount": session.windows,
-            })
-        })
-        .collect::<Vec<_>>();
-    projects.reverse();
-    Ok(Value::Array(projects))
+    SessionCatalog::current()?.list_projects()
 }
 
 fn get_session_cwd(params: GetSessionCwdParams) -> Result<Value, String> {
-    let default_session = current_tmux_session();
-    let session_name = params
-        .session_name
-        .unwrap_or(default_session)
-        .trim()
-        .to_string();
-    let session_name = if session_name.is_empty() {
-        current_tmux_session()
-    } else {
-        session_name
-    };
-    let workspace_root = current_workspace_root();
-
-    if native_backend_enabled() {
-        let cwd = native_registry()?.get_project_cwd(&session_name)?;
-        let relative = if !workspace_root.is_empty() && cwd.starts_with(&workspace_root) {
-            cwd[workspace_root.len()..]
-                .trim_start_matches('/')
-                .to_string()
-        } else {
-            String::new()
-        };
-        return Ok(json!({
-            "cwd": cwd,
-            "relative": relative,
-        }));
-    }
-
-    let backend = TmuxSessionBackend::new();
-
-    let mut cwd = workspace_root.clone();
-    let env_cwd = backend.read_env_value(&session_name, "NEXUS_CWD");
-    if !env_cwd.is_empty() {
-        cwd = env_cwd;
-    } else if let Ok(pane_path) = backend.capture(&[
-        "display-message".to_string(),
-        "-t".to_string(),
-        session_name.clone(),
-        "-p".to_string(),
-        "#{pane_current_path}".to_string(),
-    ]) && !pane_path.is_empty()
-    {
-        cwd = pane_path;
-    }
-
-    let relative = if !workspace_root.is_empty() && cwd.starts_with(&workspace_root) {
-        cwd[workspace_root.len()..]
-            .trim_start_matches('/')
-            .to_string()
-    } else {
-        String::new()
-    };
-
-    Ok(json!({
-        "cwd": cwd,
-        "relative": relative,
-    }))
+    SessionCatalog::current()?.get_session_cwd(params)
 }
 
 fn list_project_channels(params: ListProjectChannelsParams) -> Result<Value, String> {
-    let project_name = params.project_name.trim().to_string();
-    if native_backend_enabled() {
-        let channels = native_registry()?
-            .list_channels(&project_name)?
-            .into_iter()
-            .map(|channel| {
-                json!({
-                    "index": channel.index,
-                    "name": channel.name,
-                    "active": channel.active,
-                    "cwd": channel.cwd,
-                })
-            })
-            .collect::<Vec<_>>();
-        return Ok(json!({
-            "project": project_name,
-            "channels": channels,
-        }));
-    }
-
-    let stdout = TmuxSessionBackend::new().capture(&[
-        "list-windows".to_string(),
-        "-t".to_string(),
-        project_name.clone(),
-        "-F".to_string(),
-        "#{window_index}|#{window_name}|#{window_active}|#{pane_current_path}".to_string(),
-    ])?;
-
-    let mut channels = stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            let mut parts = line.splitn(4, '|');
-            let index = parts
-                .next()
-                .unwrap_or("0")
-                .trim()
-                .parse::<usize>()
-                .unwrap_or(0);
-            let name = parts.next().unwrap_or("").to_string();
-            let active = parts.next().unwrap_or("").trim() == "1";
-            let cwd = parts.next().unwrap_or("").to_string();
-            json!({
-                "index": index,
-                "name": name,
-                "active": active,
-                "cwd": cwd,
-            })
-        })
-        .collect::<Vec<_>>();
-    channels.reverse();
-
-    Ok(json!({
-        "project": project_name,
-        "channels": channels,
-    }))
+    SessionCatalog::current()?.list_project_channels(params)
 }
 
 fn list_session_windows(params: ListSessionWindowsParams) -> Result<Value, String> {
-    let default_session = current_tmux_session();
-    let session_name = params
-        .session_name
-        .unwrap_or(default_session)
-        .trim()
-        .to_string();
-    let session_name = if session_name.is_empty() {
-        current_tmux_session()
-    } else {
-        session_name
-    };
-
-    if native_backend_enabled() {
-        let windows = native_registry()?
-            .list_channels(&session_name)?
-            .into_iter()
-            .rev()
-            .map(|channel| {
-                json!({
-                    "index": channel.index,
-                    "name": channel.name,
-                    "active": channel.active,
-                })
-            })
-            .collect::<Vec<_>>();
-        return Ok(json!({
-            "session": session_name,
-            "windows": windows,
-        }));
-    }
-
-    let stdout = TmuxSessionBackend::new().capture(&[
-        "list-windows".to_string(),
-        "-t".to_string(),
-        session_name.clone(),
-        "-F".to_string(),
-        "#{window_index}|#{window_name}|#{window_active}".to_string(),
-    ])?;
-
-    let windows = stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            let mut parts = line.splitn(3, '|');
-            let index = parts
-                .next()
-                .unwrap_or("0")
-                .trim()
-                .parse::<usize>()
-                .unwrap_or(0);
-            let name = parts.next().unwrap_or("").to_string();
-            let active = parts.next().unwrap_or("").trim() == "1";
-            json!({
-                "index": index,
-                "name": name,
-                "active": active,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    Ok(json!({
-        "session": session_name,
-        "windows": windows,
-    }))
+    SessionCatalog::current()?.list_session_windows(params)
 }
 
 fn activate_project(params: ActivateProjectParams) -> Result<Value, String> {
-    let project_name = params.project_name.trim().to_string();
-    if native_backend_enabled() {
-        let channels = native_registry()?.list_channels(&project_name)?;
-        let last_channel = channels
-            .iter()
-            .find(|channel| channel.active)
-            .map(|channel| channel.index);
-        return Ok(json!({
-            "active": true,
-            "project": project_name,
-            "lastChannel": last_channel,
-        }));
-    }
-
-    let backend = TmuxSessionBackend::new();
-    if project_name.is_empty() || !backend.session_exists(&project_name) {
-        return Err("project not found".to_string());
-    }
-
-    let mut last_channel = backend
-        .read_env_value(&project_name, "NEXUS_LAST_CHANNEL")
-        .parse::<usize>()
-        .ok();
-
-    if let Some(candidate) = last_channel {
-        match backend.capture(&[
-            "list-windows".to_string(),
-            "-t".to_string(),
-            project_name.clone(),
-            "-F".to_string(),
-            "#I".to_string(),
-        ]) {
-            Ok(output) => {
-                let windows = output
-                    .lines()
-                    .map(|line| line.trim().to_string())
-                    .filter(|line| !line.is_empty())
-                    .collect::<Vec<_>>();
-                if !windows.contains(&candidate.to_string()) {
-                    last_channel = None;
-                }
-            }
-            Err(_) => {
-                last_channel = None;
-            }
-        }
-    }
-
-    Ok(json!({
-        "active": true,
-        "project": project_name,
-        "lastChannel": last_channel,
-    }))
-}
-
-fn mark_session_owned_by_current_instance(session: &str) {
-    let owner_session = current_tmux_session();
-    TmuxSessionBackend::new().mark_session_owned_by_current_instance(session, &owner_session);
-}
-
-fn session_window_target(session: &str, index: &WindowIndex) -> String {
-    format!("{}:{}", session, index.as_string())
-}
-
-fn native_window_index(index: &WindowIndex) -> Result<u32, String> {
-    index
-        .as_string()
-        .parse::<u32>()
-        .map_err(|_| "invalid native window index".to_string())
-}
-
-fn native_window_id(session_name: &str, channel_index: u32) -> String {
-    format!("native:{}:{}", session_name, channel_index)
-}
-
-fn get_tmux_window_id(session: &str, index: &WindowIndex) -> String {
-    TmuxSessionBackend::new().window_id(&session_window_target(session, index))
-}
-
-fn cleanup_codex_runtime(window_id: &str) {
-    if window_id.trim().is_empty() {
-        return;
-    }
-    let _ = fs::remove_dir_all(resolve_codex_runtime_dir(window_id));
-}
-
-fn native_pid_alive(pid: u32) -> bool {
-    if cfg!(windows) {
-        let filter = format!("PID eq {pid}");
-        return Command::new("tasklist")
-            .args(["/FI", &filter])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output()
-            .map(|output| {
-                output.status.success()
-                    && String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
-            })
-            .unwrap_or(false);
-    }
-
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
-fn wait_for_native_pid_exit(pid: u32) -> bool {
-    for _ in 0..20 {
-        if !native_pid_alive(pid) {
-            return true;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    !native_pid_alive(pid)
-}
-
-fn terminate_native_process(process: &NativeProcessInstance) -> Result<(), String> {
-    let Some(pid) = process.os_pid else {
-        return Ok(());
-    };
-
-    let status = if cfg!(windows) {
-        Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status()
-    } else {
-        Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status()
-    }
-    .map_err(|error| error.to_string())?;
-
-    if status.success() && wait_for_native_pid_exit(pid) {
-        Ok(())
-    } else if !cfg!(windows) {
-        let kill_status = Command::new("kill")
-            .args(["-KILL", &pid.to_string()])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .status()
-            .map_err(|error| error.to_string())?;
-        if kill_status.success() && wait_for_native_pid_exit(pid) {
-            Ok(())
-        } else {
-            Err(format!(
-                "failed to terminate native process pid {} for {}:{}",
-                pid, process.project_name, process.channel_index
-            ))
-        }
-    } else {
-        Err(format!(
-            "failed to terminate native process pid {} for {}:{}",
-            pid, process.project_name, process.channel_index
-        ))
-    }
-}
-
-fn terminate_native_processes(processes: &[NativeProcessInstance]) -> Result<(), String> {
-    let errors = processes
-        .iter()
-        .filter_map(|process| terminate_native_process(process).err())
-        .collect::<Vec<_>>();
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "native process cleanup failed: {}",
-            errors.join("; ")
-        ))
-    }
+    SessionCatalog::current()?.activate_project(params)
 }
 
 fn create_project(state: &SharedState, params: CreateProjectParams) -> Result<Value, String> {
-    if native_backend_enabled() {
-        native_registry()?.create_project_with_launch_plan(
-            &params.session_name,
-            &params.cwd,
-            &params.initial_window_name,
-            &params.shell_cmd,
-            params.launch_plan.as_ref(),
-        )?;
-        state.projects_created.fetch_add(1, Ordering::SeqCst);
-        state.windows_created.fetch_add(1, Ordering::SeqCst);
-        return Ok(serde_json::json!({ "ok": true }));
-    }
-
-    let backend = TmuxSessionBackend::new();
-    backend.run(&[
-        "new-session".to_string(),
-        "-d".to_string(),
-        "-s".to_string(),
-        params.session_name.clone(),
-        "-n".to_string(),
-        params.initial_window_name,
-        "-c".to_string(),
-        params.cwd.clone(),
-        params.shell_cmd,
-    ])?;
-    backend.set_env(&params.session_name, "NEXUS_CWD", &params.cwd)?;
-    backend.apply_proxy_vars(&params.session_name, params.proxy_vars)?;
-    mark_session_owned_by_current_instance(&params.session_name);
-
-    state.projects_created.fetch_add(1, Ordering::SeqCst);
-    state.windows_created.fetch_add(1, Ordering::SeqCst);
-    Ok(serde_json::json!({ "ok": true }))
+    SessionLifecycle::current()?.create_project(state, params)
 }
 
 fn create_project_channel(
     state: &SharedState,
     params: CreateProjectChannelParams,
 ) -> Result<Value, String> {
-    if native_backend_enabled() {
-        native_registry()?.create_channel_with_launch_plan(
-            &params.session_name,
-            &params.cwd,
-            &params.channel_name,
-            &params.shell_cmd,
-            params.launch_plan.as_ref(),
-        )?;
-        state.windows_created.fetch_add(1, Ordering::SeqCst);
-        return Ok(serde_json::json!({ "ok": true }));
-    }
-
-    let backend = TmuxSessionBackend::new();
-    backend.ensure_session(&params.session_name, &params.default_shell_cmd)?;
-    backend.apply_proxy_vars(&params.session_name, params.proxy_vars)?;
-    backend.run(&[
-        "new-window".to_string(),
-        "-t".to_string(),
-        params.session_name.clone(),
-        "-c".to_string(),
-        params.cwd,
-        "-n".to_string(),
-        params.channel_name,
-        params.shell_cmd,
-    ])?;
-    mark_session_owned_by_current_instance(&params.session_name);
-
-    state.windows_created.fetch_add(1, Ordering::SeqCst);
-    Ok(serde_json::json!({ "ok": true }))
+    SessionLifecycle::current()?.create_project_channel(state, params)
 }
 
 fn create_resume_window(
     state: &SharedState,
     params: CreateResumeWindowParams,
 ) -> Result<Value, String> {
-    if native_backend_enabled() {
-        let index = native_registry()?.create_channel_with_launch_plan(
-            &params.session_name,
-            &params.cwd,
-            &params.window_name,
-            &params.shell_cmd,
-            params.launch_plan.as_ref(),
-        )?;
-        state.windows_created.fetch_add(1, Ordering::SeqCst);
-        return Ok(serde_json::json!({
-            "windowId": native_window_id(&params.session_name, index),
-            "index": index,
-            "name": params.window_name,
-        }));
-    }
-
-    let backend = TmuxSessionBackend::new();
-    backend.ensure_session(&params.session_name, &params.default_shell_cmd)?;
-    backend.apply_proxy_vars(&params.session_name, params.proxy_vars)?;
-    let output = backend.capture(&[
-        "new-window".to_string(),
-        "-P".to_string(),
-        "-F".to_string(),
-        "#{window_id}|#{window_index}|#{window_name}".to_string(),
-        "-t".to_string(),
-        params.session_name,
-        "-c".to_string(),
-        params.cwd,
-        "-n".to_string(),
-        params.window_name.clone(),
-        params.shell_cmd,
-    ])?;
-
-    let mut parts = output.split('|');
-    let window_id = parts.next().unwrap_or_default().to_string();
-    let index = parts
-        .next()
-        .unwrap_or_default()
-        .parse::<usize>()
-        .unwrap_or_default();
-
-    state.windows_created.fetch_add(1, Ordering::SeqCst);
-    Ok(serde_json::json!({
-        "windowId": window_id,
-        "index": index,
-        "name": params.window_name,
-    }))
+    SessionLifecycle::current()?.create_resume_window(state, params)
 }
 
 fn resume_codex_session(
     state: &SharedState,
     params: ResumeCodexSessionParams,
 ) -> Result<Value, String> {
-    if native_backend_enabled() {
-        let registry = native_registry()?;
-        let project_name = if !params.project_name.trim().is_empty() {
-            params.project_name.trim().to_string()
-        } else {
-            params.session_name.trim().to_string()
-        };
-        if project_name.is_empty() {
-            return Err("project not found".to_string());
-        }
-
-        let index = registry.create_channel_with_launch_plan(
-            &project_name,
-            &params.cwd,
-            &params.window_name,
-            &params.shell_cmd,
-            params.launch_plan.as_ref(),
-        )?;
-        registry.set_channel_metadata(
-            &project_name,
-            index,
-            CODEX_RESUME_SESSION_METADATA_KEY,
-            &params.session_id,
-        )?;
-        registry.activate_channel(&project_name, index)?;
-
-        state.windows_created.fetch_add(1, Ordering::SeqCst);
-        return Ok(json!({
-            "ok": true,
-            "project": project_name,
-            "channelIndex": index,
-            "channelName": params.window_name,
-            "sessionId": params.session_id,
-        }));
-    }
-
-    let backend = TmuxSessionBackend::new();
-    let project_name = if !params.project_name.trim().is_empty() {
-        params.project_name.trim().to_string()
-    } else {
-        params.session_name.trim().to_string()
-    };
-    if project_name.is_empty() || !backend.session_exists(&project_name) {
-        return Err("project not found".to_string());
-    }
-
-    backend.apply_proxy_vars(&project_name, params.proxy_vars)?;
-    let output = backend.capture(&[
-        "new-window".to_string(),
-        "-P".to_string(),
-        "-F".to_string(),
-        "#{window_id}|#{window_index}|#{window_name}".to_string(),
-        "-t".to_string(),
-        project_name.clone(),
-        "-c".to_string(),
-        params.cwd,
-        "-n".to_string(),
-        params.window_name.clone(),
-        params.shell_cmd,
-    ])?;
-
-    let mut parts = output.split('|');
-    let window_id = parts.next().unwrap_or_default().to_string();
-    let index = parts
-        .next()
-        .unwrap_or_default()
-        .parse::<usize>()
-        .unwrap_or_default();
-    let window_target = if window_id.is_empty() {
-        format!("{}:{}", project_name, index)
-    } else {
-        window_id.clone()
-    };
-
-    backend.mark_window_as_codex_resume_session(&window_target, &params.session_id)?;
-    let _ = backend.run(&[
-        "select-window".to_string(),
-        "-t".to_string(),
-        format!("{}:{}", project_name, index),
-    ]);
-    let _ = backend.set_env(&project_name, "NEXUS_LAST_CHANNEL", &index.to_string());
-
-    state.windows_created.fetch_add(1, Ordering::SeqCst);
-    Ok(json!({
-        "ok": true,
-        "project": project_name,
-        "channelIndex": index,
-        "channelName": params.window_name,
-        "sessionId": params.session_id,
-    }))
+    SessionLifecycle::current()?.resume_codex_session(state, params)
 }
 
 fn rename_project(params: RenameProjectParams) -> Result<Value, String> {
-    if native_backend_enabled() {
-        native_registry()?.rename_project(&params.old_name, &params.new_name)?;
-        return Ok(serde_json::json!({
-            "ok": true,
-            "oldName": params.old_name,
-            "newName": params.new_name,
-        }));
-    }
-
-    TmuxSessionBackend::new().run(&[
-        "rename-session".to_string(),
-        "-t".to_string(),
-        params.old_name.clone(),
-        params.new_name.clone(),
-    ])?;
-    mark_session_owned_by_current_instance(&params.new_name);
-
-    Ok(serde_json::json!({
-        "ok": true,
-        "oldName": params.old_name,
-        "newName": params.new_name,
-    }))
+    SessionLifecycle::current()?.rename_project(params)
 }
 
 fn delete_project(params: DeleteProjectParams) -> Result<Value, String> {
-    if native_backend_enabled() {
-        let registry = native_registry()?;
-        let channels = registry.list_channels(&params.session_name)?;
-        let processes = registry.running_processes_for_project(&params.session_name)?;
-        terminate_native_processes(&processes)?;
-        registry.delete_project(&params.session_name)?;
-        for channel in channels {
-            cleanup_codex_runtime(&native_window_id(&params.session_name, channel.index));
-        }
-        return Ok(serde_json::json!({ "ok": true }));
-    }
-
-    let backend = TmuxSessionBackend::new();
-    let window_ids = backend.list_window_ids(&params.session_name);
-    backend.run(&[
-        "kill-session".to_string(),
-        "-t".to_string(),
-        params.session_name,
-    ])?;
-
-    for window_id in window_ids {
-        cleanup_codex_runtime(&window_id);
-    }
-
-    Ok(serde_json::json!({ "ok": true }))
+    SessionLifecycle::current()?.delete_project(params)
 }
 
 fn attach_session_window(params: AttachSessionWindowParams) -> Result<Value, String> {
-    if native_backend_enabled() {
-        let index = native_window_index(&params.index)?;
-        native_registry()?.activate_channel(&params.session_name, index)?;
-        return Ok(serde_json::json!({ "ok": true }));
-    }
-
-    let backend = TmuxSessionBackend::new();
-    let index = params.index.as_string();
-    let target = session_window_target(&params.session_name, &params.index);
-    backend.run(&["select-window".to_string(), "-t".to_string(), target])?;
-    backend.set_env(&params.session_name, "NEXUS_LAST_CHANNEL", &index)?;
-
-    Ok(serde_json::json!({ "ok": true }))
+    SessionLifecycle::current()?.attach_session_window(params)
 }
 
 fn rename_session_window(params: RenameSessionWindowParams) -> Result<Value, String> {
-    if native_backend_enabled() {
-        let index = native_window_index(&params.index)?;
-        native_registry()?.rename_channel(&params.session_name, index, &params.name)?;
-        return Ok(serde_json::json!({
-            "ok": true,
-            "name": params.name,
-        }));
-    }
-
-    let target = session_window_target(&params.session_name, &params.index);
-    TmuxSessionBackend::new().run(&[
-        "rename-window".to_string(),
-        "-t".to_string(),
-        target,
-        params.name.clone(),
-    ])?;
-
-    Ok(serde_json::json!({
-        "ok": true,
-        "name": params.name,
-    }))
+    SessionLifecycle::current()?.rename_session_window(params)
 }
 
 fn delete_session_window(params: DeleteSessionWindowParams) -> Result<Value, String> {
-    if native_backend_enabled() {
-        let index = native_window_index(&params.index)?;
-        let registry = native_registry()?;
-        let channel_count = registry.list_channels(&params.session_name)?.len();
-        let should_create_fallback = params.create_fallback_shell || channel_count <= 1;
-        if should_create_fallback && !params.default_shell_cmd.trim().is_empty() {
-            let cwd = registry.get_project_cwd(&params.session_name)?;
-            registry.create_channel(
-                &params.session_name,
-                &cwd,
-                "shell",
-                &params.default_shell_cmd,
-            )?;
-        }
-        let processes = registry.running_processes_for_channel(&params.session_name, index)?;
-        terminate_native_processes(&processes)?;
-        registry.delete_channel(&params.session_name, index)?;
-        cleanup_codex_runtime(&native_window_id(&params.session_name, index));
-        return Ok(serde_json::json!({ "ok": true }));
-    }
-
-    let backend = TmuxSessionBackend::new();
-    let window_id = get_tmux_window_id(&params.session_name, &params.index);
-    let create_fallback_shell =
-        params.create_fallback_shell || backend.count_windows(&params.session_name)? <= 1;
-
-    if create_fallback_shell && !params.default_shell_cmd.trim().is_empty() {
-        backend.run(&[
-            "new-window".to_string(),
-            "-t".to_string(),
-            params.session_name.clone(),
-            "-n".to_string(),
-            "shell".to_string(),
-            params.default_shell_cmd.clone(),
-        ])?;
-    }
-
-    let target = session_window_target(&params.session_name, &params.index);
-    backend.run(&["kill-window".to_string(), "-t".to_string(), target])?;
-    cleanup_codex_runtime(&window_id);
-
-    Ok(serde_json::json!({ "ok": true }))
+    SessionLifecycle::current()?.delete_session_window(params)
 }
-
 fn main() {
-    let (tx, rx) = mpsc::channel::<String>();
+    let (mut protocol, output) = StdioProtocol::start();
     let state = SharedState {
-        event_tx: tx.clone(),
         projects_created: Arc::new(AtomicUsize::new(0)),
         windows_created: Arc::new(AtomicUsize::new(0)),
     };
 
-    let writer = thread::spawn(move || {
-        let stdout = io::stdout();
-        let mut handle = stdout.lock();
-        while let Ok(line) = rx.recv() {
-            if handle.write_all(line.as_bytes()).is_err() {
-                break;
+    protocol.run(|message| {
+        let RuntimeMessage::Request { id, method, params } = message else {
+            return RuntimeControl::Continue;
+        };
+        match method.as_str() {
+            "ready" | "runtimeStatus" => output.success(id, state.runtime_status()),
+            "listTmuxSessions" => respond_with(&output, id, list_tmux_sessions()),
+            "listAllSessionNames" => respond_with(&output, id, list_all_session_names()),
+            "listProjects" => respond_with(&output, id, list_projects()),
+            "getSessionCwd" => {
+                parse_and_respond(&output, id, params, get_session_cwd);
             }
-            if handle.write_all(b"\n").is_err() {
-                break;
+            "listProjectChannels" => {
+                parse_and_respond(&output, id, params, list_project_channels);
             }
-            if handle.flush().is_err() {
-                break;
+            "listSessionWindows" => {
+                parse_and_respond(&output, id, params, list_session_windows);
             }
+            "activateProject" => {
+                parse_and_respond(&output, id, params, activate_project);
+            }
+            "listCodexSessions" => {
+                parse_and_respond(&output, id, params, list_project_codex_sessions);
+            }
+            "getCodexSessionDetail" => {
+                parse_and_respond(&output, id, params, get_project_codex_session_detail);
+            }
+            "resumeCodexSession" => {
+                parse_and_respond(&output, id, params, |params| {
+                    resume_codex_session(&state, params)
+                });
+            }
+            "deleteProjectCodexSession" => {
+                parse_and_respond(&output, id, params, delete_project_codex_session);
+            }
+            "createProject" => {
+                parse_and_respond(&output, id, params, |params| create_project(&state, params));
+            }
+            "createProjectChannel" => {
+                parse_and_respond(&output, id, params, |params| {
+                    create_project_channel(&state, params)
+                });
+            }
+            "createResumeWindow" => {
+                parse_and_respond(&output, id, params, |params| {
+                    create_resume_window(&state, params)
+                });
+            }
+            "renameProject" => {
+                parse_and_respond(&output, id, params, rename_project);
+            }
+            "deleteProject" => {
+                parse_and_respond(&output, id, params, delete_project);
+            }
+            "attachSessionWindow" => {
+                parse_and_respond(&output, id, params, attach_session_window);
+            }
+            "renameSessionWindow" => {
+                parse_and_respond(&output, id, params, rename_session_window);
+            }
+            "deleteSessionWindow" => {
+                parse_and_respond(&output, id, params, delete_session_window);
+            }
+            "shutdown" => {
+                output.success(id, serde_json::json!({ "ok": true }));
+                return RuntimeControl::Shutdown;
+            }
+            _ => output.failure(id, format!("unsupported method: {method}")),
         }
+        RuntimeControl::Continue
     });
 
-    let stdin = io::stdin();
-    let reader = BufReader::new(stdin.lock());
-
-    for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => break,
-        };
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let message: Message = match serde_json::from_str(&line) {
-            Ok(value) => value,
-            Err(error) => {
-                eprintln!("invalid request: {error}");
-                continue;
-            }
-        };
-
-        #[allow(clippy::single_match)]
-        match message.kind.as_str() {
-            "request" => {
-                let id = message.id.unwrap_or_default();
-                let method = message.method.unwrap_or_default();
-                match method.as_str() {
-                    "ready" | "runtimeStatus" => {
-                        send_response(&state, id, true, Some(state.runtime_status()), None);
-                    }
-                    "listTmuxSessions" => match list_tmux_sessions() {
-                        Ok(result) => send_response(&state, id, true, Some(result), None),
-                        Err(error) => send_response::<Value>(&state, id, false, None, Some(error)),
-                    },
-                    "listAllSessionNames" => match list_all_session_names() {
-                        Ok(result) => send_response(&state, id, true, Some(result), None),
-                        Err(error) => send_response::<Value>(&state, id, false, None, Some(error)),
-                    },
-                    "listProjects" => match list_projects() {
-                        Ok(result) => send_response(&state, id, true, Some(result), None),
-                        Err(error) => send_response::<Value>(&state, id, false, None, Some(error)),
-                    },
-                    "getSessionCwd" => {
-                        match serde_json::from_value::<GetSessionCwdParams>(message.params) {
-                            Ok(params) => match get_session_cwd(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "listProjectChannels" => {
-                        match serde_json::from_value::<ListProjectChannelsParams>(message.params) {
-                            Ok(params) => match list_project_channels(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "listSessionWindows" => {
-                        match serde_json::from_value::<ListSessionWindowsParams>(message.params) {
-                            Ok(params) => match list_session_windows(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "activateProject" => {
-                        match serde_json::from_value::<ActivateProjectParams>(message.params) {
-                            Ok(params) => match activate_project(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "listCodexSessions" => {
-                        match serde_json::from_value::<ListCodexSessionsParams>(message.params) {
-                            Ok(params) => match list_project_codex_sessions(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "getCodexSessionDetail" => {
-                        match serde_json::from_value::<GetCodexSessionDetailParams>(message.params)
-                        {
-                            Ok(params) => match get_project_codex_session_detail(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "resumeCodexSession" => {
-                        match serde_json::from_value::<ResumeCodexSessionParams>(message.params) {
-                            Ok(params) => match resume_codex_session(&state, params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "deleteProjectCodexSession" => {
-                        match serde_json::from_value::<DeleteProjectCodexSessionParams>(
-                            message.params,
-                        ) {
-                            Ok(params) => match delete_project_codex_session(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "createProject" => {
-                        match serde_json::from_value::<CreateProjectParams>(message.params) {
-                            Ok(params) => match create_project(&state, params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "createProjectChannel" => {
-                        match serde_json::from_value::<CreateProjectChannelParams>(message.params) {
-                            Ok(params) => match create_project_channel(&state, params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "createResumeWindow" => {
-                        match serde_json::from_value::<CreateResumeWindowParams>(message.params) {
-                            Ok(params) => match create_resume_window(&state, params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "renameProject" => {
-                        match serde_json::from_value::<RenameProjectParams>(message.params) {
-                            Ok(params) => match rename_project(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "deleteProject" => {
-                        match serde_json::from_value::<DeleteProjectParams>(message.params) {
-                            Ok(params) => match delete_project(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "attachSessionWindow" => {
-                        match serde_json::from_value::<AttachSessionWindowParams>(message.params) {
-                            Ok(params) => match attach_session_window(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "renameSessionWindow" => {
-                        match serde_json::from_value::<RenameSessionWindowParams>(message.params) {
-                            Ok(params) => match rename_session_window(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "deleteSessionWindow" => {
-                        match serde_json::from_value::<DeleteSessionWindowParams>(message.params) {
-                            Ok(params) => match delete_session_window(params) {
-                                Ok(result) => send_response(&state, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "shutdown" => {
-                        send_response(
-                            &state,
-                            id,
-                            true,
-                            Some(serde_json::json!({ "ok": true })),
-                            None,
-                        );
-                        break;
-                    }
-                    _ => {
-                        send_response::<Value>(
-                            &state,
-                            id,
-                            false,
-                            None,
-                            Some(format!("unsupported method: {method}")),
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
     drop(state);
-    drop(tx);
-    let _ = writer.join();
+    drop(output);
+    protocol.finish();
 }

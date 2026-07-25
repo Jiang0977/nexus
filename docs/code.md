@@ -1,6 +1,6 @@
 # Nexus 源码导览
 
-最后更新：2026-05-20
+最后更新：2026-07-25
 
 目标：告诉维护者“现在该从哪里读”，同时区分源码层和运行时入口。
 
@@ -18,12 +18,15 @@
 4. `rust-runtime/src/bin/nexus-server.rs`
 5. `rust-runtime/src/server/mod.rs`
 6. `rust-runtime/src/bin/nexus-session-runtime.rs`
-7. `rust-runtime/src/bin/nexus-window-launch-runtime.rs`
-8. `rust-runtime/src/bin/nexus-pty-runtime.rs`
-9. `rust-runtime/src/bin/nexus-task-runtime.rs`
-10. `rust-runtime/src/native_session_registry.rs`
-11. `rust-runtime/src/native_session_cli.rs`
-12. `rust-runtime/tests/*.rs`
+7. `rust-runtime/src/bin/nexus_session_runtime/backend.rs`
+8. `rust-runtime/src/child_runtime_protocol.rs`
+9. `rust-runtime/src/codex_home.rs`
+10. `rust-runtime/src/bin/nexus-window-launch-runtime.rs`
+11. `rust-runtime/src/bin/nexus-pty-runtime.rs`
+12. `rust-runtime/src/bin/nexus-task-runtime.rs`
+13. `rust-runtime/src/native_session_registry.rs`
+14. `rust-runtime/src/native_session_cli.rs`
+15. `rust-runtime/tests/*.rs`
 
 ## 根目录里最重要的文件
 
@@ -74,6 +77,8 @@
 | `rust-runtime/src/project_defaults.rs` | 默认 shell / profile 持久化 |
 | `rust-runtime/src/sanitize.rs` | 字符串与文件名清洗 |
 | `rust-runtime/src/auth.rs` | JWT helper |
+| `rust-runtime/src/codex_home.rs` | Codex runtime HOME 规整、导入、物化与共享状态单一事实源 |
+| `rust-runtime/src/child_runtime_protocol.rs` | stdio / Unix socket 共用的 JSON-line codec、envelope 与 writer lifecycle |
 | `rust-runtime/src/native_session_registry.rs` | native project/channel/process/metadata SQLite registry |
 | `rust-runtime/src/native_session_cli.rs` | `nexus-native-session list/attach` |
 
@@ -81,11 +86,13 @@
 
 | 文件 | 作用 |
 |---|---|
-| `rust-runtime/src/bin/nexus-session-runtime.rs` | project / channel / session / Codex 历史 |
-| `rust-runtime/src/bin/nexus-window-launch-runtime.rs` | 新建窗口和 shell 启动 |
-| `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / broker；默认 tmux，native 模式走 Rust PTY/supervisor |
-| `rust-runtime/src/bin/nexus-task-runtime.rs` | task 执行协议 |
-| `rust-runtime/src/bin/nexus-codex-home.rs` | Codex 隔离 HOME 物化；把共享 history/skills/plugins 等状态链接进 runtime HOME |
+| `rust-runtime/src/bin/nexus-session-runtime.rs` | project / channel / session / Codex 历史 request dispatch |
+| `rust-runtime/src/bin/nexus_session_runtime/backend.rs` | catalog / lifecycle / cleanup capability port factory |
+| `rust-runtime/src/bin/nexus_session_runtime/backend/*.rs` | tmux/native adapter、local fake contract tests 与进程清理内部实现 |
+| `rust-runtime/src/bin/nexus-window-launch-runtime.rs` | 新建窗口和 shell 领域 dispatch；复用共享 wire protocol |
+| `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / broker 薄入口；默认 tmux，native 模式走 Rust PTY/supervisor |
+| `rust-runtime/src/bin/nexus-task-runtime.rs` | task 领域 dispatch；复用共享 wire protocol |
+| `rust-runtime/src/bin/nexus-codex-home.rs` | Codex 隔离 HOME CLI；委托共享 `codex_home` module |
 | `rust-runtime/src/bin/nexus-setup.rs` | `.env` + systemd + tmux bootstrap |
 | `rust-runtime/src/bin/nexus-native-pty-supervisor.rs` | native backend 的持久 PTY supervisor |
 | `rust-runtime/src/bin/nexus-native-session.rs` | 宿主机终端 attach native session 的 CLI |
@@ -114,16 +121,19 @@
 前端主入口当前推荐阅读顺序：
 
 1. `frontend/src/Terminal.tsx`
-2. `frontend/src/terminal/useTerminalRuntime.ts`
-3. `frontend/src/terminal/useTerminalSessions.ts`
-4. `frontend/src/terminal/useTerminalArtifacts.ts`
-5. `frontend/src/terminal/DesktopSidebar.tsx`
-6. `frontend/src/terminal/MobileSessionDrawer.tsx`
+2. `frontend/src/terminal/terminalConnection.ts`
+3. `frontend/src/terminal/useTerminalRuntime.ts`
+4. `frontend/src/terminal/useTerminalPaneRuntime.ts`
+5. `frontend/src/terminal/useTerminalSessions.ts`
+6. `frontend/src/terminal/useTerminalArtifacts.ts`
+7. `frontend/src/terminal/DesktopSidebar.tsx`
+8. `frontend/src/terminal/MobileSessionDrawer.tsx`
 
 这样读能更快看清：
 
 - `Terminal.tsx` 只负责顶层装配
-- xterm / WebSocket / resize 逻辑下沉到 runtime hook
+- WebSocket URL / resize / reconnect / close policy 集中在 `terminalConnection.ts`
+- runtime hooks 只装配 xterm、交互和连接状态 adapter
 - session / window 状态下沉到 sessions hook
 - scrollback / upload / 通知下沉到 artifacts hook
 
@@ -139,17 +149,20 @@
 ### 终端 attach
 
 1. 浏览器建 WebSocket 到 `/ws`
-2. `nexus-server` 把请求转给 `nexus-pty-runtime`
-3. PTY runtime attach 到目标 project/channel
-4. tmux backend 下连接 `tmux session:window`；native backend 下连接 Rust PTY/supervisor
-5. 浏览器和后端 PTY 双向 I/O
+2. `terminalConnection.ts` 负责连接、首帧 resize、retry 与 fatal close-code policy
+3. `nexus-server` 把请求转给 `nexus-pty-runtime`
+4. PTY runtime attach 到目标 project/channel
+5. tmux backend 下连接 `tmux session:window`；native backend 下连接 Rust PTY/supervisor
+6. stdio child 与 supervisor socket 都使用 `child_runtime_protocol` 的 JSON-line contract
+7. 浏览器和后端 PTY 双向 I/O
 
 ### 新建 project / channel
 
 1. 浏览器调 `/api/projects` 或 `/api/sessions`
 2. `nexus-server` 协调 `nexus-session-runtime` / `nexus-window-launch-runtime`
-3. child runtime 操作当前 session backend：默认 tmux；native 模式操作 native registry
-4. 浏览器刷新列表
+3. session runtime 通过 catalog / lifecycle / cleanup capability port 调用 factory 选出的 adapter
+4. 默认 factory 选择 tmux；仅 `NEXUS_SESSION_BACKEND=native` 时选择 native registry/process adapter
+5. 浏览器刷新列表
 
 ## 验证入口
 

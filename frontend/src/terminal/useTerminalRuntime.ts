@@ -11,6 +11,7 @@ import {
   prepareTerminalSelectionForNativeCopy,
   writeTerminalSelectionToClipboardEvent,
 } from './terminalClipboard'
+import { connectTerminal, type TerminalSocket } from './terminalConnection'
 
 const FONT_SIZE_KEY = 'nexus_font_size'
 const TAP_THRESHOLD = 8
@@ -61,7 +62,7 @@ export function useTerminalRuntime({
 }: UseTerminalRuntimeArgs) {
   const containerRef = useRef<HTMLDivElement>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
+  const wsRef = useRef<TerminalSocket | null>(null)
   const userScrolledRef = useRef(false)
   const lastContainerSizeRef = useRef({ w: 0, h: 0 })
   const keyboardVisibleRef = useRef(false)
@@ -659,104 +660,34 @@ export function useTerminalRuntime({
     const hasSavedScroll = (scrollPositionsRef.current[activeWindowIndex] ?? 0) > 0
     userScrolledRef.current = hasSavedScroll
 
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    let intentionalClose = false
-    let hasOpenedCurrentConnection = false
-    let reconnectAttempts = 0
-    let reconnectTimer: number | null = null
-    const maxReconnectAttempts = 8
-    const reconnectDelay = () => Math.min(1000 * Math.pow(2, reconnectAttempts), 15000)
-    const loadingTimer = window.setTimeout(() => {
-      if (!hasOpenedCurrentConnection) setIsConnecting(true)
-    }, 300)
-
-    function writeTerm(data: string, callback?: () => void) {
-      termRef.current?.write(data, callback)
-    }
-
-    function stopConnecting(message: string) {
-      window.clearTimeout(loadingTimer)
-      hasOpenedCurrentConnection = true
-      setIsConnecting(false)
-      writeTerm(`\r\n\x1b[31m[Nexus: ${message}]\x1b[0m\r\n`)
-    }
-
-    function createWs(isReconnect = false) {
-      const session = activeTmuxSessionRef.current
-      const windowIndex = activeWindowIndexRef.current
-      const nextWs = new WebSocket(`${protocol}//${location.host}/ws?token=${encodeURIComponent(token)}&window=${windowIndex}&session=${encodeURIComponent(session)}`)
-      wsRef.current = nextWs
-
-      nextWs.onopen = () => {
-        if (isReconnect) {
-          writeTerm('\r\n\x1b[32m[Nexus: 已重新连接]\x1b[0m\r\n')
-        } else {
-          window.clearTimeout(loadingTimer)
-          termRef.current?.reset()
-        }
-
-        reconnectAttempts = 0
-        hasOpenedCurrentConnection = true
-        setIsConnecting(false)
-        fitAddonRef.current?.fit()
-        const term = termRef.current
-        if (!term) return
-
-        nextWs.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: Math.max(term.rows - 1, 5) }))
-        requestAnimationFrame(() => {
-          fitAddonRef.current?.fit()
-          if (wsRef.current?.readyState === WebSocket.OPEN && termRef.current) {
-            wsRef.current.send(JSON.stringify({ type: 'resize', cols: termRef.current.cols, rows: termRef.current.rows }))
-          }
-        })
-      }
-
-      nextWs.onmessage = (event) => {
-        const autoScroll = !userScrolledRef.current
-        writeTerm(event.data, () => {
-          if (autoScroll && !userScrolledRef.current) termRef.current?.scrollToBottom()
-        })
-      }
-
-      nextWs.onclose = (event) => {
-        if (intentionalClose) return
-        if (event.code === 4001) {
-          stopConnecting('认证失败，请刷新重新登录')
-          return
-        }
-        if (event.code >= 4000 && event.code < 5000) {
-          const reason = event.reason.trim()
-          stopConnecting(reason ? `连接失败：${reason}` : '连接失败，请刷新页面')
-          return
-        }
-        if (!hasOpenedCurrentConnection && reconnectAttempts >= 1) {
-          const reason = event.reason.trim()
-          stopConnecting(reason ? `连接失败：${reason}` : '连接失败，请重试')
-          return
-        }
-        if (reconnectAttempts >= maxReconnectAttempts) {
-          stopConnecting('重连失败，请刷新页面')
-          return
-        }
-
-        reconnectAttempts += 1
-        const delay = reconnectDelay()
-        writeTerm(`\r\n\x1b[33m[Nexus: 连接断开，${delay / 1000}s 后重连 (${reconnectAttempts}/${maxReconnectAttempts})...]\x1b[0m\r\n`)
-        reconnectTimer = window.setTimeout(() => createWs(true), delay)
-      }
-
-      nextWs.onerror = () => {
-        writeTerm('\r\n\x1b[31m[Nexus: WebSocket 错误]\x1b[0m\r\n')
-      }
-    }
-
-    createWs()
+    const connection = connectTerminal({
+      adapter: {
+        setConnecting: () => setIsConnecting(true),
+        setLive: () => setIsConnecting(false),
+        setError: () => setIsConnecting(false),
+        reset: () => termRef.current?.reset(),
+        fit: () => fitAddonRef.current?.fit(),
+        dimensions: () => {
+          const term = termRef.current
+          return term ? { cols: term.cols, rows: term.rows } : null
+        },
+        write: (data, callback) => termRef.current?.write(data, callback),
+        shouldAutoScroll: () => !userScrolledRef.current,
+        scrollToBottom: () => termRef.current?.scrollToBottom(),
+      },
+      loadingDelayMs: 300,
+      session: activeTmuxSessionRef.current,
+      setSocket: (socket) => {
+        wsRef.current = socket
+      },
+      showLoadingImmediately: false,
+      showLoadingOnReconnect: false,
+      token,
+      windowIndex: activeWindowIndexRef.current,
+    })
 
     return () => {
-      intentionalClose = true
-      window.clearTimeout(loadingTimer)
-      if (reconnectTimer) window.clearTimeout(reconnectTimer)
-      wsRef.current?.close()
+      connection.dispose()
     }
   }, [activeTmuxSession, activeWindowIndex, activeTmuxSessionRef, activeWindowIndexRef, enabled, scrollPositionsRef, token, windowsLoaded, windowsRef, wsSessionKey])
 

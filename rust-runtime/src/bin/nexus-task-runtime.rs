@@ -1,22 +1,14 @@
+use nexus_rust_runtime::child_runtime_protocol::{
+    ProtocolOutput, RuntimeControl, RuntimeMessage, StdioProtocol,
+};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-
-#[derive(Deserialize)]
-struct Message {
-    kind: String,
-    id: Option<String>,
-    method: Option<String>,
-    #[serde(default)]
-    params: Value,
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,35 +43,6 @@ struct ReadyPayload {
 }
 
 #[derive(Serialize)]
-struct ResponseMessage<T>
-where
-    T: Serialize,
-{
-    kind: &'static str,
-    id: String,
-    ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<T>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<ResponseError>,
-}
-
-#[derive(Serialize)]
-struct ResponseError {
-    message: String,
-}
-
-#[derive(Serialize)]
-struct EventMessage<T>
-where
-    T: Serialize,
-{
-    kind: &'static str,
-    event: &'static str,
-    params: T,
-}
-
-#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ChunkEvent {
     task_id: String,
@@ -99,7 +62,7 @@ struct DoneEvent {
 #[derive(Clone)]
 struct SharedState {
     children: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
-    event_tx: Sender<String>,
+    output: ProtocolOutput,
     running_tasks: Arc<AtomicUsize>,
 }
 
@@ -117,37 +80,26 @@ impl SharedState {
         }
     }
 
-    fn send_json<T>(&self, value: &T)
-    where
-        T: Serialize,
-    {
-        if let Ok(line) = serde_json::to_string(value) {
-            let _ = self.event_tx.send(line);
-        }
-    }
-
     fn send_chunk(&self, task_id: &str, chunk: String, is_err: bool) {
-        self.send_json(&EventMessage {
-            kind: "event",
-            event: "chunk",
-            params: ChunkEvent {
+        self.output.event(
+            "chunk",
+            ChunkEvent {
                 task_id: task_id.to_string(),
                 chunk,
                 is_err,
             },
-        });
+        );
     }
 
     fn send_done(&self, task_id: &str, exit_code: Option<i32>, error_message: Option<String>) {
-        self.send_json(&EventMessage {
-            kind: "event",
-            event: "done",
-            params: DoneEvent {
+        self.output.event(
+            "done",
+            DoneEvent {
                 task_id: task_id.to_string(),
                 exit_code,
                 error_message,
             },
-        });
+        );
     }
 
     fn remove_task(&self, task_id: &str) {
@@ -178,24 +130,6 @@ impl SharedState {
             self.kill_task(&task_id);
         }
     }
-}
-
-fn send_response<T>(
-    state: &SharedState,
-    id: String,
-    ok: bool,
-    result: Option<T>,
-    error: Option<String>,
-) where
-    T: Serialize,
-{
-    state.send_json(&ResponseMessage {
-        kind: "response",
-        id,
-        ok,
-        result,
-        error: error.map(|message| ResponseError { message }),
-    });
 }
 
 fn spawn_task(state: &SharedState, params: StartTaskParams) -> Result<(), String> {
@@ -295,116 +229,50 @@ fn spawn_task(state: &SharedState, params: StartTaskParams) -> Result<(), String
 }
 
 fn main() {
-    let (tx, rx) = mpsc::channel::<String>();
+    let (mut protocol, output) = StdioProtocol::start();
     let state = SharedState {
         children: Arc::new(Mutex::new(HashMap::new())),
-        event_tx: tx.clone(),
+        output: output.clone(),
         running_tasks: Arc::new(AtomicUsize::new(0)),
     };
 
-    let writer = thread::spawn(move || {
-        let stdout = io::stdout();
-        let mut handle = stdout.lock();
-        while let Ok(line) = rx.recv() {
-            if handle.write_all(line.as_bytes()).is_err() {
-                break;
-            }
-            if handle.write_all(b"\n").is_err() {
-                break;
-            }
-            if handle.flush().is_err() {
-                break;
-            }
-        }
-    });
-
-    let stdin = io::stdin();
-    let reader = BufReader::new(stdin.lock());
-
-    for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => break,
-        };
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let message: Message = match serde_json::from_str(&line) {
-            Ok(value) => value,
-            Err(error) => {
-                eprintln!("invalid request: {error}");
-                continue;
-            }
-        };
-
-        match message.kind.as_str() {
-            "request" => {
-                let id = message.id.unwrap_or_default();
-                let method = message.method.unwrap_or_default();
-                match method.as_str() {
-                    "ready" | "runtimeStatus" => {
-                        send_response(&state, id, true, Some(state.runtime_status()), None);
-                    }
-                    "startTask" => {
-                        match serde_json::from_value::<StartTaskParams>(message.params) {
-                            Ok(params) => match spawn_task(&state, params) {
-                                Ok(()) => send_response(
-                                    &state,
-                                    id,
-                                    true,
-                                    Some(serde_json::json!({ "ok": true })),
-                                    None,
-                                ),
-                                Err(error) => {
-                                    send_response::<Value>(&state, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &state,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "shutdown" => {
-                        state.shutdown();
-                        send_response(
-                            &state,
-                            id,
-                            true,
-                            Some(serde_json::json!({ "ok": true })),
-                            None,
-                        );
-                        break;
-                    }
-                    _ => {
-                        send_response::<Value>(
-                            &state,
-                            id,
-                            false,
-                            None,
-                            Some(format!("unsupported method: {method}")),
-                        );
-                    }
+    protocol.run(|message| {
+        match message {
+            RuntimeMessage::Request { id, method, params } => match method.as_str() {
+                "ready" | "runtimeStatus" => {
+                    state.output.success(id, state.runtime_status());
                 }
-            }
-            "notify" => {
-                let method = message.method.unwrap_or_default();
+                "startTask" => match serde_json::from_value::<StartTaskParams>(params) {
+                    Ok(params) => match spawn_task(&state, params) {
+                        Ok(()) => state.output.success(id, serde_json::json!({ "ok": true })),
+                        Err(error) => state.output.failure(id, error),
+                    },
+                    Err(error) => state.output.failure(id, error.to_string()),
+                },
+                "shutdown" => {
+                    state.shutdown();
+                    state.output.success(id, serde_json::json!({ "ok": true }));
+                    return RuntimeControl::Shutdown;
+                }
+                _ => {
+                    state
+                        .output
+                        .failure(id, format!("unsupported method: {method}"));
+                }
+            },
+            RuntimeMessage::Notify { method, params } => {
                 if method == "killTask"
-                    && let Ok(params) = serde_json::from_value::<KillTaskParams>(message.params)
+                    && let Ok(params) = serde_json::from_value::<KillTaskParams>(params)
                 {
                     state.kill_task(&params.task_id);
                 }
             }
-            _ => {}
         }
-    }
+        RuntimeControl::Continue
+    });
 
     state.shutdown();
     drop(state);
-    drop(tx);
-    let _ = writer.join();
+    drop(output);
+    protocol.finish();
 }

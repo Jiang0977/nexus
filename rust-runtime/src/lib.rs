@@ -1,4 +1,6 @@
 pub mod auth;
+pub mod child_runtime_protocol;
+pub mod codex_home;
 pub mod codex_replay;
 pub mod config;
 pub mod native_session_cli;

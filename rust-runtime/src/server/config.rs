@@ -1,4 +1,5 @@
 use super::*;
+use crate::codex_home::{CodexHomeConfig, parse_simple_toml};
 use crate::runtime_config::read_session_backend_config_file;
 
 pub(super) async fn api_login(
@@ -713,18 +714,6 @@ pub(super) fn parse_json_object_from_str(raw: &str) -> Option<serde_json::Map<St
         .and_then(|value| value.as_object().cloned())
 }
 
-pub(super) fn normalize_json_text_value(value: Option<&Value>) -> String {
-    match value {
-        Some(Value::String(raw)) => parse_json_object_from_str(raw)
-            .and_then(|object| serde_json::to_string_pretty(&Value::Object(object)).ok())
-            .unwrap_or_default(),
-        Some(Value::Object(object)) => {
-            serde_json::to_string_pretty(&Value::Object(object.clone())).unwrap_or_default()
-        }
-        _ => String::new(),
-    }
-}
-
 pub(super) fn empty_codex_config_object(label: &str) -> serde_json::Map<String, Value> {
     serde_json::Map::from_iter([
         ("label".to_string(), Value::String(label.to_string())),
@@ -742,35 +731,9 @@ pub(super) fn empty_codex_config_object(label: &str) -> serde_json::Map<String, 
 
 pub(super) fn normalize_codex_config_value(value: &Value) -> serde_json::Map<String, Value> {
     let raw = object_value(value);
-    let auth_json = normalize_json_text_value(raw.get("AUTH_JSON"));
-    let auth_payload = parse_json_object_from_str(&auth_json).unwrap_or_default();
     let mut normalized = empty_codex_config_object(&value_string(raw.get("label")));
-    let openai_api_key = value_string(raw.get("OPENAI_API_KEY"));
-    normalized.insert(
-        "OPENAI_API_KEY".to_string(),
-        Value::String(if openai_api_key.is_empty() {
-            value_string(auth_payload.get("OPENAI_API_KEY"))
-        } else {
-            openai_api_key
-        }),
-    );
-    normalized.insert(
-        "BASE_URL".to_string(),
-        Value::String(value_string(raw.get("BASE_URL"))),
-    );
-    normalized.insert(
-        "MODEL".to_string(),
-        Value::String(value_string(raw.get("MODEL"))),
-    );
-    normalized.insert(
-        "REASONING_EFFORT".to_string(),
-        Value::String(value_string(raw.get("REASONING_EFFORT"))),
-    );
-    normalized.insert(
-        "CONFIG_TOML".to_string(),
-        Value::String(value_string(raw.get("CONFIG_TOML"))),
-    );
-    normalized.insert("AUTH_JSON".to_string(), Value::String(auth_json));
+    let runtime_fields = object_value(&CodexHomeConfig::from_value(value).to_value());
+    normalized.extend(runtime_fields);
     for key in sync_metadata_keys() {
         normalized.insert(key.to_string(), Value::String(value_string(raw.get(key))));
     }
@@ -888,93 +851,22 @@ pub(super) fn save_codex_config_route(
     }))
 }
 
-pub(super) struct SimpleToml {
-    pub(super) root: HashMap<String, String>,
-    pub(super) sections: HashMap<String, HashMap<String, String>>,
-}
-
-pub(super) fn parse_toml_scalar(raw: &str) -> String {
-    let value = raw.trim();
-    if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-        serde_json::from_str::<String>(value)
-            .unwrap_or_else(|_| value[1..value.len() - 1].to_string())
-    } else {
-        value.to_string()
-    }
-}
-
-pub(super) fn parse_simple_toml(text: &str) -> SimpleToml {
-    let mut root = HashMap::new();
-    let mut sections: HashMap<String, HashMap<String, String>> = HashMap::new();
-    let mut current_section: Option<String> = None;
-
-    for raw_line in text.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            let section_name = line[1..line.len() - 1].trim().to_string();
-            sections.entry(section_name.clone()).or_default();
-            current_section = Some(section_name);
-            continue;
-        }
-        if let Some((key, raw_value)) = line.split_once('=') {
-            let key = key.trim().to_string();
-            let value = parse_toml_scalar(raw_value);
-            if let Some(section_name) = current_section.as_ref() {
-                sections
-                    .entry(section_name.clone())
-                    .or_default()
-                    .insert(key, value);
-            } else {
-                root.insert(key, value);
-            }
-        }
-    }
-
-    SimpleToml { root, sections }
-}
-
 pub(super) fn import_codex_config_from_global(
     config_toml_text: &str,
     auth_json_text: &str,
 ) -> Value {
-    let normalized_config_toml = config_toml_text.trim().to_string();
-    let normalized_auth_json =
-        normalize_json_text_value(Some(&Value::String(auth_json_text.to_string())));
-    let parsed_toml = parse_simple_toml(&normalized_config_toml);
-    let provider_name = parsed_toml
-        .root
-        .get("model_provider")
-        .cloned()
-        .unwrap_or_default();
-    let provider_section = parsed_toml
-        .sections
-        .get(&format!("model_providers.{provider_name}"))
-        .cloned()
-        .unwrap_or_default();
-    let auth_payload = parse_json_object_from_str(&normalized_auth_json).unwrap_or_default();
-    let model = parsed_toml.root.get("model").cloned().unwrap_or_default();
-
-    let config = json!({
-        "label": if model.is_empty() {
-            "Imported from ~/.codex".to_string()
+    let runtime_config = CodexHomeConfig::import_global(config_toml_text, auth_json_text);
+    let mut config = object_value(&runtime_config.to_value());
+    let model = value_string(config.get("MODEL"));
+    config.insert(
+        "label".to_string(),
+        if model.is_empty() {
+            Value::String("Imported from ~/.codex".to_string())
         } else {
-            format!("Imported ({model})")
+            Value::String(format!("Imported ({model})"))
         },
-        "OPENAI_API_KEY": value_string(auth_payload.get("OPENAI_API_KEY")),
-        "BASE_URL": provider_section.get("base_url").cloned().unwrap_or_default(),
-        "MODEL": model,
-        "REASONING_EFFORT": parsed_toml
-            .root
-            .get("model_reasoning_effort")
-            .cloned()
-            .unwrap_or_default(),
-        "CONFIG_TOML": normalized_config_toml,
-        "AUTH_JSON": normalized_auth_json,
-    });
-    Value::Object(normalize_codex_config_value(&config))
+    );
+    Value::Object(normalize_codex_config_value(&Value::Object(config)))
 }
 
 pub(super) fn read_global_codex_config() -> Option<Value> {
@@ -1066,109 +958,13 @@ pub(super) fn sync_current_codex_config_route(
 }
 
 pub(super) fn detect_codex_auth_mode(config: &Value) -> String {
-    let normalized = normalize_codex_config_value(config);
-    let auth_payload =
-        parse_json_object_from_str(&value_string(normalized.get("AUTH_JSON"))).unwrap_or_default();
-    let auth_mode = value_string(auth_payload.get("auth_mode"));
-    if !auth_mode.is_empty() {
-        return auth_mode;
-    }
-    if !value_string(normalized.get("OPENAI_API_KEY")).is_empty() {
-        return "api_key".to_string();
-    }
-    String::new()
+    CodexHomeConfig::from_value(config).auth_mode()
 }
 
 pub(super) fn build_codex_validation_config(config: &Value) -> Value {
-    let mut normalized = normalize_codex_config_value(config);
-    normalized.insert("CONFIG_TOML".to_string(), Value::String(String::new()));
-    Value::Object(normalized)
-}
-
-pub(super) fn ensure_trailing_newline(text: &str) -> String {
-    if text.is_empty() {
-        String::new()
-    } else if text.ends_with('\n') {
-        text.to_string()
-    } else {
-        format!("{text}\n")
-    }
-}
-
-pub(super) fn append_trusted_project_section(config_toml_text: &str, project_path: &str) -> String {
-    let trimmed = config_toml_text.trim();
-    if project_path.is_empty() {
-        return ensure_trailing_newline(trimmed);
-    }
-    let project_header = format!(
-        "[projects.{}]",
-        serde_json::to_string(project_path).unwrap_or_else(|_| "\"\"".to_string())
-    );
-    if trimmed.contains(&project_header) {
-        return ensure_trailing_newline(trimmed);
-    }
-    let project_section = format!("{project_header}\ntrust_level = \"trusted\"");
-    let merged = if trimmed.is_empty() {
-        project_section
-    } else {
-        format!("{trimmed}\n\n{project_section}")
-    };
-    ensure_trailing_newline(&merged)
-}
-
-pub(super) fn build_codex_config_toml(config: &Value, project_path: &str) -> String {
-    let normalized = normalize_codex_config_value(config);
-    let config_toml = value_string(normalized.get("CONFIG_TOML"));
-    if !config_toml.is_empty() {
-        return append_trusted_project_section(&config_toml, project_path);
-    }
-
-    let mut lines = Vec::new();
-    let base_url = value_string(normalized.get("BASE_URL"));
-    let model = value_string(normalized.get("MODEL"));
-    let reasoning_effort = value_string(normalized.get("REASONING_EFFORT"));
-    if !base_url.is_empty() {
-        lines.push("model_provider = \"custom\"".to_string());
-    }
-    if !model.is_empty() {
-        lines.push(format!(
-            "model = {}",
-            serde_json::to_string(&model).unwrap_or_else(|_| "\"\"".to_string())
-        ));
-    }
-    if !reasoning_effort.is_empty() {
-        lines.push(format!(
-            "model_reasoning_effort = {}",
-            serde_json::to_string(&reasoning_effort).unwrap_or_else(|_| "\"\"".to_string())
-        ));
-    }
-    if !base_url.is_empty() {
-        if !lines.is_empty() {
-            lines.push(String::new());
-        }
-        lines.push("[model_providers]".to_string());
-        lines.push(String::new());
-        lines.push("[model_providers.custom]".to_string());
-        lines.push("name = \"custom\"".to_string());
-        lines.push("wire_api = \"responses\"".to_string());
-        lines.push("requires_openai_auth = true".to_string());
-        lines.push(format!(
-            "base_url = {}",
-            serde_json::to_string(&base_url).unwrap_or_else(|_| "\"\"".to_string())
-        ));
-    }
-    if !project_path.is_empty() {
-        if !lines.is_empty() {
-            lines.push(String::new());
-        }
-        lines.push(format!(
-            "[projects.{}]",
-            serde_json::to_string(project_path).unwrap_or_else(|_| "\"\"".to_string())
-        ));
-        lines.push("trust_level = \"trusted\"".to_string());
-    }
-
-    ensure_trailing_newline(&lines.join("\n"))
+    CodexHomeConfig::from_value(config)
+        .without_config_toml()
+        .to_value()
 }
 
 pub(super) fn materialize_codex_home(
@@ -1176,41 +972,9 @@ pub(super) fn materialize_codex_home(
     home_dir: &Path,
     project_path: &Path,
 ) -> Result<(), ServiceRouteError> {
-    let codex_dir = home_dir.join(".codex");
-    stdfs::create_dir_all(home_dir).map_err(|error| {
-        ServiceRouteError::from_message(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
-    })?;
-    let _ = stdfs::remove_dir_all(&codex_dir);
-    stdfs::create_dir_all(&codex_dir).map_err(|error| {
-        ServiceRouteError::from_message(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
-    })?;
-
-    let normalized = normalize_codex_config_value(config);
-    let config_toml = build_codex_config_toml(
-        &Value::Object(normalized.clone()),
-        &path_to_string(project_path),
-    );
-    stdfs::write(codex_dir.join("config.toml"), config_toml).map_err(|error| {
-        ServiceRouteError::from_message(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
-    })?;
-
-    let auth_json = value_string(normalized.get("AUTH_JSON"));
-    let openai_api_key = value_string(normalized.get("OPENAI_API_KEY"));
-    let auth_file = codex_dir.join("auth.json");
-    if !auth_json.is_empty() {
-        stdfs::write(auth_file, ensure_trailing_newline(&auth_json)).map_err(|error| {
-            ServiceRouteError::from_message(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
-        })?;
-    } else if !openai_api_key.is_empty() {
-        let content = serde_json::to_string_pretty(&json!({ "OPENAI_API_KEY": openai_api_key }))
-            .unwrap_or_else(|_| "{}".to_string());
-        stdfs::write(auth_file, format!("{content}\n")).map_err(|error| {
-            ServiceRouteError::from_message(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
-        })?;
-    } else {
-        let _ = stdfs::remove_file(auth_file);
-    }
-    Ok(())
+    CodexHomeConfig::from_value(config)
+        .materialize(home_dir, &path_to_string(project_path), None)
+        .map_err(|error| ServiceRouteError::from_message(StatusCode::INTERNAL_SERVER_ERROR, &error))
 }
 
 pub(super) enum CommandRunError {

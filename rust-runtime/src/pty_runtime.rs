@@ -10,11 +10,14 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::child_runtime_protocol::{
+    JsonLineWriter, ProtocolOutput as ChildProtocolOutput, RuntimeControl, RuntimeMessage,
+    StdioProtocol, dispatch_lines, parse_response, write_notify, write_request,
+};
 use crate::native_session_registry::{NativeChannelLaunch, NativeSessionRegistry};
 
 const DEFAULT_COLS: u16 = 120;
@@ -34,15 +37,6 @@ const NATIVE_SUPERVISOR_SOCKET_ENV: &str = "NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET";
 const SUPERVISOR_CONNECT_TIMEOUT_MS: u64 = 2_000;
 const NATIVE_PTY_TERM: &str = "xterm-256color";
 const NATIVE_PTY_COLORTERM: &str = "truecolor";
-
-#[derive(Deserialize)]
-struct Message {
-    kind: String,
-    id: Option<String>,
-    method: Option<String>,
-    #[serde(default)]
-    params: Value,
-}
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,49 +92,6 @@ struct SnapshotResult {
     clients: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     idle_ms: Option<u64>,
-}
-
-#[derive(Serialize)]
-struct ResponseMessage<T>
-where
-    T: Serialize,
-{
-    kind: &'static str,
-    id: String,
-    ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<T>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<ResponseError>,
-}
-
-#[derive(Serialize)]
-struct ResponseError {
-    message: String,
-}
-
-#[derive(Deserialize)]
-struct WireResponse {
-    id: String,
-    ok: bool,
-    #[serde(default)]
-    result: Value,
-    error: Option<ResponseErrorPayload>,
-}
-
-#[derive(Deserialize)]
-struct ResponseErrorPayload {
-    message: String,
-}
-
-#[derive(Serialize)]
-struct EventMessage<T>
-where
-    T: Serialize,
-{
-    kind: &'static str,
-    event: &'static str,
-    params: T,
 }
 
 #[derive(Serialize)]
@@ -227,26 +178,22 @@ trait OutputSink: Send + Sync {
 }
 
 struct ChannelOutputSink {
-    event_tx: Sender<String>,
+    output: ChildProtocolOutput,
 }
 
 impl ChannelOutputSink {
-    fn new(event_tx: Sender<String>) -> Self {
-        Self { event_tx }
+    fn new(output: ChildProtocolOutput) -> Self {
+        Self { output }
     }
 }
 
 impl OutputSink for ChannelOutputSink {
     fn send_output(&self, connection_id: &str, data: String) {
-        send_json_line(
-            &self.event_tx,
-            &EventMessage {
-                kind: "event",
-                event: "output",
-                params: OutputEvent {
-                    connection_id: connection_id.to_string(),
-                    data,
-                },
+        self.output.event(
+            "output",
+            OutputEvent {
+                connection_id: connection_id.to_string(),
+                data,
             },
         );
     }
@@ -254,13 +201,13 @@ impl OutputSink for ChannelOutputSink {
 
 #[derive(Clone, Default)]
 struct ConnectionRoutes {
-    routes: Arc<Mutex<HashMap<String, Sender<String>>>>,
+    routes: Arc<Mutex<HashMap<String, ChildProtocolOutput>>>,
 }
 
 impl ConnectionRoutes {
-    fn bind(&self, connection_id: &str, event_tx: Sender<String>) {
+    fn bind(&self, connection_id: &str, output: ChildProtocolOutput) {
         if let Ok(mut routes) = self.routes.lock() {
-            routes.insert(connection_id.to_string(), event_tx);
+            routes.insert(connection_id.to_string(), output);
         }
     }
 
@@ -273,21 +220,17 @@ impl ConnectionRoutes {
 
 impl OutputSink for ConnectionRoutes {
     fn send_output(&self, connection_id: &str, data: String) {
-        let event_tx = self
+        let output = self
             .routes
             .lock()
             .ok()
             .and_then(|routes| routes.get(connection_id).cloned());
-        if let Some(event_tx) = event_tx {
-            send_json_line(
-                &event_tx,
-                &EventMessage {
-                    kind: "event",
-                    event: "output",
-                    params: OutputEvent {
-                        connection_id: connection_id.to_string(),
-                        data,
-                    },
+        if let Some(output) = output {
+            output.event(
+                "output",
+                OutputEvent {
+                    connection_id: connection_id.to_string(),
+                    data,
                 },
             );
         }
@@ -364,7 +307,7 @@ impl PtyHost for InProcessPtyHost {
 #[cfg(unix)]
 struct SupervisorClientPtyHost {
     socket_path: PathBuf,
-    event_tx: Sender<String>,
+    output: ChildProtocolOutput,
     event_connections: Mutex<HashMap<String, SupervisorEventConnection>>,
 }
 
@@ -378,10 +321,10 @@ struct SupervisorEventConnection {
 
 #[cfg(unix)]
 impl SupervisorClientPtyHost {
-    fn new(socket_path: PathBuf, event_tx: Sender<String>) -> Self {
+    fn new(socket_path: PathBuf, output: ChildProtocolOutput) -> Self {
         Self {
             socket_path,
-            event_tx,
+            output,
             event_connections: Mutex::new(HashMap::new()),
         }
     }
@@ -409,13 +352,13 @@ impl SupervisorClientPtyHost {
         let read_stream = stream.try_clone().map_err(|error| error.to_string())?;
         let mut write_stream = stream;
         let request_id = format!("attach-{}", now_ms());
-        let payload = serde_json::json!({
-            "kind": "request",
-            "id": request_id,
-            "method": "attachConnection",
-            "params": params,
-        });
-        write_json_message(&mut write_stream, &payload)?;
+        write_request(
+            &mut write_stream,
+            &request_id,
+            "attachConnection",
+            serde_json::to_value(params).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
 
         let mut reader = BufReader::new(read_stream);
         let mut line = String::new();
@@ -427,30 +370,25 @@ impl SupervisorClientPtyHost {
             if bytes == 0 {
                 return Err("native pty supervisor closed attach connection".to_string());
             }
-            let value: Value =
-                serde_json::from_str(line.trim()).map_err(|error| error.to_string())?;
-            if value.get("kind").and_then(Value::as_str) != Some("response") {
+            let Some(response) = parse_response(line.trim()).map_err(|error| error.to_string())?
+            else {
+                let value: Value =
+                    serde_json::from_str(line.trim()).map_err(|error| error.to_string())?;
                 if value.get("kind").and_then(Value::as_str) == Some("event") {
-                    let _ = self.event_tx.send(line.trim().to_string());
+                    self.output.forward_json_line(line.trim());
                 }
                 continue;
-            }
-            let response: WireResponse =
-                serde_json::from_value(value).map_err(|error| error.to_string())?;
+            };
             if response.id != request_id {
                 continue;
             }
-            if !response.ok {
-                return Err(response
-                    .error
-                    .map(|error| error.message)
-                    .unwrap_or_else(|| "native pty supervisor attach failed".to_string()));
-            }
+            let result =
+                response.into_result(|| "native pty supervisor attach failed".to_string())?;
             let result: AttachConnectionResult =
-                serde_json::from_value(response.result).map_err(|error| error.to_string())?;
+                serde_json::from_value(result).map_err(|error| error.to_string())?;
             let shutdown = Arc::new(AtomicBool::new(false));
             let join =
-                spawn_supervisor_event_reader(reader, self.event_tx.clone(), Arc::clone(&shutdown));
+                spawn_supervisor_event_reader(reader, self.output.clone(), Arc::clone(&shutdown));
             if let Ok(mut connections) = self.event_connections.lock() {
                 connections.insert(
                     connection_id,
@@ -1744,7 +1682,10 @@ fn get_output_snapshot(state: &SharedState, params: SnapshotParams) -> SnapshotR
 
 fn get_scrollback_snapshot(state: &SharedState, params: SnapshotParams) -> SnapshotResult {
     let output = if backend_mode() == BackendMode::Native {
-        read_native_scrollback(&native_scrollback_path(&params.session, params.window_index))
+        read_native_scrollback(&native_scrollback_path(
+            &params.session,
+            params.window_index,
+        ))
     } else {
         String::new()
     };
@@ -1768,48 +1709,6 @@ fn get_scrollback_snapshot(state: &SharedState, params: SnapshotParams) -> Snaps
             .unwrap_or(0),
         idle_ms: Some(now_ms().saturating_sub(entry.last_activity_ms.load(Ordering::SeqCst))),
     }
-}
-
-fn send_response<T>(
-    event_tx: &Sender<String>,
-    id: String,
-    ok: bool,
-    result: Option<T>,
-    error: Option<String>,
-) where
-    T: Serialize,
-{
-    send_json_line(
-        event_tx,
-        &ResponseMessage {
-            kind: "response",
-            id,
-            ok,
-            result,
-            error: error.map(|message| ResponseError { message }),
-        },
-    );
-}
-
-fn send_json_line<T>(event_tx: &Sender<String>, value: &T)
-where
-    T: Serialize,
-{
-    if let Ok(line) = serde_json::to_string(value) {
-        let _ = event_tx.send(line);
-    }
-}
-
-fn write_json_message<T>(writer: &mut impl Write, value: &T) -> Result<(), String>
-where
-    T: Serialize,
-{
-    let line = serde_json::to_string(value).map_err(|error| error.to_string())?;
-    writer
-        .write_all(line.as_bytes())
-        .map_err(|error| error.to_string())?;
-    writer.write_all(b"\n").map_err(|error| error.to_string())?;
-    writer.flush().map_err(|error| error.to_string())
 }
 
 #[cfg(unix)]
@@ -1843,15 +1742,7 @@ fn supervisor_connect(_socket_path: &Path) -> Result<(), String> {
 fn supervisor_request(socket_path: &Path, method: &str, params: Value) -> Result<Value, String> {
     let mut stream = supervisor_connect(socket_path)?;
     let request_id = format!("req-{}", now_ms());
-    write_json_message(
-        &mut stream,
-        &serde_json::json!({
-            "kind": "request",
-            "id": request_id,
-            "method": method,
-            "params": params,
-        }),
-    )?;
+    write_request(&mut stream, &request_id, method, params).map_err(|error| error.to_string())?;
 
     let reader = BufReader::new(stream);
     for line in reader.lines() {
@@ -1859,22 +1750,13 @@ fn supervisor_request(socket_path: &Path, method: &str, params: Value) -> Result
         if line.trim().is_empty() {
             continue;
         }
-        let value: Value = serde_json::from_str(&line).map_err(|error| error.to_string())?;
-        if value.get("kind").and_then(Value::as_str) != Some("response") {
+        let Some(response) = parse_response(&line).map_err(|error| error.to_string())? else {
             continue;
-        }
-        let response: WireResponse =
-            serde_json::from_value(value).map_err(|error| error.to_string())?;
+        };
         if response.id != request_id {
             continue;
         }
-        if response.ok {
-            return Ok(response.result);
-        }
-        return Err(response
-            .error
-            .map(|error| error.message)
-            .unwrap_or_else(|| format!("native pty supervisor request failed: {method}")));
+        return response.into_result(|| format!("native pty supervisor request failed: {method}"));
     }
 
     Err(format!(
@@ -1890,14 +1772,7 @@ fn supervisor_request(_socket_path: &Path, _method: &str, _params: Value) -> Res
 #[cfg(unix)]
 fn supervisor_notify(socket_path: &Path, method: &str, params: Value) -> Result<(), String> {
     let mut stream = supervisor_connect(socket_path)?;
-    write_json_message(
-        &mut stream,
-        &serde_json::json!({
-            "kind": "notify",
-            "method": method,
-            "params": params,
-        }),
-    )
+    write_notify(&mut stream, method, params).map_err(|error| error.to_string())
 }
 
 #[cfg(not(unix))]
@@ -1908,7 +1783,7 @@ fn supervisor_notify(_socket_path: &Path, _method: &str, _params: Value) -> Resu
 #[cfg(unix)]
 fn spawn_supervisor_event_reader(
     mut reader: BufReader<std::os::unix::net::UnixStream>,
-    event_tx: Sender<String>,
+    output: ChildProtocolOutput,
     shutdown: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -1925,7 +1800,7 @@ fn spawn_supervisor_event_reader(
                         Err(_) => continue,
                     };
                     if value.get("kind").and_then(Value::as_str) == Some("event") {
-                        let _ = event_tx.send(line.trim().to_string());
+                        output.forward_json_line(line.trim());
                     }
                 }
                 Err(_) => break,
@@ -1941,160 +1816,72 @@ pub fn run_stdio_runtime() {
         reconcile_native_processes_on_startup();
     }
 
-    let (tx, rx) = mpsc::channel::<String>();
-    let host = create_stdio_host(tx.clone());
+    let (mut protocol, output) = StdioProtocol::start();
+    let host = create_stdio_host(output.clone());
 
-    let writer = thread::spawn(move || {
-        let stdout = io::stdout();
-        let mut handle = stdout.lock();
-        while let Ok(line) = rx.recv() {
-            if handle.write_all(line.as_bytes()).is_err() {
-                break;
-            }
-            if handle.write_all(b"\n").is_err() {
-                break;
-            }
-            if handle.flush().is_err() {
-                break;
-            }
+    protocol.run(|message| {
+        match message {
+            RuntimeMessage::Request { id, method, params } => match method.as_str() {
+                "ready" | "runtimeStatus" => {
+                    output.success(id, host.runtime_status());
+                }
+                "attachConnection" => {
+                    match serde_json::from_value::<AttachConnectionParams>(params) {
+                        Ok(params) => match host.attach_connection(params) {
+                            Ok(result) => output.success(id, result),
+                            Err(error) => output.failure(id, error),
+                        },
+                        Err(error) => output.failure(id, error.to_string()),
+                    }
+                }
+                "getOutputSnapshot" => match serde_json::from_value::<SnapshotParams>(params) {
+                    Ok(params) => output.success(id, host.get_output_snapshot(params)),
+                    Err(error) => output.failure(id, error.to_string()),
+                },
+                "getScrollbackSnapshot" => match serde_json::from_value::<SnapshotParams>(params) {
+                    Ok(params) => output.success(id, host.get_scrollback_snapshot(params)),
+                    Err(error) => output.failure(id, error.to_string()),
+                },
+                "shutdown" => {
+                    host.shutdown();
+                    output.success(id, serde_json::json!({ "ok": true }));
+                    return RuntimeControl::Shutdown;
+                }
+                _ => {
+                    output.failure(id, format!("unsupported method: {method}"));
+                }
+            },
+            RuntimeMessage::Notify { method, params } => match method.as_str() {
+                "handleConnectionMessage" => {
+                    if let Ok(params) = serde_json::from_value::<ConnectionNotifyParams>(params) {
+                        host.handle_connection_message(params);
+                    }
+                }
+                "closeConnection" | "errorConnection" => {
+                    if let Ok(params) = serde_json::from_value::<ConnectionNotifyParams>(params) {
+                        host.close_connection(params);
+                    }
+                }
+                _ => {}
+            },
         }
+        RuntimeControl::Continue
     });
-
-    let stdin = io::stdin();
-    let reader = BufReader::new(stdin.lock());
-
-    for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => break,
-        };
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let message: Message = match serde_json::from_str(&line) {
-            Ok(value) => value,
-            Err(error) => {
-                eprintln!("invalid request: {error}");
-                continue;
-            }
-        };
-
-        match message.kind.as_str() {
-            "request" => {
-                let id = message.id.unwrap_or_default();
-                let method = message.method.unwrap_or_default();
-                match method.as_str() {
-                    "ready" | "runtimeStatus" => {
-                        send_response(&tx, id, true, Some(host.runtime_status()), None);
-                    }
-                    "attachConnection" => {
-                        match serde_json::from_value::<AttachConnectionParams>(message.params) {
-                            Ok(params) => match host.attach_connection(params) {
-                                Ok(result) => send_response(&tx, id, true, Some(result), None),
-                                Err(error) => {
-                                    send_response::<Value>(&tx, id, false, None, Some(error))
-                                }
-                            },
-                            Err(error) => send_response::<Value>(
-                                &tx,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "getOutputSnapshot" => {
-                        match serde_json::from_value::<SnapshotParams>(message.params) {
-                            Ok(params) => send_response(
-                                &tx,
-                                id,
-                                true,
-                                Some(host.get_output_snapshot(params)),
-                                None,
-                            ),
-                            Err(error) => send_response::<Value>(
-                                &tx,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "getScrollbackSnapshot" => {
-                        match serde_json::from_value::<SnapshotParams>(message.params) {
-                            Ok(params) => send_response(
-                                &tx,
-                                id,
-                                true,
-                                Some(host.get_scrollback_snapshot(params)),
-                                None,
-                            ),
-                            Err(error) => send_response::<Value>(
-                                &tx,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "shutdown" => {
-                        host.shutdown();
-                        send_response(&tx, id, true, Some(serde_json::json!({ "ok": true })), None);
-                        break;
-                    }
-                    _ => {
-                        send_response::<Value>(
-                            &tx,
-                            id,
-                            false,
-                            None,
-                            Some(format!("unsupported method: {method}")),
-                        );
-                    }
-                }
-            }
-            "notify" => {
-                let method = message.method.unwrap_or_default();
-                match method.as_str() {
-                    "handleConnectionMessage" => {
-                        if let Ok(params) =
-                            serde_json::from_value::<ConnectionNotifyParams>(message.params)
-                        {
-                            host.handle_connection_message(params);
-                        }
-                    }
-                    "closeConnection" | "errorConnection" => {
-                        if let Ok(params) =
-                            serde_json::from_value::<ConnectionNotifyParams>(message.params)
-                        {
-                            host.close_connection(params);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-    }
 
     host.shutdown();
     drop(host);
-    drop(tx);
-    let _ = writer.join();
+    drop(output);
+    protocol.finish();
 }
 
-fn create_stdio_host(event_tx: Sender<String>) -> Box<dyn PtyHost> {
+fn create_stdio_host(protocol_output: ChildProtocolOutput) -> Box<dyn PtyHost> {
     if backend_mode() == BackendMode::Native
-        && let Some(host) = create_supervisor_client_host(event_tx.clone())
+        && let Some(host) = create_supervisor_client_host(protocol_output.clone())
     {
         return host;
     }
 
-    let output = RuntimeOutput::new(Arc::new(ChannelOutputSink::new(event_tx)));
+    let output = RuntimeOutput::new(Arc::new(ChannelOutputSink::new(protocol_output)));
     let state = SharedState {
         ptys: Arc::new(Mutex::new(HashMap::new())),
         output,
@@ -2103,14 +1890,16 @@ fn create_stdio_host(event_tx: Sender<String>) -> Box<dyn PtyHost> {
 }
 
 #[cfg(unix)]
-fn create_supervisor_client_host(event_tx: Sender<String>) -> Option<Box<dyn PtyHost>> {
+fn create_supervisor_client_host(protocol_output: ChildProtocolOutput) -> Option<Box<dyn PtyHost>> {
     configured_native_supervisor_socket_path().map(|socket_path| {
-        Box::new(SupervisorClientPtyHost::new(socket_path, event_tx)) as Box<dyn PtyHost>
+        Box::new(SupervisorClientPtyHost::new(socket_path, protocol_output)) as Box<dyn PtyHost>
     })
 }
 
 #[cfg(not(unix))]
-fn create_supervisor_client_host(_event_tx: Sender<String>) -> Option<Box<dyn PtyHost>> {
+fn create_supervisor_client_host(
+    _protocol_output: ChildProtocolOutput,
+) -> Option<Box<dyn PtyHost>> {
     None
 }
 
@@ -2181,162 +1970,76 @@ fn handle_supervisor_client(
     routes: ConnectionRoutes,
     shutting_down: Arc<AtomicBool>,
 ) {
-    let (tx, rx) = mpsc::channel::<String>();
-    let mut writer = match stream.try_clone() {
+    let writer_stream = match stream.try_clone() {
         Ok(writer) => writer,
         Err(error) => {
             eprintln!("native pty supervisor clone failed: {error}");
             return;
         }
     };
-    let writer_thread = thread::spawn(move || {
-        while let Ok(line) = rx.recv() {
-            if writer.write_all(line.as_bytes()).is_err() {
-                break;
-            }
-            if writer.write_all(b"\n").is_err() {
-                break;
-            }
-            if writer.flush().is_err() {
-                break;
-            }
-        }
-    });
-
+    let (writer, output) = JsonLineWriter::start(writer_stream);
     let mut bound_connections = Vec::new();
-    let reader = BufReader::new(stream);
-    for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => break,
-        };
-        if line.trim().is_empty() {
-            continue;
-        }
 
-        let message: Message = match serde_json::from_str(&line) {
-            Ok(value) => value,
-            Err(error) => {
-                eprintln!("native pty supervisor invalid request: {error}");
-                continue;
-            }
-        };
-
-        match message.kind.as_str() {
-            "request" => {
-                let id = message.id.unwrap_or_default();
-                let method = message.method.unwrap_or_default();
-                match method.as_str() {
-                    "ready" | "runtimeStatus" => {
-                        send_response(&tx, id, true, Some(host.runtime_status()), None);
-                    }
-                    "attachConnection" => {
-                        match serde_json::from_value::<AttachConnectionParams>(message.params) {
-                            Ok(params) => {
-                                routes.bind(&params.connection_id, tx.clone());
-                                if !bound_connections.contains(&params.connection_id) {
-                                    bound_connections.push(params.connection_id.clone());
-                                }
-                                match host.attach_connection(params) {
-                                    Ok(result) => send_response(&tx, id, true, Some(result), None),
-                                    Err(error) => {
-                                        send_response::<Value>(&tx, id, false, None, Some(error))
-                                    }
-                                }
+    dispatch_lines(BufReader::new(stream), &mut |message| {
+        match message {
+            RuntimeMessage::Request { id, method, params } => match method.as_str() {
+                "ready" | "runtimeStatus" => output.success(id, host.runtime_status()),
+                "attachConnection" => {
+                    match serde_json::from_value::<AttachConnectionParams>(params) {
+                        Ok(params) => {
+                            routes.bind(&params.connection_id, output.clone());
+                            if !bound_connections.contains(&params.connection_id) {
+                                bound_connections.push(params.connection_id.clone());
                             }
-                            Err(error) => send_response::<Value>(
-                                &tx,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
+                            match host.attach_connection(params) {
+                                Ok(result) => output.success(id, result),
+                                Err(error) => output.failure(id, error),
+                            }
                         }
+                        Err(error) => output.failure(id, error.to_string()),
                     }
-                    "getOutputSnapshot" => {
-                        match serde_json::from_value::<SnapshotParams>(message.params) {
-                            Ok(params) => send_response(
-                                &tx,
-                                id,
-                                true,
-                                Some(host.get_output_snapshot(params)),
-                                None,
-                            ),
-                            Err(error) => send_response::<Value>(
-                                &tx,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "getScrollbackSnapshot" => {
-                        match serde_json::from_value::<SnapshotParams>(message.params) {
-                            Ok(params) => send_response(
-                                &tx,
-                                id,
-                                true,
-                                Some(host.get_scrollback_snapshot(params)),
-                                None,
-                            ),
-                            Err(error) => send_response::<Value>(
-                                &tx,
-                                id,
-                                false,
-                                None,
-                                Some(error.to_string()),
-                            ),
-                        }
-                    }
-                    "shutdown" => {
-                        host.shutdown();
-                        shutting_down.store(true, Ordering::SeqCst);
-                        send_response(&tx, id, true, Some(serde_json::json!({ "ok": true })), None);
-                        break;
-                    }
-                    _ => send_response::<Value>(
-                        &tx,
-                        id,
-                        false,
-                        None,
-                        Some(format!("unsupported method: {method}")),
-                    ),
                 }
-            }
-            "notify" => {
-                let method = message.method.unwrap_or_default();
-                match method.as_str() {
-                    "handleConnectionMessage" => {
-                        if let Ok(params) =
-                            serde_json::from_value::<ConnectionNotifyParams>(message.params)
-                        {
-                            host.handle_connection_message(params);
-                        }
-                    }
-                    "closeConnection" | "errorConnection" => {
-                        if let Ok(params) =
-                            serde_json::from_value::<ConnectionNotifyParams>(message.params)
-                        {
-                            routes.unbind(&params.connection_id);
-                            bound_connections.retain(|id| id != &params.connection_id);
-                            host.detach_connection(params);
-                        }
-                    }
-                    _ => {}
+                "getOutputSnapshot" => match serde_json::from_value::<SnapshotParams>(params) {
+                    Ok(params) => output.success(id, host.get_output_snapshot(params)),
+                    Err(error) => output.failure(id, error.to_string()),
+                },
+                "getScrollbackSnapshot" => match serde_json::from_value::<SnapshotParams>(params) {
+                    Ok(params) => output.success(id, host.get_scrollback_snapshot(params)),
+                    Err(error) => output.failure(id, error.to_string()),
+                },
+                "shutdown" => {
+                    host.shutdown();
+                    shutting_down.store(true, Ordering::SeqCst);
+                    output.success(id, serde_json::json!({ "ok": true }));
+                    return RuntimeControl::Shutdown;
                 }
-            }
-            _ => {}
+                _ => output.failure(id, format!("unsupported method: {method}")),
+            },
+            RuntimeMessage::Notify { method, params } => match method.as_str() {
+                "handleConnectionMessage" => {
+                    if let Ok(params) = serde_json::from_value::<ConnectionNotifyParams>(params) {
+                        host.handle_connection_message(params);
+                    }
+                }
+                "closeConnection" | "errorConnection" => {
+                    if let Ok(params) = serde_json::from_value::<ConnectionNotifyParams>(params) {
+                        routes.unbind(&params.connection_id);
+                        bound_connections.retain(|id| id != &params.connection_id);
+                        host.detach_connection(params);
+                    }
+                }
+                _ => {}
+            },
         }
-    }
+        RuntimeControl::Continue
+    });
 
     for connection_id in bound_connections {
         routes.unbind(&connection_id);
     }
-    drop(tx);
-    let _ = writer_thread.join();
+    drop(output);
+    writer.finish();
 }
-
 #[cfg(test)]
 mod tests {
     use super::{

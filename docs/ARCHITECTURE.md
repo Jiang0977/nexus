@@ -1,6 +1,6 @@
 # Nexus Architecture
 
-最后更新：2026-05-20
+最后更新：2026-07-25
 
 目标：给维护者一个当前真实可运行的结构图，不保留已经删除的 Node/npm/PM2 叙事，也不把 tmux-only 的旧边界误当成当前事实。
 
@@ -97,16 +97,21 @@ bash start.sh
 | `rust-runtime/src/project_defaults.rs` | 默认 shell / profile 持久化 |
 | `rust-runtime/src/sanitize.rs` | 文件名、窗口名、用户输入清洗 |
 | `rust-runtime/src/auth.rs` | JWT 校验 |
+| `rust-runtime/src/codex_home.rs` | Codex runtime HOME 的配置规整、global import、trust/auth 生成、共享状态链接与物化单一事实源 |
+| `rust-runtime/src/child_runtime_protocol.rs` | transport-neutral JSON-line request/notify/response/event contract、writer lifecycle；同时服务 stdio child runtime 与 native supervisor socket |
 
 ### Child runtimes
 
 | 文件 | 作用 |
 |---|---|
-| `rust-runtime/src/bin/nexus-session-runtime.rs` | projects / channels / sessions / Codex 历史 |
-| `rust-runtime/src/bin/nexus-window-launch-runtime.rs` | 新建窗口和 shell 启动 |
-| `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / broker；tmux attach 与 native PTY attach 都在这里收口 |
-| `rust-runtime/src/bin/nexus-task-runtime.rs` | 任务执行协议 |
-| `rust-runtime/src/bin/nexus-codex-home.rs` | Codex 隔离 home 物化 |
+| `rust-runtime/src/bin/nexus-session-runtime.rs` | projects / channels / sessions / Codex 历史的 request dispatch |
+| `rust-runtime/src/bin/nexus_session_runtime/backend.rs` | session backend capability 装配；按 catalog / lifecycle / cleanup 三个窄 port 选择 adapter |
+| `rust-runtime/src/bin/nexus_session_runtime/backend/{catalog,lifecycle,cleanup}.rs` | capability contract 与 tmux/native 两个真实 adapter；contract test 可注入 local fake，不进入 HTTP/JSON interface |
+| `rust-runtime/src/bin/nexus_session_runtime/backend/support.rs` | native process/runtime cleanup 等 adapter 内部 helper |
+| `rust-runtime/src/bin/nexus-window-launch-runtime.rs` | 新建窗口和 shell 的领域 dispatch；wire contract 复用共享 protocol |
+| `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / broker 的薄入口 |
+| `rust-runtime/src/bin/nexus-task-runtime.rs` | task 领域 dispatch；wire contract 复用共享 protocol |
+| `rust-runtime/src/bin/nexus-codex-home.rs` | Codex 隔离 HOME CLI；实际物化委托给共享 `codex_home` module |
 | `rust-runtime/src/bin/nexus-setup.rs` | `.env` + systemd user units + tmux bootstrap |
 | `rust-runtime/src/bin/nexus-native-pty-supervisor.rs` | native backend 的持久 PTY supervisor |
 | `rust-runtime/src/bin/nexus-native-session.rs` | 从宿主机终端列出/attach native session 的 CLI |
@@ -117,7 +122,7 @@ bash start.sh
 |---|---|
 | `rust-runtime/src/native_session_registry.rs` | SQLite native project/channel/process/metadata registry，默认落到 `data/native-sessions/session.db` |
 | `rust-runtime/src/native_session_cli.rs` | `nexus-native-session list/attach` CLI 实现 |
-| `rust-runtime/src/pty_runtime.rs` | `NEXUS_SESSION_BACKEND` selector、native supervisor client、native scrollback、PTY 生命周期 |
+| `rust-runtime/src/pty_runtime.rs` | `NEXUS_SESSION_BACKEND` selector、native supervisor client、native scrollback、PTY 生命周期；stdio 与 Unix socket 共用 `child_runtime_protocol` envelope/writer |
 | `scripts/nexus-native-pty-service.sh` | 根据 `.env` 或 `data/session-backend.json` 等配置决定是否 exec supervisor |
 
 ## 静态资源与前端
@@ -149,8 +154,9 @@ bash start.sh
 | 路径 | 作用 |
 |---|---|
 | `frontend/src/Terminal.tsx` | 顶层编排：overlay、drawer、sidebar、toolbar、lazy 面板装配 |
-| `frontend/src/terminal/useTerminalRuntime.ts` | xterm、WebSocket、resize、输入代理与移动端键盘行为 |
-| `frontend/src/terminal/useTerminalPaneRuntime.ts` | PC split-view 每个 pane 独立的 xterm / WebSocket / resize / reconnect runtime |
+| `frontend/src/terminal/terminalConnection.ts` | 浏览器终端连接 port：URL、open/resize、data/autoscroll、close-code、retry/backoff 与 cleanup；production WebSocket 和测试 fake 共用 contract |
+| `frontend/src/terminal/useTerminalRuntime.ts` | 单窗 xterm、输入代理与移动端键盘行为；通过 adapter 投影连接状态 |
+| `frontend/src/terminal/useTerminalPaneRuntime.ts` | PC split-view pane 的 xterm/状态 adapter；共享 terminal connection policy |
 | `frontend/src/terminal/useTerminalSessions.ts` | tmux session/window 列表、切换、创建、轮询状态 |
 | `frontend/src/terminal/useTerminalArtifacts.ts` | scrollback、上传、通知、文件冲突处理 |
 | `frontend/src/terminal/DesktopSidebar.tsx` | 桌面端 session/sidebar 壳层 |
@@ -218,6 +224,9 @@ npm run check
 - `start.sh` 对 vendored frontend bundle 的行为
 - `frontend/dist/` 资源完整性 smoke
 - native PTY runtime / supervisor / CLI 的 binary-level 回归
+- session catalog/lifecycle/cleanup capability 的 local fake contract tests，以及 tmux/native binary parity
+- stdio 与 Unix supervisor socket 共用的 JSON-line codec/writer contract
+- terminal connection fake WebSocket contract 与 browser regression
 
 默认值真相源：
 
