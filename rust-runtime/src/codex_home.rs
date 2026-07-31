@@ -219,7 +219,8 @@ impl CodexHomeConfig {
 
     fn build_config_toml(&self, project_path: &str) -> String {
         if !self.config_toml.is_empty() {
-            return append_trusted_project_section(&self.config_toml, project_path);
+            let config_toml = append_trusted_project_section(&self.config_toml, project_path);
+            return ensure_resume_provider_aliases(&config_toml, &self.base_url);
         }
 
         let mut lines = Vec::new();
@@ -256,6 +257,167 @@ impl CodexHomeConfig {
         }
 
         ensure_trailing_newline(&lines.join("\n"))
+    }
+}
+
+fn ensure_resume_provider_aliases(config_toml_text: &str, fallback_base_url: &str) -> String {
+    let parsed_toml = parse_simple_toml(config_toml_text);
+    let configured_provider = parsed_toml
+        .root
+        .get("model_provider")
+        .cloned()
+        .unwrap_or_default();
+    let base_url = resolve_provider_base_url(&parsed_toml, &configured_provider, fallback_base_url);
+    if base_url.is_empty() {
+        return ensure_trailing_newline(config_toml_text.trim());
+    }
+
+    let mut text = config_toml_text.trim().to_string();
+    if !configured_provider.is_empty()
+        && !has_model_provider_section(&parsed_toml, &configured_provider)
+    {
+        text = append_model_provider_section(&text, &configured_provider, &base_url, None);
+    }
+    if configured_provider != "custom" && !has_model_provider_section(&parsed_toml, "custom") {
+        text = append_model_provider_section(
+            &text,
+            "custom",
+            &base_url,
+            provider_section_values(&parsed_toml, &configured_provider),
+        );
+    }
+    ensure_trailing_newline(&text)
+}
+
+fn resolve_provider_base_url(
+    parsed_toml: &SimpleToml,
+    configured_provider: &str,
+    fallback_base_url: &str,
+) -> String {
+    if !fallback_base_url.trim().is_empty() {
+        return fallback_base_url.trim().to_string();
+    }
+    if !configured_provider.is_empty() {
+        if let Some(base_url) = provider_section_base_url(parsed_toml, configured_provider) {
+            return base_url;
+        }
+    }
+    parsed_toml
+        .sections
+        .iter()
+        .find_map(|(section_name, values)| {
+            if section_name.starts_with("model_providers.") {
+                values
+                    .get("base_url")
+                    .filter(|value| !value.trim().is_empty())
+                    .cloned()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn has_model_provider_section(parsed_toml: &SimpleToml, provider_name: &str) -> bool {
+    parsed_toml
+        .sections
+        .contains_key(&format!("model_providers.{provider_name}"))
+        || parsed_toml
+            .sections
+            .contains_key(&format!("model_providers.{}", toml_string(provider_name)))
+}
+
+fn provider_section_base_url(parsed_toml: &SimpleToml, provider_name: &str) -> Option<String> {
+    provider_section_values(parsed_toml, provider_name)
+        .and_then(|section| section.get("base_url"))
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+}
+
+fn provider_section_values<'a>(
+    parsed_toml: &'a SimpleToml,
+    provider_name: &str,
+) -> Option<&'a HashMap<String, String>> {
+    parsed_toml
+        .sections
+        .get(&format!("model_providers.{provider_name}"))
+        .or_else(|| {
+            parsed_toml
+                .sections
+                .get(&format!("model_providers.{}", toml_string(provider_name)))
+        })
+}
+
+fn append_model_provider_section(
+    config_toml_text: &str,
+    provider_name: &str,
+    base_url: &str,
+    template: Option<&HashMap<String, String>>,
+) -> String {
+    let mut lines = Vec::new();
+    if !config_toml_text.trim().is_empty() {
+        lines.push(config_toml_text.trim().to_string());
+        lines.push(String::new());
+    }
+    lines.push(format!(
+        "[model_providers.{}]",
+        model_provider_section_key(provider_name)
+    ));
+    lines.push(format!("name = {}", toml_string(provider_name)));
+    let template_values = template.cloned().unwrap_or_default();
+    let wire_api = template_values
+        .get("wire_api")
+        .cloned()
+        .unwrap_or_else(|| "responses".to_string());
+    let requires_openai_auth = template_values
+        .get("requires_openai_auth")
+        .cloned()
+        .unwrap_or_else(|| "true".to_string());
+    lines.push(format!("wire_api = {}", toml_scalar_string(&wire_api)));
+    lines.push(format!(
+        "requires_openai_auth = {}",
+        toml_scalar_string(&requires_openai_auth)
+    ));
+    lines.push(format!("base_url = {}", toml_string(base_url)));
+    let mut extra_keys = template_values
+        .keys()
+        .filter(|key| {
+            key.as_str() != "name"
+                && key.as_str() != "wire_api"
+                && key.as_str() != "requires_openai_auth"
+                && key.as_str() != "base_url"
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    extra_keys.sort();
+    for key in extra_keys {
+        if let Some(value) = template_values.get(&key) {
+            lines.push(format!("{key} = {}", toml_scalar_string(value)));
+        }
+    }
+    lines.join("\n")
+}
+
+fn model_provider_section_key(provider_name: &str) -> String {
+    if provider_name
+        .chars()
+        .all(|value| value.is_ascii_alphanumeric() || value == '_' || value == '-')
+    {
+        provider_name.to_string()
+    } else {
+        toml_string(provider_name)
+    }
+}
+
+fn toml_scalar_string(value: &str) -> String {
+    if value == "true"
+        || value == "false"
+        || value.parse::<i64>().is_ok()
+        || value.parse::<f64>().is_ok()
+    {
+        value.to_string()
+    } else {
+        toml_string(value)
     }
 }
 

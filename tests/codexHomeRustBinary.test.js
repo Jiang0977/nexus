@@ -202,6 +202,51 @@ test('real rust codex home tool merges shared sections and preserves explicit au
   }
 })
 
+test('real rust codex home tool adds custom resume alias for imported provider configs', async () => {
+  ensureBuilt()
+  const sourceHome = mkdtempSync(join(tmpdir(), 'nexus-codex-source-home-'))
+  const runtimeHome = mkdtempSync(join(tmpdir(), 'nexus-codex-runtime-home-'))
+  const configFile = join(runtimeHome, 'profile.json')
+
+  writeFileSync(configFile, JSON.stringify({
+    CONFIG_TOML: [
+      'model_provider = "codexapi"',
+      'model = "gpt-5.5"',
+      '',
+      '[model_providers.codexapi]',
+      'base_url = "https://example.com/v1"',
+      'wire_api = "chat_completions"',
+      'requires_openai_auth = false',
+      'env_key = "CODEX_API_KEY"',
+    ].join('\n'),
+  }, null, 2))
+
+  try {
+    const result = runCodexHomeTool({
+      configFile,
+      homeDir: runtimeHome,
+      projectPath: '/workspace/demo',
+      env: { HOME: sourceHome },
+    })
+
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+
+    const configToml = readFileSync(join(runtimeHome, '.codex', 'config.toml'), 'utf8')
+    assert.match(configToml, /^model_provider = "codexapi"/m)
+    assert.match(configToml, /\[model_providers\.codexapi\]/)
+    assert.match(configToml, /\[model_providers\.custom\]/)
+    assert.match(configToml, /name = "custom"/)
+    assert.match(configToml, /wire_api = "chat_completions"/)
+    assert.match(configToml, /requires_openai_auth = false/)
+    assert.match(configToml, /env_key = "CODEX_API_KEY"/)
+    assert.match(configToml, /base_url = "https:\/\/example\.com\/v1"/)
+    assert.match(configToml, /\[projects\."\/workspace\/demo"\]/)
+  } finally {
+    rmSync(sourceHome, { recursive: true, force: true })
+    rmSync(runtimeHome, { recursive: true, force: true })
+  }
+})
+
 test('real rust codex home tool preserves explicit feature flags from imported config', async () => {
   ensureBuilt()
   const sourceHome = mkdtempSync(join(tmpdir(), 'nexus-codex-source-home-'))
