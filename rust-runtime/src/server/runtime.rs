@@ -715,6 +715,8 @@ pub(super) struct AuthClaims {
 #[derive(Deserialize, Default)]
 pub(super) struct SessionQuery {
     pub(super) session: Option<String>,
+    #[serde(default, rename = "tailChars")]
+    pub(super) tail_chars: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -897,7 +899,54 @@ pub(super) async fn serve_index(state: &AppState) -> Response {
     serve_file(index_path).await
 }
 
+pub(super) fn is_hashed_frontend_asset(state: &AppState, path: &Path) -> bool {
+    path.starts_with(state.frontend_dist_dir.join("assets"))
+        && path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(has_vite_content_hash_suffix)
+}
+
+fn has_vite_content_hash_suffix(file_name: &str) -> bool {
+    let Some((stem, extension)) = file_name.rsplit_once('.') else {
+        return false;
+    };
+    if stem.is_empty() || extension.is_empty() {
+        return false;
+    }
+
+    let bytes = stem.as_bytes();
+    bytes.iter().enumerate().any(|(index, byte)| {
+        if *byte != b'-' {
+            return false;
+        }
+        is_current_vite_content_hash(&bytes[index + 1..])
+    })
+}
+
+/// Current Vite hashed filenames in this repo use an exactly 8-character
+/// URL-safe suffix (`A-Za-z0-9_-`), which may itself contain `-`.
+/// All-lowercase dictionary suffixes such as `defaults` are not content hashes.
+fn is_current_vite_content_hash(hash: &[u8]) -> bool {
+    hash.len() == 8
+        && hash.iter().copied().all(is_vite_hash_byte)
+        && hash.iter().copied().any(|byte| !byte.is_ascii_lowercase())
+}
+
+fn is_vite_hash_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
+}
+
+pub(super) async fn serve_discovered_static_file(state: &AppState, path: PathBuf) -> Response {
+    let immutable = is_hashed_frontend_asset(state, &path);
+    serve_file_with_cache(path, immutable).await
+}
+
 pub(super) async fn serve_file(path: PathBuf) -> Response {
+    serve_file_with_cache(path, false).await
+}
+
+async fn serve_file_with_cache(path: PathBuf, immutable: bool) -> Response {
     match fs::read(&path).await {
         Ok(bytes) => {
             let mime = from_path(&path).first_or_octet_stream();
@@ -907,6 +956,14 @@ pub(super) async fn serve_file(path: PathBuf) -> Response {
                 CONTENT_TYPE,
                 HeaderValue::from_str(mime.essence_str())
                     .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+            );
+            response.headers_mut().insert(
+                CACHE_CONTROL,
+                HeaderValue::from_static(if immutable {
+                    "public, max-age=31536000, immutable"
+                } else {
+                    "no-cache"
+                }),
             );
             response
         }
@@ -940,33 +997,42 @@ pub(super) async fn resolve_session_output_snapshot(
     runtime_result: Result<Value, String>,
     session: &str,
     window_index: u32,
+    tail_chars: Option<usize>,
 ) -> Result<Value, String> {
     let mut snapshot = match runtime_result? {
         Value::Object(object) => object,
         payload => return Ok(payload),
     };
 
+    apply_disconnected_tmux_fallback(&mut snapshot, session, window_index).await;
+    bound_snapshot_output_field(&mut snapshot, tail_chars);
+    Ok(Value::Object(snapshot))
+}
+
+async fn apply_disconnected_tmux_fallback(
+    snapshot: &mut serde_json::Map<String, Value>,
+    session: &str,
+    window_index: u32,
+) {
     let connected = snapshot
         .get("connected")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let output = snapshot
+    let has_output = snapshot
         .get("output")
         .and_then(Value::as_str)
-        .unwrap_or_default();
-
-    if connected || !output.is_empty() {
-        return Ok(Value::Object(snapshot));
+        .is_some_and(|output| !output.is_empty());
+    if connected || has_output {
+        return;
     }
 
     let Ok(scrollback) =
         capture_tmux_scrollback(session, window_index, OUTPUT_SNAPSHOT_FALLBACK_LINES).await
     else {
-        return Ok(Value::Object(snapshot));
+        return;
     };
-
     if scrollback.is_empty() {
-        return Ok(Value::Object(snapshot));
+        return;
     }
 
     snapshot.insert("connected".to_string(), Value::Bool(true));
@@ -976,8 +1042,20 @@ pub(super) async fn resolve_session_output_snapshot(
         "idleMs".to_string(),
         json!(OUTPUT_SNAPSHOT_FALLBACK_IDLE_MS),
     );
+}
 
-    Ok(Value::Object(snapshot))
+fn bound_snapshot_output_field(
+    snapshot: &mut serde_json::Map<String, Value>,
+    tail_chars: Option<usize>,
+) {
+    let Some(limit) = tail_chars else {
+        return;
+    };
+    let Some(output) = snapshot.get("output").and_then(Value::as_str) else {
+        return;
+    };
+    let truncated = crate::sanitize::truncate_tail(output, limit);
+    snapshot.insert("output".to_string(), Value::String(truncated));
 }
 
 pub(super) fn runtime_unconfigured_status() -> Value {
@@ -1618,5 +1696,35 @@ pub(super) async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {}
         _ = terminate => {}
+    }
+}
+
+#[cfg(test)]
+mod hashed_frontend_asset_tests {
+    use super::has_vite_content_hash_suffix;
+
+    #[test]
+    fn accepts_vite_content_hashed_filenames() {
+        assert!(has_vite_content_hash_suffix("index-BjGrl-33.js"));
+        assert!(has_vite_content_hash_suffix("index-CIs4pl-C.css"));
+        assert!(has_vite_content_hash_suffix("FilePanel-BnKyG7-s.js"));
+        assert!(has_vite_content_hash_suffix("SessionManagerV2-CjKqieh-.js"));
+        assert!(has_vite_content_hash_suffix("vendor-jVyfcstf.js"));
+    }
+
+    #[test]
+    fn rejects_stable_asset_filenames() {
+        assert!(!has_vite_content_hash_suffix("stable.js"));
+        assert!(!has_vite_content_hash_suffix("config.js"));
+        assert!(!has_vite_content_hash_suffix("app-hash.js"));
+        assert!(!has_vite_content_hash_suffix("app.js"));
+        assert!(!has_vite_content_hash_suffix("index.js"));
+    }
+
+    #[test]
+    fn rejects_stable_long_word_suffixes() {
+        assert!(!has_vite_content_hash_suffix("configuration-defaults.js"));
+        assert!(!has_vite_content_hash_suffix("vendor-configuration.js"));
+        assert!(!has_vite_content_hash_suffix("app-defaults-bundle.js"));
     }
 }

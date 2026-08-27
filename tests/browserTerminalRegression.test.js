@@ -295,6 +295,148 @@ async function dispatchMobileSwipe(page, points) {
   })
 }
 
+async function dispatchSyntheticTouch(page, targetSelector, type, x, y) {
+  await page.evaluate(({ selector, eventType, x, y }) => {
+    const target = document.querySelector(selector)
+    if (!(target instanceof HTMLElement)) {
+      throw new Error(`synthetic swipe target not found: ${selector}`)
+    }
+    const touch = new Touch({
+      identifier: 1,
+      target,
+      clientX: x,
+      clientY: y,
+      screenX: x,
+      screenY: y,
+      pageX: x,
+      pageY: y,
+      radiusX: 2,
+      radiusY: 2,
+      force: 1,
+    })
+    const ended = eventType === 'touchend' || eventType === 'touchcancel'
+    target.dispatchEvent(new TouchEvent(eventType, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      touches: ended ? [] : [touch],
+      targetTouches: ended ? [] : [touch],
+      changedTouches: [touch],
+    }))
+  }, { selector: targetSelector, eventType: type, x, y })
+}
+
+async function dispatchSyntheticMobileSwipe(page, targetSelector, points) {
+  await page.evaluate(({ selector, swipePoints }) => {
+    const target = document.querySelector(selector)
+    if (!(target instanceof HTMLElement)) {
+      throw new Error(`synthetic swipe target not found: ${selector}`)
+    }
+
+    const fire = (type, x, y) => {
+      const touch = new Touch({
+        identifier: 1,
+        target,
+        clientX: x,
+        clientY: y,
+        screenX: x,
+        screenY: y,
+        pageX: x,
+        pageY: y,
+        radiusX: 2,
+        radiusY: 2,
+        force: 1,
+      })
+      const ended = type === 'touchend' || type === 'touchcancel'
+      target.dispatchEvent(new TouchEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        touches: ended ? [] : [touch],
+        targetTouches: ended ? [] : [touch],
+        changedTouches: [touch],
+      }))
+    }
+
+    fire('touchstart', swipePoints[0][0], swipePoints[0][1])
+    for (const [x, y] of swipePoints.slice(1)) {
+      fire('touchmove', x, y)
+    }
+    const [endX, endY] = swipePoints[swipePoints.length - 1]
+    fire('touchend', endX, endY)
+  }, { selector: targetSelector, swipePoints: points })
+}
+
+async function waitForAnimationFrames(page, count = 2) {
+  await page.evaluate((frameCount) => new Promise((resolve) => {
+    const step = (left) => {
+      if (left <= 0) {
+        resolve(undefined)
+        return
+      }
+      requestAnimationFrame(() => step(left - 1))
+    }
+    step(frameCount)
+  }), count)
+}
+
+async function holdAnimationFrames(page) {
+  await page.evaluate(() => {
+    if (window.__nexusRafHold?.active) return
+    const originalRaf = window.requestAnimationFrame.bind(window)
+    const originalCaf = window.cancelAnimationFrame.bind(window)
+    const pending = new Map()
+    let nextId = 1
+    window.__nexusRafHold = {
+      active: true,
+      originalCaf,
+      originalRaf,
+      pending,
+    }
+    window.requestAnimationFrame = (callback) => {
+      const id = nextId
+      nextId += 1
+      pending.set(id, callback)
+      return id
+    }
+    window.cancelAnimationFrame = (id) => {
+      if (pending.has(id)) {
+        pending.delete(id)
+        return
+      }
+      originalCaf(id)
+    }
+  })
+}
+
+async function releaseAnimationFrames(page) {
+  await page.evaluate(() => {
+    const hold = window.__nexusRafHold
+    if (!hold?.active) return
+    hold.active = false
+    window.requestAnimationFrame = hold.originalRaf
+    window.cancelAnimationFrame = hold.originalCaf
+  })
+  // Let the compositor deliver scroll events so xterm can update ydisp before
+  // any queued Viewport refresh writes scrollTop back from a stale buffer.
+  await waitForAnimationFrames(page, 1)
+  await page.evaluate(() => {
+    const hold = window.__nexusRafHold
+    if (!hold?.pending) return
+    const callbacks = [...hold.pending.values()]
+    hold.pending.clear()
+    for (const callback of callbacks) hold.originalRaf(callback)
+  })
+  await waitForAnimationFrames(page, 2)
+}
+
+async function readTerminalViewportScroll(page) {
+  return page.locator('.xterm-viewport').first().evaluate((viewport) => ({
+    maxScrollTop: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+    scrollTop: viewport.scrollTop,
+  }))
+}
+
 async function waitForTerminalViewportAtBottom(page, selector, label) {
   await page.waitForFunction((viewportSelector) => {
     const viewport = document.querySelector(viewportSelector)
@@ -1591,6 +1733,269 @@ test('browser regression: mobile terminal short drag scrolls immediately', { tim
   )
 })
 
+test('browser regression: mobile terminal vertical drag still scrolls when native viewport does not move', { timeout: 120000 }, async (t) => {
+  const longOutput = Array.from({ length: 120 }, (_, index) => `unmoved native history line ${String(index + 1).padStart(3, '0')}`).join('\n') + '\n'
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    mobile: true,
+    ptySnapshots: {
+      'nexus-preview-rust:0': {
+        output: longOutput,
+        clients: 1,
+      },
+    },
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('unmoved native history line 120'))
+
+  const metrics = await page.locator('.xterm-viewport').first().evaluate((viewport) => {
+    const bounds = viewport.getBoundingClientRect()
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    return {
+      height: bounds.height,
+      left: bounds.left,
+      maxScrollTop,
+      scrollTop: viewport.scrollTop,
+      top: bounds.top,
+      width: bounds.width,
+    }
+  })
+
+  assert.ok(metrics.maxScrollTop > 400, `expected ordinary buffer scroll range, got ${JSON.stringify(metrics)}`)
+  assert.ok(
+    metrics.scrollTop >= metrics.maxScrollTop - 4,
+    `expected viewport at bottom before unmoved native drag, got ${JSON.stringify(metrics)}`,
+  )
+
+  const startX = metrics.left + metrics.width / 2
+  const startY = metrics.top + metrics.height / 2
+  await dispatchSyntheticMobileSwipe(page, '.xterm-viewport', [
+    [startX, startY],
+    [startX + 1, startY + 80],
+    [startX + 1, startY + 160],
+    [startX, startY + 240],
+    [startX, startY + 320],
+  ])
+
+  await page.waitForFunction((beforeScrollTop) => {
+    const viewport = document.querySelector('.xterm-viewport')
+    return viewport instanceof HTMLElement && viewport.scrollTop < beforeScrollTop - 20
+  }, metrics.scrollTop, { timeout: 5000 })
+  const afterScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  assert.ok(
+    afterScrollTop < metrics.scrollTop - 20,
+    `expected app fallback to move xterm history when native pan did not, before=${metrics.scrollTop}, after=${afterScrollTop}, max=${metrics.maxScrollTop}`,
+  )
+  await page.getByRole('button', { name: '滚到底部' }).waitFor()
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: mobile terminal fallback still scrolls when streaming output changes scrollTop during an unmoved downward drag', { timeout: 120000 }, async (t) => {
+  const longOutput = Array.from({ length: 120 }, (_, index) => `stream-unmoved history line ${String(index + 1).padStart(3, '0')}`).join('\n') + '\n'
+  const streamChunk = Array.from({ length: 40 }, (_, index) => `live output during drag ${String(index + 1).padStart(2, '0')}`).join('\n') + '\n'
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    mobile: true,
+    ptySnapshots: {
+      'nexus-preview-rust:0': {
+        output: longOutput,
+        clients: 1,
+      },
+    },
+  })
+  await page.addInitScript(installWebSocketCapture)
+
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('stream-unmoved history line 120'))
+  await page.waitForFunction(() => (window.__nexusWsInstances || []).some((socket) => String(socket.__nexusUrl || '').includes('window=0')))
+
+  const startMetrics = await page.locator('.xterm-viewport').first().evaluate((viewport) => {
+    const bounds = viewport.getBoundingClientRect()
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    return {
+      height: bounds.height,
+      left: bounds.left,
+      maxScrollTop,
+      scrollTop: viewport.scrollTop,
+      top: bounds.top,
+      width: bounds.width,
+    }
+  })
+  assert.ok(startMetrics.maxScrollTop > 400, `expected ordinary buffer scroll range, got ${JSON.stringify(startMetrics)}`)
+  assert.ok(
+    startMetrics.scrollTop >= startMetrics.maxScrollTop - 4,
+    `expected viewport at bottom before streaming drag, got ${JSON.stringify(startMetrics)}`,
+  )
+
+  const startX = startMetrics.left + startMetrics.width / 2
+  const startY = startMetrics.top + startMetrics.height / 2
+  await dispatchSyntheticTouch(page, '.xterm-viewport', 'touchstart', startX, startY)
+  await dispatchSyntheticTouch(page, '.xterm-viewport', 'touchmove', startX + 1, startY + 10)
+  await dispatchCapturedWebSocketMessage(page, 'window=0', streamChunk)
+  await page.waitForFunction((previous) => {
+    const viewport = document.querySelector('.xterm-viewport')
+    return viewport instanceof HTMLElement && viewport.scrollTop > previous + 10
+  }, startMetrics.scrollTop, { timeout: 5000 })
+
+  const postStream = await page.locator('.xterm-viewport').first().evaluate((viewport) => ({
+    maxScrollTop: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+    scrollTop: viewport.scrollTop,
+  }))
+  assert.ok(
+    postStream.scrollTop > startMetrics.scrollTop,
+    `expected streaming output to move scrollTop away from the downward-history direction, before=${startMetrics.scrollTop}, after=${postStream.scrollTop}`,
+  )
+
+  await dispatchSyntheticTouch(page, '.xterm-viewport', 'touchmove', startX + 1, startY + 160)
+  await dispatchSyntheticTouch(page, '.xterm-viewport', 'touchmove', startX, startY + 240)
+  await dispatchSyntheticTouch(page, '.xterm-viewport', 'touchmove', startX, startY + 320)
+  await dispatchSyntheticTouch(page, '.xterm-viewport', 'touchend', startX, startY + 320)
+
+  await page.waitForFunction((postStreamScrollTop) => {
+    const viewport = document.querySelector('.xterm-viewport')
+    return viewport instanceof HTMLElement && viewport.scrollTop < postStreamScrollTop - 20
+  }, postStream.scrollTop, { timeout: 5000 })
+  await page.getByRole('button', { name: '滚到底部' }).waitFor()
+
+  await dispatchCapturedWebSocketMessage(page, 'window=0', 'more live output after fallback\n')
+  await delay(150)
+  const afterMoreOutput = await page.locator('.xterm-viewport').first().evaluate((viewport) => ({
+    maxScrollTop: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+    scrollTop: viewport.scrollTop,
+  }))
+  assert.ok(
+    afterMoreOutput.scrollTop < afterMoreOutput.maxScrollTop - 20,
+    `expected fallback scrolled-up state to survive more output, got ${JSON.stringify(afterMoreOutput)}`,
+  )
+  await page.getByRole('button', { name: '滚到底部' }).waitFor()
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: delayed native viewport movement prevents mobile terminal fallback from double-scrolling', { timeout: 120000 }, async (t) => {
+  const longOutput = Array.from({ length: 120 }, (_, index) => `delayed native history line ${String(index + 1).padStart(3, '0')}`).join('\n') + '\n'
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    mobile: true,
+    ptySnapshots: {
+      'nexus-preview-rust:0': {
+        output: longOutput,
+        clients: 1,
+      },
+    },
+  })
+  await page.addInitScript(() => {
+    window.__nexusTerminalTouchMoveStats = { total: 0, defaultPrevented: 0, preventDefaultCalls: 0 }
+    function isTerminalTouchMove(event) {
+      const path = event.composedPath()
+      return path.some((node) => node instanceof HTMLElement && node.classList.contains('xterm'))
+    }
+    const nativePreventDefault = Event.prototype.preventDefault
+    Event.prototype.preventDefault = function patchedPreventDefault() {
+      if (this.type === 'touchmove' && isTerminalTouchMove(this)) {
+        window.__nexusTerminalTouchMoveStats.preventDefaultCalls += 1
+      }
+      return nativePreventDefault.call(this)
+    }
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('delayed native history line 120'))
+
+  const metrics = await page.locator('.xterm-viewport').first().evaluate((viewport) => {
+    const bounds = viewport.getBoundingClientRect()
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    return {
+      height: bounds.height,
+      left: bounds.left,
+      maxScrollTop,
+      scrollTop: viewport.scrollTop,
+      top: bounds.top,
+      width: bounds.width,
+    }
+  })
+  assert.ok(metrics.maxScrollTop > 400, `expected ordinary buffer scroll range, got ${JSON.stringify(metrics)}`)
+  assert.ok(
+    metrics.scrollTop >= metrics.maxScrollTop - 4,
+    `expected viewport at bottom before delayed native drag, got ${JSON.stringify(metrics)}`,
+  )
+
+  const startX = metrics.left + metrics.width / 2
+  const startY = metrics.top + metrics.height / 2
+  const session = await page.context().newCDPSession(page)
+  const dispatchTouch = async (type, x, y) => {
+    await session.send('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: type === 'touchEnd'
+        ? []
+        : [{ x, y, radiusX: 2, radiusY: 2, force: 1, id: 1 }],
+    })
+  }
+
+  await waitForAnimationFrames(page, 2)
+  await holdAnimationFrames(page)
+  await dispatchTouch('touchStart', startX, startY)
+  for (const [x, y] of [
+    [startX + 1, startY + 80],
+    [startX + 1, startY + 160],
+    [startX, startY + 240],
+  ]) {
+    await dispatchTouch('touchMove', x, y)
+    await delay(30)
+  }
+
+  const afterNative = await readTerminalViewportScroll(page)
+  assert.ok(
+    afterNative.scrollTop < metrics.scrollTop - 40,
+    `expected CDP native pan to move history while fallback rAF is held, start=${metrics.scrollTop}, afterNative=${afterNative.scrollTop}`,
+  )
+  assert.ok(
+    metrics.scrollTop - afterNative.scrollTop < 480,
+    `expected native-only movement while fallback rAF is held, not native+manual double-scroll, start=${metrics.scrollTop}, afterNative=${afterNative.scrollTop}`,
+  )
+
+  await releaseAnimationFrames(page)
+  const afterDecision = await readTerminalViewportScroll(page)
+  assert.ok(
+    afterDecision.scrollTop > afterNative.scrollTop - 40,
+    `expected releasing fallback rAF not to apply extra manual scroll, afterNative=${afterNative.scrollTop}, afterDecision=${afterDecision.scrollTop}`,
+  )
+  assert.ok(
+    afterDecision.scrollTop < metrics.scrollTop - 40,
+    `expected native history position to survive the deferred fallback decision, start=${metrics.scrollTop}, afterDecision=${afterDecision.scrollTop}`,
+  )
+
+  await dispatchTouch('touchMove', startX, startY + 320)
+  await delay(30)
+  await dispatchTouch('touchEnd', startX, startY + 320)
+  await waitForAnimationFrames(page, 2)
+
+  const finalScroll = await readTerminalViewportScroll(page)
+  assert.ok(
+    finalScroll.scrollTop < metrics.scrollTop - 40,
+    `expected gesture to remain scrolled after native continuation, start=${metrics.scrollTop}, final=${finalScroll.scrollTop}`,
+  )
+  const touchMoveStats = await page.evaluate(() => window.__nexusTerminalTouchMoveStats)
+  assert.equal(
+    touchMoveStats.preventDefaultCalls,
+    0,
+    `delayed native movement must stay on the browser-native scroll path, got ${JSON.stringify(touchMoveStats)}`,
+  )
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
 test('browser regression: mobile diagonal-horizontal swipe switches channel even if the finger leaves terminal bounds', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
 
@@ -1625,6 +2030,37 @@ test('browser regression: mobile diagonal-horizontal swipe switches channel even
 
   await attachRequest
   await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('notes ready'))
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: window status polling requests a 4096-character output tail', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+  const outputUrls = []
+  page.on('request', (request) => {
+    const url = request.url()
+    if (url.includes('/api/sessions/') && url.includes('/output')) {
+      outputUrls.push(url)
+    }
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+  for (let attempt = 0; attempt < 20 && outputUrls.length === 0; attempt += 1) {
+    await delay(100)
+  }
+
+  assert.ok(outputUrls.length > 0, `expected window output polling requests, server logs:\n${getLogs()}`)
+  for (const url of outputUrls) {
+    assert.match(
+      url,
+      /\/api\/sessions\/\d+\/output\?session=[^&]+&tailChars=4096(?:&|$)/,
+      `expected bounded output polling URL, got ${url}`,
+    )
+  }
 
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),

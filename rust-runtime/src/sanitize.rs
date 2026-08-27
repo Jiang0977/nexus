@@ -120,6 +120,29 @@ pub fn truncate_tail(value: &str, max_chars: usize) -> String {
         .collect()
 }
 
+/// Conservative Unicode-character cap for optional output-snapshot tail limits.
+pub const MAX_OUTPUT_SNAPSHOT_TAIL_CHARS: usize = 16_384;
+
+pub fn clamp_output_snapshot_tail_chars(requested: u32) -> usize {
+    if requested == 0 {
+        MAX_OUTPUT_SNAPSHOT_TAIL_CHARS
+    } else {
+        (requested as usize).min(MAX_OUTPUT_SNAPSHOT_TAIL_CHARS)
+    }
+}
+
+pub fn parse_output_snapshot_tail_chars(raw: Option<&str>) -> Option<usize> {
+    let raw = raw?;
+    let value = raw.trim();
+    if value.is_empty() {
+        return Some(MAX_OUTPUT_SNAPSHOT_TAIL_CHARS);
+    }
+    match value.parse::<u32>() {
+        Ok(parsed) => Some(clamp_output_snapshot_tail_chars(parsed)),
+        Err(_) => Some(MAX_OUTPUT_SNAPSHOT_TAIL_CHARS),
+    }
+}
+
 pub fn truncate_head_with_notice(value: &str, max_chars: usize) -> String {
     let char_count = value.chars().count();
     if char_count <= max_chars {
@@ -136,9 +159,11 @@ pub fn truncate_websocket_close_reason(reason: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        sanitize_managed_upload_filename, sanitize_project_name, sanitize_telegram_filename,
-        sanitize_telegram_switch_target, sanitize_window_name, sanitize_workspace_upload_filename,
-        truncate_head, truncate_head_with_notice, truncate_tail, truncate_websocket_close_reason,
+        MAX_OUTPUT_SNAPSHOT_TAIL_CHARS, clamp_output_snapshot_tail_chars,
+        parse_output_snapshot_tail_chars, sanitize_managed_upload_filename, sanitize_project_name,
+        sanitize_telegram_filename, sanitize_telegram_switch_target, sanitize_window_name,
+        sanitize_workspace_upload_filename, truncate_head, truncate_head_with_notice,
+        truncate_tail, truncate_websocket_close_reason,
     };
 
     #[test]
@@ -178,6 +203,7 @@ mod tests {
     fn truncates_strings_without_panicking() {
         assert_eq!(truncate_head("abcdef", 3), "abc");
         assert_eq!(truncate_tail("abcdef", 3), "def");
+        assert_eq!(truncate_tail("a中🙂z", 2), "🙂z");
         assert_eq!(
             truncate_head_with_notice("abcdef", 3),
             "abc\n\n…(输出已截断)"
@@ -187,6 +213,46 @@ mod tests {
                 .chars()
                 .count(),
             120
+        );
+    }
+
+    #[test]
+    fn output_snapshot_tail_chars_omit_valid_clamp_and_invalid() {
+        assert_eq!(parse_output_snapshot_tail_chars(None), None);
+        assert_eq!(
+            parse_output_snapshot_tail_chars(Some("")),
+            Some(MAX_OUTPUT_SNAPSHOT_TAIL_CHARS)
+        );
+        assert_eq!(
+            parse_output_snapshot_tail_chars(Some("  ")),
+            Some(MAX_OUTPUT_SNAPSHOT_TAIL_CHARS)
+        );
+        assert_eq!(parse_output_snapshot_tail_chars(Some("7")), Some(7));
+        assert_eq!(parse_output_snapshot_tail_chars(Some("4096")), Some(4096));
+        assert_eq!(
+            parse_output_snapshot_tail_chars(Some("20000")),
+            Some(MAX_OUTPUT_SNAPSHOT_TAIL_CHARS)
+        );
+        assert_eq!(
+            parse_output_snapshot_tail_chars(Some("0")),
+            Some(MAX_OUTPUT_SNAPSHOT_TAIL_CHARS)
+        );
+        assert_eq!(
+            parse_output_snapshot_tail_chars(Some("abc")),
+            Some(MAX_OUTPUT_SNAPSHOT_TAIL_CHARS)
+        );
+        assert_eq!(
+            parse_output_snapshot_tail_chars(Some("-1")),
+            Some(MAX_OUTPUT_SNAPSHOT_TAIL_CHARS)
+        );
+        assert_eq!(
+            clamp_output_snapshot_tail_chars(0),
+            MAX_OUTPUT_SNAPSHOT_TAIL_CHARS
+        );
+        assert_eq!(clamp_output_snapshot_tail_chars(8), 8);
+        assert_eq!(
+            clamp_output_snapshot_tail_chars(50_000),
+            MAX_OUTPUT_SNAPSHOT_TAIL_CHARS
         );
     }
 }

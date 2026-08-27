@@ -1156,6 +1156,107 @@ test('real rust pty runtime returns native cold snapshot from durable scrollback
   assert.equal(coldSnapshot.clients, 0)
 })
 
+test('real rust pty runtime applies getOutputSnapshot tailChars to live and disconnected native output', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-output-tail-'))
+  const dbPath = join(baseDir, 'session.db')
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
+    NEXUS_NATIVE_SCROLLBACK_DIR: join(baseDir, 'scrollback'),
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  const firstPtyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  let secondPtyClient = null
+
+  t.after(async () => {
+    await secondPtyClient?.close()
+    await firstPtyClient.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await sessionClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-output-tail',
+    cwd: ROOT,
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: {},
+  })
+
+  await firstPtyClient.ready()
+  await firstPtyClient.attachConnection({
+    connectionId: 'native-output-tail-writer',
+    session: 'native-output-tail',
+    windowIndex: 0,
+  })
+  firstPtyClient.handleConnectionMessage({
+    connectionId: 'native-output-tail-writer',
+    key: 'native-output-tail:0',
+    rawMessage: `HEAD-${'a'.repeat(4000)}-世界🙂TAIL\n`,
+  })
+
+  let liveFull = null
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    liveFull = await firstPtyClient.getOutputSnapshot({
+      session: 'native-output-tail',
+      windowIndex: 0,
+    })
+    if (String(liveFull.output || '').includes('🙂TAIL')) break
+    await delay(20)
+  }
+  assert.match(String(liveFull.output || ''), /世界🙂TAIL/)
+
+  const liveTail = await firstPtyClient.getOutputSnapshot({
+    session: 'native-output-tail',
+    windowIndex: 0,
+    tailChars: 6,
+  })
+  const liveChars = Array.from(String(liveFull.output || ''))
+  assert.equal(liveTail.output, liveChars.slice(-6).join(''))
+  assert.equal(Array.from(String(liveTail.output || '')).length, 6)
+
+  await firstPtyClient.close()
+
+  secondPtyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  await secondPtyClient.ready()
+
+  const coldFull = await secondPtyClient.getOutputSnapshot({
+    session: 'native-output-tail',
+    windowIndex: 0,
+  })
+  assert.equal(coldFull.connected, false)
+  assert.match(String(coldFull.output || ''), /世界🙂TAIL/)
+
+  const coldTail = await secondPtyClient.getOutputSnapshot({
+    session: 'native-output-tail',
+    windowIndex: 0,
+    tailChars: 6,
+  })
+  const coldChars = Array.from(String(coldFull.output || ''))
+  assert.equal(coldTail.output, coldChars.slice(-6).join(''))
+  assert.equal(Array.from(String(coldTail.output || '')).length, 6)
+})
+
 test('real rust pty runtime returns full native scrollback separately from output replay', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
   ensureSessionRuntimeBuilt()

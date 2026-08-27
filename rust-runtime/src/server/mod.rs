@@ -7,9 +7,10 @@ use crate::path_utils::{
 use crate::project_defaults::{get_project_default_payload, remember_project_default};
 use crate::runtime_config::{AppConfig, RuntimeConfigs, RuntimeServiceConfig};
 use crate::sanitize::{
-    sanitize_managed_upload_filename, sanitize_project_name, sanitize_telegram_filename,
-    sanitize_telegram_switch_target, sanitize_window_name, sanitize_workspace_upload_filename,
-    truncate_head, truncate_head_with_notice, truncate_tail, truncate_websocket_close_reason,
+    parse_output_snapshot_tail_chars, sanitize_managed_upload_filename, sanitize_project_name,
+    sanitize_telegram_filename, sanitize_telegram_switch_target, sanitize_window_name,
+    sanitize_workspace_upload_filename, truncate_head, truncate_head_with_notice, truncate_tail,
+    truncate_websocket_close_reason,
 };
 use crate::shell::{
     build_interactive_shell_command, build_native_shell_launch_plan, build_window_name,
@@ -54,6 +55,7 @@ use tokio::net::TcpListener;
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
 use tokio::time::{Duration, timeout};
+use tower_http::compression::CompressionLayer;
 
 mod config;
 mod layouts;
@@ -247,6 +249,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/", any(static_fallback))
         .route("/{*path}", any(static_fallback))
         .with_state(state)
+        .layer(CompressionLayer::new())
 }
 async fn api_health() -> impl IntoResponse {
     Json(json!({
@@ -281,21 +284,24 @@ async fn api_session_output(
         .session
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| state.default_tmux_session.as_ref().clone());
+    let tail_chars = parse_output_snapshot_tail_chars(query.tail_chars.as_deref());
+    let mut params = json!({
+        "session": session,
+        "windowIndex": window_index,
+    });
+    if let Some(limit) = tail_chars {
+        params["tailChars"] = json!(limit);
+    }
 
     runtime_request_response(
         resolve_session_output_snapshot(
             state
                 .runtime_manager
-                .pty_broker_request(
-                    "getOutputSnapshot",
-                    json!({
-                        "session": session,
-                        "windowIndex": window_index,
-                    }),
-                )
+                .pty_broker_request("getOutputSnapshot", params)
                 .await,
             &session,
             window_index,
+            tail_chars,
         )
         .await,
     )

@@ -1,3 +1,4 @@
+import { appendFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 
 const mode = process.env.FAKE_PTY_RUNTIME_MODE || 'normal'
@@ -63,6 +64,15 @@ function event(eventName, params) {
   send({ kind: 'event', event: eventName, params })
 }
 
+function unicodeTail(value, maxChars) {
+  const chars = Array.from(String(value))
+  const limit = Number(maxChars)
+  if (!Number.isFinite(limit) || limit < 0) return String(value)
+  const count = Math.floor(limit)
+  if (chars.length <= count) return String(value)
+  return chars.slice(-count).join('')
+}
+
 function ensureEntry(session, windowIndex) {
   const key = `${session}:${windowIndex}`
   let entry = entries.get(key)
@@ -115,15 +125,32 @@ rl.on('line', (line) => {
         return
       }
       case 'getOutputSnapshot': {
+        const requestLog = process.env.FAKE_PTY_RUNTIME_REQUEST_LOG
+        if (requestLog) {
+          try {
+            appendFileSync(requestLog, `${JSON.stringify({ method: 'getOutputSnapshot', params })}\n`)
+          } catch {}
+        }
         const key = `${params.session}:${params.windowIndex}`
         const entry = entries.get(key)
+        let output = ''
+        let connected = false
+        let clients = 0
         if (entry && typeof entry.outputSnapshot === 'string') {
-          response(id, true, { connected: true, output: entry.outputSnapshot, clients: entry.clients.size, idleMs: 0 })
-          return
+          output = entry.outputSnapshot
+          connected = true
+          clients = entry.clients.size
+        } else if (entry) {
+          output = entry.output
+          connected = true
+          clients = entry.clients.size
         }
-        response(id, true, entry
-          ? { connected: true, output: entry.output, clients: entry.clients.size, idleMs: 0 }
-          : { connected: false, output: '', clients: 0 })
+        if (params.tailChars !== undefined && params.tailChars !== null) {
+          output = unicodeTail(output, params.tailChars)
+        }
+        response(id, true, connected
+          ? { connected: true, output, clients, idleMs: 0 }
+          : { connected: false, output, clients: 0 })
         return
       }
       case 'getScrollbackSnapshot': {

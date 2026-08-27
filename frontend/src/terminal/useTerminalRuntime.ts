@@ -365,6 +365,15 @@ export function useTerminalRuntime({
 
     let touchStartX = 0
     let touchStartY = 0
+    let touchLastY = 0
+    let touchScrollRemainder = 0
+    let touchScrollLineHeight = 0
+    let lastObservedScrollTop = 0
+    let nativeViewportMoved = false
+    let manualScrollFallbackActive = false
+    let pendingFallbackY: number | null = null
+    let fallbackCheckRaf: number | null = null
+    let fallbackCheckGeneration = 0
     let isPinching = false
     let pinchStartDist = 0
     let pinchStartFontSize = fontSize
@@ -408,8 +417,112 @@ export function useTerminalRuntime({
       return Math.sqrt(dx * dx + dy * dy)
     }
 
+    function getViewportMaxScrollTop(): number {
+      if (!viewport) return 0
+      return Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    }
+
+    function getTouchScrollLineHeight(): number {
+      if (touchScrollLineHeight > 0) return touchScrollLineHeight
+      const screenEl = containerEl.querySelector('.xterm-screen') as HTMLElement | null
+      if (screenEl && term.rows > 0) {
+        const rowHeight = screenEl.clientHeight / term.rows
+        if (Number.isFinite(rowHeight) && rowHeight > 0) {
+          touchScrollLineHeight = rowHeight
+          return touchScrollLineHeight
+        }
+      }
+      touchScrollLineHeight = Math.max(8, Number(term.options.fontSize) || fontSize)
+      return touchScrollLineHeight
+    }
+
+    function scrollTerminalByTouch(deltaY: number) {
+      touchScrollRemainder += deltaY
+      const lineHeight = getTouchScrollLineHeight()
+      const lines = Math.trunc(touchScrollRemainder / lineHeight)
+      if (lines === 0) return
+      touchScrollRemainder -= lines * lineHeight
+      term.scrollLines(-lines)
+    }
+
+    function cancelFallbackCheck() {
+      if (fallbackCheckRaf !== null) {
+        cancelAnimationFrame(fallbackCheckRaf)
+        fallbackCheckRaf = null
+      }
+    }
+
+    function beginNewTouchGesture() {
+      fallbackCheckGeneration += 1
+      cancelFallbackCheck()
+      touchScrollRemainder = 0
+      touchScrollLineHeight = 0
+      lastObservedScrollTop = viewport?.scrollTop ?? 0
+      nativeViewportMoved = false
+      manualScrollFallbackActive = false
+      pendingFallbackY = null
+    }
+
+    function movedInExpectedScrollDirection(deltaY: number): boolean {
+      if (!viewport) return false
+      if (deltaY > 0) return viewport.scrollTop < lastObservedScrollTop - 0.5
+      if (deltaY < 0) return viewport.scrollTop > lastObservedScrollTop + 0.5
+      return false
+    }
+
+    function observeViewportScrollForGesture() {
+      if (!viewport || manualScrollFallbackActive || nativeViewportMoved) return
+      const deltaY = (pendingFallbackY ?? touchLastY) - touchStartY
+      if (swipeAxis === 'vertical' && movedInExpectedScrollDirection(deltaY)) {
+        nativeViewportMoved = true
+        lastObservedScrollTop = viewport.scrollTop
+        cancelFallbackCheck()
+        return
+      }
+      lastObservedScrollTop = viewport.scrollTop
+    }
+
+    function maybeActivateManualScrollFallback() {
+      if (nativeViewportMoved || manualScrollFallbackActive) return
+      if (pendingFallbackY === null) return
+
+      const currentY = pendingFallbackY
+      const totalDeltaY = currentY - touchStartY
+      if (Math.abs(totalDeltaY) < SWIPE_DIRECTION_LOCK_THRESHOLD) return
+
+      if (movedInExpectedScrollDirection(totalDeltaY)) {
+        nativeViewportMoved = true
+        if (viewport) lastObservedScrollTop = viewport.scrollTop
+        return
+      }
+      if (viewport) lastObservedScrollTop = viewport.scrollTop
+
+      const scrollTop = viewport?.scrollTop ?? 0
+      const maxScrollTop = getViewportMaxScrollTop()
+      if (maxScrollTop <= 0) return
+      const canScroll = totalDeltaY > 0 ? scrollTop > 0 : scrollTop < maxScrollTop
+      if (!canScroll) return
+
+      manualScrollFallbackActive = true
+      scrollTerminalByTouch(currentY - touchLastY)
+      touchLastY = currentY
+    }
+
+    function scheduleFallbackCheck(currentY: number) {
+      pendingFallbackY = currentY
+      if (nativeViewportMoved || manualScrollFallbackActive) return
+      if (fallbackCheckRaf !== null) return
+      const generation = fallbackCheckGeneration
+      fallbackCheckRaf = requestAnimationFrame(() => {
+        fallbackCheckRaf = null
+        if (generation !== fallbackCheckGeneration) return
+        maybeActivateManualScrollFallback()
+      })
+    }
+
     function onTouchStart(event: TouchEvent) {
       if (event.touches.length === 2) {
+        beginNewTouchGesture()
         isPinching = true
         pinchStartDist = getTouchDist(event)
         pinchStartFontSize = parseInt(localStorage.getItem(FONT_SIZE_KEY) || '16', 10)
@@ -418,8 +531,10 @@ export function useTerminalRuntime({
       }
 
       isPinching = false
+      beginNewTouchGesture()
       touchStartX = event.touches[0].clientX
       touchStartY = event.touches[0].clientY
+      touchLastY = touchStartY
       swipeAxis = null
       channelSwipeTriggered = false
     }
@@ -463,6 +578,13 @@ export function useTerminalRuntime({
       }
 
       if (swipeAxis === 'vertical') {
+        if (nativeViewportMoved) return
+        if (manualScrollFallbackActive) {
+          scrollTerminalByTouch(currentY - touchLastY)
+          touchLastY = currentY
+          return
+        }
+        scheduleFallbackCheck(currentY)
         return
       }
     }
@@ -480,6 +602,7 @@ export function useTerminalRuntime({
 
     let viewportScrollSyncRaf: number | null = null
     function onViewportScroll() {
+      observeViewportScrollForGesture()
       if (viewportScrollSyncRaf !== null) return
       viewportScrollSyncRaf = requestAnimationFrame(() => {
         viewportScrollSyncRaf = null
@@ -629,6 +752,8 @@ export function useTerminalRuntime({
       containerEl.removeEventListener('touchcancel', finishPinch)
       viewport?.removeEventListener('touchmove', onViewportTouchMove)
       viewport?.removeEventListener('scroll', onViewportScroll)
+      fallbackCheckGeneration += 1
+      cancelFallbackCheck()
       if (viewportScrollSyncRaf !== null) cancelAnimationFrame(viewportScrollSyncRaf)
       containerEl.removeEventListener('dragover', onDragOver)
       containerEl.removeEventListener('dragenter', onDragEnter)

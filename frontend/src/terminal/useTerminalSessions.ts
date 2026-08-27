@@ -3,6 +3,7 @@ import type { Terminal as XTerm } from '@xterm/xterm'
 import { isCodexHistoryEnabled } from '../featureFlags'
 import { pickBootstrapSession, sessionExists } from '../sessionBootstrap'
 import { DEFAULT_SHELL_TYPE, type ShellType } from '../shellType'
+import { createNonOverlappingPoller, pollWindowOutputs } from './windowOutputPolling'
 
 const WINDOW_KEY = 'nexus_window'
 const SESSION_SOURCE_KEY = 'nexus_session_source'
@@ -400,40 +401,34 @@ export function useTerminalSessions({
       return
     }
 
-    async function fetchOutputs() {
-      const outputs: Record<number, WindowOutput> = {}
-      for (const win of windows) {
-        try {
-          const response = await fetch(`/api/sessions/${win.index}/output?session=${encodeURIComponent(activeTmuxSession)}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          })
-          if (response.ok) {
-            outputs[win.index] = await response.json()
-            continue
-          }
+    const controller = new AbortController()
+    const tick = createNonOverlappingPoller(async () => {
+      const outputs = await pollWindowOutputs({
+        windows,
+        session: activeTmuxSession,
+        token,
+        signal: controller.signal,
+        onError: (detail) => {
           console.error('[useTerminalSessions] Failed to poll window output', {
             session: activeTmuxSession,
-            status: response.status,
-            windowIndex: win.index,
+            windowIndex: detail.windowIndex,
+            ...(detail.status !== undefined ? { status: detail.status } : { error: detail.error }),
           })
-        } catch (error: unknown) {
-          console.error('[useTerminalSessions] Failed to poll window output', {
-            error,
-            session: activeTmuxSession,
-            windowIndex: win.index,
-          })
-        }
-      }
-      setWindowOutputs(outputs)
-    }
+        },
+      })
+      if (outputs) setWindowOutputs(outputs)
+    })
 
     const interval = setInterval(() => {
-      void fetchOutputs()
+      void tick()
     }, 3000)
 
-    void fetchOutputs()
+    void tick()
 
-    return () => clearInterval(interval)
+    return () => {
+      controller.abort()
+      clearInterval(interval)
+    }
   }, [activeTmuxSession, token, windows])
 
   return {

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import bcrypt from 'bcrypt'
 import { once } from 'node:events'
 import { spawn, spawnSync } from 'node:child_process'
-import { createServer as createHttpServer } from 'node:http'
+import { createServer as createHttpServer, request as httpRequest } from 'node:http'
+import { brotliDecompressSync, gunzipSync } from 'node:zlib'
 import { createServer } from 'node:net'
 import { DatabaseSync } from 'node:sqlite'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -457,6 +458,54 @@ function spawnRustServer(envOverrides = {}) {
   return { child, getLogs: () => logs }
 }
 
+function requestRaw(port, path, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path,
+        method: 'GET',
+        headers,
+      },
+      (res) => {
+        const chunks = []
+        res.on('data', (chunk) => chunks.push(chunk))
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks),
+          })
+        })
+      },
+    )
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+function headerValue(headers, name) {
+  const value = headers[String(name).toLowerCase()]
+  if (Array.isArray(value)) return value.join(', ')
+  return value == null ? '' : String(value)
+}
+
+function decodeEncodedBody(encoding, body) {
+  if (encoding === 'gzip') return gunzipSync(body)
+  if (encoding === 'br') return brotliDecompressSync(body)
+  if (!encoding || encoding === 'identity') return body
+  throw new Error(`unexpected content-encoding: ${encoding}`)
+}
+
+function assertNotImmutableCache(headers, label) {
+  assert.equal(
+    /(?:^|[,;\s])immutable(?:$|[,;\s])/i.test(headerValue(headers, 'cache-control')),
+    false,
+    `${label} must not receive immutable caching`,
+  )
+}
+
 async function login(port, password) {
   const response = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
     method: 'POST',
@@ -692,6 +741,129 @@ test('rust nexus-server serves static assets and spa fallback', async (t) => {
     readFileSync(join(projectRoot, 'frontend', 'dist', 'index.html'), 'utf8').includes('rust server fixture'),
     true,
   )
+})
+
+test('rust nexus-server negotiates static compression and cache headers', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const workspaceRoot = join(projectRoot, 'workspace')
+  const dataDir = mkdtempSync(join(tmpdir(), 'nexus-rust-server-static-cache-'))
+  const uploadsDateDir = join(dataDir, 'uploads', '2026-08-27')
+  const hashedJs = `window.__NEXUS_STATIC_FIXTURE__=${JSON.stringify('x'.repeat(4096))};\n`
+  const hashedCss = `/* nexus-static-fixture */\nbody{--nexus:'${'c'.repeat(2048)}';}\n`
+  const stableJs = `window.__NEXUS_STABLE_FIXTURE__=${JSON.stringify('s'.repeat(4096))};\n`
+  const uploadBody = `${'upload-bytes '.repeat(80)}\n`
+  const workspaceBody = `${'workspace-download '.repeat(80)}\n`
+  const workspaceFile = join(workspaceRoot, 'notes.txt')
+  const hashedJsName = 'index-BjGrl-33.js'
+  const hashedCssName = 'index-CIs4pl-C.css'
+
+  mkdirSync(join(workspaceRoot), { recursive: true })
+  mkdirSync(uploadsDateDir, { recursive: true })
+  writeFileSync(join(projectRoot, 'frontend', 'dist', 'assets', hashedJsName), hashedJs)
+  writeFileSync(join(projectRoot, 'frontend', 'dist', 'assets', hashedCssName), hashedCss)
+  writeFileSync(join(projectRoot, 'frontend', 'dist', 'assets', 'stable.js'), stableJs)
+  writeFileSync(join(projectRoot, 'frontend', 'dist', 'assets', 'configuration-defaults.js'), stableJs)
+  writeFileSync(join(uploadsDateDir, 'notes.txt'), uploadBody)
+  writeFileSync(workspaceFile, workspaceBody)
+
+  const port = await getFreePort()
+  const password = 'static-cache-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    NEXUS_DATA_DIR: dataDir,
+    WORKSPACE_ROOT: workspaceRoot,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+    rmSync(dataDir, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const { token } = await login(port, password)
+  const hashedAssetPath = `/assets/${hashedJsName}`
+  const originalJs = Buffer.from(hashedJs)
+
+  const gzipAsset = await requestRaw(port, hashedAssetPath, { 'accept-encoding': 'gzip' })
+  assert.equal(gzipAsset.status, 200)
+  assert.equal(headerValue(gzipAsset.headers, 'content-encoding'), 'gzip')
+  assert.match(headerValue(gzipAsset.headers, 'vary'), /accept-encoding/i)
+  assert.equal(headerValue(gzipAsset.headers, 'cache-control'), 'public, max-age=31536000, immutable')
+  assert.equal(gzipAsset.body.equals(originalJs), false)
+  assert.equal(decodeEncodedBody('gzip', gzipAsset.body).equals(originalJs), true)
+
+  const brotliAsset = await requestRaw(port, hashedAssetPath, { 'accept-encoding': 'br' })
+  assert.equal(brotliAsset.status, 200)
+  assert.equal(headerValue(brotliAsset.headers, 'content-encoding'), 'br')
+  assert.match(headerValue(brotliAsset.headers, 'vary'), /accept-encoding/i)
+  assert.equal(headerValue(brotliAsset.headers, 'cache-control'), 'public, max-age=31536000, immutable')
+  assert.equal(decodeEncodedBody('br', brotliAsset.body).equals(originalJs), true)
+
+  const identityAsset = await requestRaw(port, hashedAssetPath, { 'accept-encoding': 'identity' })
+  assert.equal(identityAsset.status, 200)
+  assert.equal(headerValue(identityAsset.headers, 'content-encoding'), '')
+  assert.match(headerValue(identityAsset.headers, 'vary'), /accept-encoding/i)
+  assert.equal(identityAsset.body.equals(originalJs), true)
+  assert.equal(headerValue(identityAsset.headers, 'cache-control'), 'public, max-age=31536000, immutable')
+
+  const cssAsset = await requestRaw(port, `/assets/${hashedCssName}`, { 'accept-encoding': 'gzip' })
+  assert.equal(cssAsset.status, 200)
+  assert.equal(headerValue(cssAsset.headers, 'content-encoding'), 'gzip')
+  assert.equal(headerValue(cssAsset.headers, 'cache-control'), 'public, max-age=31536000, immutable')
+  assert.equal(decodeEncodedBody('gzip', cssAsset.body).toString('utf8'), hashedCss)
+
+  const stableAsset = await requestRaw(port, '/assets/stable.js')
+  assert.equal(stableAsset.status, 200)
+  assert.equal(stableAsset.body.toString('utf8'), stableJs)
+  assert.equal(headerValue(stableAsset.headers, 'cache-control'), 'no-cache')
+  assertNotImmutableCache(stableAsset.headers, '/assets/stable.js')
+
+  const longWordAsset = await requestRaw(port, '/assets/configuration-defaults.js')
+  assert.equal(longWordAsset.status, 200)
+  assert.equal(longWordAsset.body.toString('utf8'), stableJs)
+  assert.equal(headerValue(longWordAsset.headers, 'cache-control'), 'no-cache')
+  assertNotImmutableCache(longWordAsset.headers, '/assets/configuration-defaults.js')
+
+  const indexResponse = await requestRaw(port, '/')
+  assert.equal(indexResponse.status, 200)
+  assert.equal(headerValue(indexResponse.headers, 'cache-control'), 'no-cache')
+  assert.equal(indexResponse.body.includes('rust server fixture'), true)
+
+  const spaFallback = await requestRaw(port, '/projects/demo')
+  assert.equal(spaFallback.status, 200)
+  assert.equal(headerValue(spaFallback.headers, 'cache-control'), 'no-cache')
+  assert.equal(spaFallback.body.includes('rust server fixture'), true)
+
+  const publicFile = await requestRaw(port, '/hello.txt')
+  assert.equal(publicFile.status, 200)
+  assert.equal(publicFile.body.toString('utf8'), 'hello from public\n')
+  assert.equal(headerValue(publicFile.headers, 'cache-control'), 'no-cache')
+  assertNotImmutableCache(publicFile.headers, '/hello.txt')
+
+  const uploadFile = await requestRaw(port, '/uploads/2026-08-27/notes.txt')
+  assert.equal(uploadFile.status, 200)
+  assert.equal(uploadFile.body.toString('utf8'), uploadBody)
+  assert.equal(headerValue(uploadFile.headers, 'cache-control'), 'no-cache')
+  assertNotImmutableCache(uploadFile.headers, '/uploads')
+
+  const workspaceDownload = await requestRaw(
+    port,
+    `/workspace?path=${encodeURIComponent(workspaceFile)}&token=${encodeURIComponent(token)}&dl=1`,
+  )
+  assert.equal(workspaceDownload.status, 200)
+  assert.equal(workspaceDownload.body.toString('utf8'), workspaceBody)
+  assert.match(headerValue(workspaceDownload.headers, 'content-disposition'), /attachment; filename\*=UTF-8''notes\.txt/)
+  assert.equal(headerValue(workspaceDownload.headers, 'cache-control'), 'no-cache')
+  assertNotImmutableCache(workspaceDownload.headers, '/workspace download')
 })
 
 test('rust nexus-server logs in and reports runtime status', async (t) => {
@@ -1014,6 +1186,151 @@ test('rust nexus-server falls back to tmux capture-pane when pty snapshot is col
 
   const log = readFileSync(tmuxFixture.logFile, 'utf8')
   assert.match(log, /capture-pane\|-p -S -200 -t demo-project:3/)
+})
+
+test('rust nexus-server honors optional output snapshot tailChars', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const tmuxFixture = createPtyScrollbackTmuxFixture()
+  const requestLog = join(tmuxFixture.baseDir, 'pty-requests.log')
+  const port = await getFreePort()
+  const password = 'pty-output-tail-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const unicodeOutput = `HEAD-${'a'.repeat(20000)}-世界🙂TAIL`
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+    PATH: `${tmuxFixture.baseDir}:${process.env.PATH || ''}`,
+    NEXUS_PTY_BROKER_RUST_EXECUTABLE: process.execPath,
+    NEXUS_PTY_BROKER_RUST_ARGS: JSON.stringify([PTY_FIXTURE]),
+    FAKE_PTY_RUNTIME_REQUEST_LOG: requestLog,
+    FAKE_PTY_RUNTIME_SNAPSHOT_JSON: JSON.stringify({
+      'demo-project:1': {
+        outputSnapshot: unicodeOutput,
+        clients: 1,
+      },
+    }),
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+    rmSync(tmuxFixture.baseDir, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const { token } = await login(port, password)
+  const headers = { Authorization: `Bearer ${token}` }
+  const unicodeChars = Array.from(unicodeOutput)
+
+  const fullResponse = await fetch('http://127.0.0.1:' + port + '/api/sessions/1/output?session=demo-project', {
+    headers,
+  })
+  assert.equal(fullResponse.status, 200)
+  const fullBody = await fullResponse.json()
+  assert.equal(fullBody.connected, true)
+  assert.equal(fullBody.output, unicodeOutput)
+  assert.equal(Array.from(fullBody.output).length, unicodeChars.length)
+
+  const unicodeResponse = await fetch(
+    'http://127.0.0.1:' + port + '/api/sessions/1/output?session=demo-project&tailChars=6',
+    { headers },
+  )
+  assert.equal(unicodeResponse.status, 200)
+  const unicodeBody = await unicodeResponse.json()
+  assert.equal(unicodeBody.output, unicodeChars.slice(-6).join(''))
+  assert.equal(unicodeBody.output, '界🙂TAIL')
+
+  const clampedResponse = await fetch(
+    'http://127.0.0.1:' + port + '/api/sessions/1/output?session=demo-project&tailChars=999999',
+    { headers },
+  )
+  assert.equal(clampedResponse.status, 200)
+  const clampedBody = await clampedResponse.json()
+  assert.equal(Array.from(clampedBody.output).length, 16384)
+  assert.equal(clampedBody.output, unicodeChars.slice(-16384).join(''))
+  assert.equal(clampedBody.output.startsWith('HEAD-'), false)
+
+  const zeroResponse = await fetch(
+    'http://127.0.0.1:' + port + '/api/sessions/1/output?session=demo-project&tailChars=0',
+    { headers },
+  )
+  assert.equal(zeroResponse.status, 200)
+  const zeroBody = await zeroResponse.json()
+  assert.equal(Array.from(zeroBody.output).length, 16384)
+  assert.equal(zeroBody.output, clampedBody.output)
+
+  const invalidResponse = await fetch(
+    'http://127.0.0.1:' + port + '/api/sessions/1/output?session=demo-project&tailChars=abc',
+    { headers },
+  )
+  assert.equal(invalidResponse.status, 200)
+  const invalidBody = await invalidResponse.json()
+  assert.equal(Array.from(invalidBody.output).length, 16384)
+  assert.equal(invalidBody.output, clampedBody.output)
+
+  const emptyResponse = await fetch(
+    'http://127.0.0.1:' + port + '/api/sessions/1/output?session=demo-project&tailChars=',
+    { headers },
+  )
+  assert.equal(emptyResponse.status, 200)
+  const emptyBody = await emptyResponse.json()
+  assert.equal(Array.from(emptyBody.output).length, 16384)
+  assert.equal(emptyBody.output, clampedBody.output)
+
+  const whitespaceResponse = await fetch(
+    'http://127.0.0.1:' + port + '/api/sessions/1/output?session=demo-project&tailChars=%20',
+    { headers },
+  )
+  assert.equal(whitespaceResponse.status, 200)
+  const whitespaceBody = await whitespaceResponse.json()
+  assert.equal(Array.from(whitespaceBody.output).length, 16384)
+  assert.equal(whitespaceBody.output, clampedBody.output)
+
+  const fallbackResponse = await fetch(
+    'http://127.0.0.1:' + port + '/api/sessions/3/output?session=demo-project&tailChars=5',
+    { headers },
+  )
+  assert.equal(fallbackResponse.status, 200)
+  const fallbackBody = await fallbackResponse.json()
+  assert.equal(fallbackBody.connected, true)
+  assert.equal(fallbackBody.output, Array.from('alpha\nbeta\n').slice(-5).join(''))
+
+  const tmuxLog = readFileSync(tmuxFixture.logFile, 'utf8')
+  assert.match(tmuxLog, /capture-pane\|-p -S -200 -t demo-project:3/)
+
+  const brokerRequests = readFileSync(requestLog, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const snapshotRequests = brokerRequests.filter((entry) => entry.method === 'getOutputSnapshot')
+  assert.ok(snapshotRequests.length >= 8, `expected broker snapshot requests, got ${snapshotRequests.length}`)
+  assert.equal(
+    snapshotRequests.some((entry) => entry.params.windowIndex === 1 && entry.params.tailChars === undefined),
+    true,
+    'omitted tailChars must keep the full getOutputSnapshot contract',
+  )
+  assert.equal(
+    snapshotRequests.some((entry) => entry.params.windowIndex === 1 && entry.params.tailChars === 6),
+    true,
+    'broker must receive the requested tailChars',
+  )
+  assert.equal(
+    snapshotRequests.some((entry) => entry.params.windowIndex === 1 && entry.params.tailChars === 16384),
+    true,
+    'empty/whitespace/zero/invalid/too-large tailChars must be clamped before the broker',
+  )
+  assert.equal(
+    snapshotRequests.some((entry) => entry.params.windowIndex === 3 && entry.params.tailChars === 5),
+    true,
+    'tmux fallback requests must still pass tailChars to the broker',
+  )
 })
 
 test('rust nexus-server bridges pty websocket traffic through the rust runtime', async (t) => {

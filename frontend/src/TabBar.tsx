@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from './icons'
+import { createNonOverlappingPoller, pollWindowOutputs } from './terminal/windowOutputPolling'
 import { getWindowStatus, STATUS_DOT_COLOR, STATUS_DOT_TITLE } from './windowStatus'
 
 interface TmuxWindow {
@@ -42,35 +43,36 @@ export default function TabBar({ windows, activeIndex, onSwitch, onClose, onAdd,
   // Use provided windowOutputs if available, otherwise poll internally
   const windowOutputs = windowOutputsProp ?? localWindowOutputs
 
+  const windowIndexKey = windows.map(w => w.index).join(',')
+
   // 轮询获取窗口输出预览（仅在未从上层传入时）
   useEffect(() => {
     if (windowOutputsProp !== undefined || !token) return
-    const fetchOutputs = async () => {
-      const outputs: Record<number, any> = {}
-      for (const win of windows) {
-        try {
-          const r = await fetch(`/api/sessions/${win.index}/output`, { headers: { Authorization: `Bearer ${token}` } })
-          if (r.ok) {
-            outputs[win.index] = await r.json()
-            continue
-          }
+    const controller = new AbortController()
+    const tick = createNonOverlappingPoller(async () => {
+      const outputs = await pollWindowOutputs({
+        windows,
+        session: activeSession,
+        token,
+        signal: controller.signal,
+        onError: (detail) => {
           console.error('[TabBar] Failed to load window output preview', {
-            sessionIndex: win.index,
-            status: r.status,
+            sessionIndex: detail.windowIndex,
+            ...(detail.status !== undefined ? { status: detail.status } : { error: detail.error }),
           })
-        } catch (error: unknown) {
-          console.error('[TabBar] Failed to load window output preview', {
-            error,
-            sessionIndex: win.index,
-          })
-        }
-      }
-      setLocalWindowOutputs(outputs)
+        },
+      })
+      if (outputs) setLocalWindowOutputs(outputs)
+    })
+    void tick()
+    const interval = setInterval(() => {
+      void tick()
+    }, 5000)
+    return () => {
+      controller.abort()
+      clearInterval(interval)
     }
-    fetchOutputs()
-    const interval = setInterval(fetchOutputs, 5000)
-    return () => clearInterval(interval)
-  }, [windows.map(w => w.index).join(','), token, windowOutputsProp])
+  }, [activeSession, token, windowIndexKey, windowOutputsProp])
 
   // 自动滚动到激活的 tab
   useEffect(() => {

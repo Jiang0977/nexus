@@ -19,6 +19,7 @@ use crate::child_runtime_protocol::{
     StdioProtocol, dispatch_lines, parse_response, write_notify, write_request,
 };
 use crate::native_session_registry::{NativeChannelLaunch, NativeSessionRegistry};
+use crate::sanitize::{clamp_output_snapshot_tail_chars, truncate_tail};
 
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 30;
@@ -59,6 +60,8 @@ struct ConnectionNotifyParams {
 struct SnapshotParams {
     session: String,
     window_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tail_chars: Option<u32>,
 }
 
 #[derive(Serialize, Clone)]
@@ -1645,6 +1648,13 @@ fn close_connection(state: &SharedState, params: ConnectionNotifyParams, policy:
     entry.last_activity_ms.store(now_ms(), Ordering::SeqCst);
 }
 
+fn bound_snapshot_output(output: String, tail_chars: Option<u32>) -> String {
+    let Some(requested) = tail_chars else {
+        return output;
+    };
+    truncate_tail(&output, clamp_output_snapshot_tail_chars(requested))
+}
+
 fn get_output_snapshot(state: &SharedState, params: SnapshotParams) -> SnapshotResult {
     let key = pty_key(&params.session, params.window_index);
     let Some(entry) = state.get_entry(&key) else {
@@ -1658,7 +1668,7 @@ fn get_output_snapshot(state: &SharedState, params: SnapshotParams) -> SnapshotR
         };
         return SnapshotResult {
             connected: false,
-            output,
+            output: bound_snapshot_output(output, params.tail_chars),
             clients: 0,
             idle_ms: None,
         };
@@ -1666,11 +1676,14 @@ fn get_output_snapshot(state: &SharedState, params: SnapshotParams) -> SnapshotR
 
     SnapshotResult {
         connected: true,
-        output: entry
-            .last_output
-            .lock()
-            .map(|output| output.clone())
-            .unwrap_or_default(),
+        output: bound_snapshot_output(
+            entry
+                .last_output
+                .lock()
+                .map(|output| output.clone())
+                .unwrap_or_default(),
+            params.tail_chars,
+        ),
         clients: entry
             .clients
             .lock()
@@ -2043,10 +2056,26 @@ fn handle_supervisor_client(
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_OUTPUT_BUFFER, NATIVE_SCROLLBACK_FILE_CAP, RECENT_OUTPUT_REPLAY, replay_output,
-        safe_scrollback_component, trim_native_scrollback, trim_output,
+        MAX_OUTPUT_BUFFER, NATIVE_SCROLLBACK_FILE_CAP, RECENT_OUTPUT_REPLAY, bound_snapshot_output,
+        replay_output, safe_scrollback_component, trim_native_scrollback, trim_output,
     };
+    use crate::sanitize::MAX_OUTPUT_SNAPSHOT_TAIL_CHARS;
     use std::fs;
+
+    #[test]
+    fn output_snapshot_tail_is_unicode_safe_and_clamped() {
+        assert_eq!(bound_snapshot_output("abcdef".to_string(), None), "abcdef");
+        assert_eq!(bound_snapshot_output("a中🙂z".to_string(), Some(2)), "🙂z");
+        let long = "x".repeat(20_000);
+        assert_eq!(
+            bound_snapshot_output(long.clone(), Some(0)).chars().count(),
+            MAX_OUTPUT_SNAPSHOT_TAIL_CHARS
+        );
+        assert_eq!(
+            bound_snapshot_output(long, Some(50_000)).chars().count(),
+            MAX_OUTPUT_SNAPSHOT_TAIL_CHARS
+        );
+    }
 
     #[test]
     fn trim_output_keeps_utf8_boundaries() {

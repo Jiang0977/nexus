@@ -1678,7 +1678,7 @@ pub(super) async fn static_fallback(
     }
 
     if let Some(path) = state.find_static_file(uri.path()) {
-        return serve_file(path).await;
+        return serve_discovered_static_file(&state, path).await;
     }
 
     serve_index(&state).await
