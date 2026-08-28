@@ -88,6 +88,7 @@ journalctl --user -u nexus -n 30 --no-pager
 | `WORKSPACE_ROOT` | Nexus 允许访问的目录根 |
 | `NEXUS_SESSION_BACKEND` | 默认 `tmux`；如需试用 native backend，可设为 `native` |
 | `NEXUS_DATA_DIR` | 默认 `data/`；多实例或独立部署时可显式指定 |
+| `NEXUS_WS_HEARTBEAT_MS` | 终端 WebSocket 服务端心跳间隔，单位毫秒；默认 `10000`，只接受正数 |
 | `PORT` | 默认 `59000` |
 | `GITHUB_REPO` | 默认 `Jiang0977/nexus`，用于版本检查 |
 

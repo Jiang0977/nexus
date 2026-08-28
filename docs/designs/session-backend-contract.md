@@ -215,7 +215,7 @@
 
 ## Scrollback / Snapshot Contract
 
-当前 server fallback 通过 backend snapshot 能力读取指定 project/channel 的最近输出。
+当前 server fallback 通过 backend snapshot 能力读取指定 project/channel 的末尾输出。
 
 HTTP/WS 上层只依赖：
 

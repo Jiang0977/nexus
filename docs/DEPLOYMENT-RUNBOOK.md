@@ -1,6 +1,6 @@
 # Nexus 部署与更新 Runbook
 
-最后验证日期：2026-07-25
+最后验证日期：2026-08-28
 
 目标：线上更新时只按这份文档执行。不要再走旧 Node 后端、PM2、前端现场临时构建这类旧路径。
 
@@ -25,6 +25,14 @@
 - native backend 依赖 `nexus-native-pty-supervisor`、`nexus-native-session`、`data/native-sessions/` 和 `nexus-native-pty.service`；部署脚本默认构建 native binaries 并安装 `~/.local/bin/nexus-native-session`。
 - 部署脚本默认不重启正在运行的 `nexus-native-pty.service`，以免中断 native sessions；需要刷新 supervisor 进程时显式传 `--restart-native-pty`。
 - 所以发布前仍建议显式重建 Rust release binary，并确认 `frontend/dist/` 仍存在。
+
+终端 WebSocket 默认由 server 每 10 秒发送 Ping，以维持经过反向代理、Tailscale Serve 或移动网络的空闲连接。可在 `.env` 设置其他正数毫秒值：
+
+```bash
+NEXUS_WS_HEARTBEAT_MS=10000
+```
+
+无效值、`0` 或负数都会回退到 `10000`。不要用过低间隔掩盖网络抖动；它会增加移动端唤醒和传输开销。
 
 ## 标准上线步骤
 
@@ -171,6 +179,7 @@ curl --silent --show-error --max-time 5 http://127.0.0.1:59000 | head -n 5
 - 首页返回 `200 OK`
 - `nexus-tmux.service` 处于 `active (running)`，并且 `tmux -D` 归属在 `nexus-tmux.service`，不是 `nexus.service`
 - 如果 `NEXUS_SESSION_BACKEND=native` 或 `data/session-backend.json` 配为 native，`nexus-native-pty.service` 也必须可用，且 `data/native-sessions/supervisor.sock` 存在
+- 打开一个终端后保持空闲至少 30 秒，浏览器不应周期性显示“连接断开”；服务端 Ping 应由浏览器自动回复
 
 补充说明：
 
@@ -246,7 +255,26 @@ test -x "$HOME/.cargo/bin/cargo"
 
 原因：`frontend/dist/` 缺失或仓库不完整。当前运行时仍只认 `frontend/dist/`；如果仓库完整，可以在 `frontend/` 下重新构建后再重启。
 
-### 4. native 模式另一个终端无法进入会话
+### 4. 浏览器周期性提示 WebSocket 断开
+
+服务重启、设备切网、浏览器休眠或移动系统把页面挂起时，出现一次断开并自动重连是正常的；稳定前台网络下周期性断开不是正常状态。
+
+先确认 server 是否稳定，并检查连接期日志：
+
+```bash
+systemctl --user status nexus --no-pager
+journalctl --user -u nexus --since '10 minutes ago' --no-pager | rg 'WebSocket error|reset without closing handshake|panic|killed'
+```
+
+然后分别使用本机入口和远程入口保持同一个空闲终端至少 30 秒：
+
+- 本机 `http://127.0.0.1:59000` 稳定、Tailscale HTTPS 入口断开：优先排查手机 Tailscale 状态、MagicSock/direct-vs-relay、网络切换和 Serve 链路。
+- 两个入口都断开：检查 `nexus.service` 重启、CPU/内存压力和 server 日志。
+- 只有后台页面断开：通常是浏览器或移动系统休眠策略；回到前台后应自动重连。
+
+如需协议级确认，使用能够显示 WebSocket 控制帧的抓包工具检查约每 10 秒一次的 Ping。若显式修改过 `NEXUS_WS_HEARTBEAT_MS`，恢复 `10000` 后重启 `nexus` 再复测；不要把心跳调得更密来补偿高延迟或丢包。
+
+### 5. native 模式另一个终端无法进入会话
 
 先确认 native supervisor 服务和 socket：
 
@@ -281,7 +309,7 @@ systemctl --user restart nexus
 
 如果使用了 `NEXUS_DATA_DIR`，socket 和 `session-backend.json` 都在该数据目录下。
 
-### 5. 指定 Codex profile 新开 channel 后没有 skills
+### 6. 指定 Codex profile 新开 channel 后没有 skills
 
 原因：
 
@@ -303,7 +331,7 @@ test -x rust-runtime/target/release/nexus-codex-home
 - 已打开的 Codex 进程可能缓存了启动时的 skills 列表；在 channel 中退出 Codex 后按 `r` 重启，或新开 Codex profile channel。
 - 不要为了这个问题直接重启 `nexus-tmux.service`，除非你明确接受所有 tmux 会话被影响。
 
-### 6. 重启时报 `Address already in use`
+### 7. 重启时报 `Address already in use`
 
 原因：历史上旧 unit 可能留下孤儿 `nexus-server` 进程，占住 `127.0.0.1:59000`。
 
@@ -319,11 +347,11 @@ sudo systemctl start nexus
 
 如果新的 unit 已部署正确，清掉这次残留后，后续重启不应再复发。
 
-### 7. `systemctl --user` 不可用
+### 8. `systemctl --user` 不可用
 
 说明：当前机器没有用户级 systemd。可以临时 `bash start.sh` 前台运行，但这不等于正式部署。
 
-### 8. Nexus 内 `codex` 报 `real codex binary not found in PATH`
+### 9. Nexus 内 `codex` 报 `real codex binary not found in PATH`
 
 原因：服务或 tmux 的 `PATH` 里只有 wrapper，没带上真实 Codex CLI 所在目录。
 

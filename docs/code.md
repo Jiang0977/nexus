@@ -65,7 +65,7 @@
 | `rust-runtime/src/server/config.rs` | 配置、profile、feature config |
 | `rust-runtime/src/server/workspace.rs` | workspace / file system handler |
 | `rust-runtime/src/server/version.rs` | 版本与更新检查 |
-| `rust-runtime/src/server/session_ws.rs` | session / channel / websocket 入口 |
+| `rust-runtime/src/server/session_ws.rs` | session / channel / websocket 入口；服务端心跳与关闭握手 |
 
 ### 共享逻辑
 
@@ -122,17 +122,19 @@
 
 1. `frontend/src/Terminal.tsx`
 2. `frontend/src/terminal/terminalConnection.ts`
-3. `frontend/src/terminal/useTerminalRuntime.ts`
-4. `frontend/src/terminal/useTerminalPaneRuntime.ts`
-5. `frontend/src/terminal/useTerminalSessions.ts`
-6. `frontend/src/terminal/useTerminalArtifacts.ts`
-7. `frontend/src/terminal/DesktopSidebar.tsx`
-8. `frontend/src/terminal/MobileSessionDrawer.tsx`
+3. `frontend/src/terminal/terminalApplicationScroll.ts`
+4. `frontend/src/terminal/useTerminalRuntime.ts`
+5. `frontend/src/terminal/useTerminalPaneRuntime.ts`
+6. `frontend/src/terminal/useTerminalSessions.ts`
+7. `frontend/src/terminal/useTerminalArtifacts.ts`
+8. `frontend/src/terminal/DesktopSidebar.tsx`
+9. `frontend/src/terminal/MobileSessionDrawer.tsx`
 
 这样读能更快看清：
 
 - `Terminal.tsx` 只负责顶层装配
 - WebSocket URL / resize / reconnect / close policy 集中在 `terminalConnection.ts`
+- Grok 等全屏 TUI 的应用内滚动识别和 SGR wheel 编码集中在 `terminalApplicationScroll.ts`
 - runtime hooks 只装配 xterm、交互和连接状态 adapter
 - session / window 状态下沉到 sessions hook
 - scrollback / upload / 通知下沉到 artifacts hook
@@ -150,11 +152,12 @@
 
 1. 浏览器建 WebSocket 到 `/ws`
 2. `terminalConnection.ts` 负责连接、首帧 resize、retry 与 fatal close-code policy
-3. `nexus-server` 把请求转给 `nexus-pty-runtime`
-4. PTY runtime attach 到目标 project/channel
-5. tmux backend 下连接 `tmux session:window`；native backend 下连接 Rust PTY/supervisor
-6. stdio child 与 supervisor socket 都使用 `child_runtime_protocol` 的 JSON-line contract
-7. 浏览器和后端 PTY 双向 I/O
+3. `session_ws.rs` 默认每 10 秒发送 Ping，并处理浏览器 Close 握手
+4. `nexus-server` 把请求转给 `nexus-pty-runtime`
+5. PTY runtime attach 到目标 project/channel
+6. tmux backend 下连接 `tmux session:window`；native backend 下连接 Rust PTY/supervisor
+7. stdio child 与 supervisor socket 都使用 `child_runtime_protocol` 的 JSON-line contract
+8. 浏览器和后端 PTY 双向 I/O；全屏 TUI 的滚轮或触摸滑动可由 `terminalApplicationScroll.ts` 编码回应用
 
 ### 新建 project / channel
 

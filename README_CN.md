@@ -47,6 +47,7 @@ Browser / PWA
 - UI：Settings -> Terminal Backend -> 保存 -> 重启 `nexus`。
 - 配置：在 `.env` 设置 `NEXUS_SESSION_BACKEND=native`，或写入 `data/session-backend.json`。
 - native 模式还需要 `nexus-native-pty.service` 正在运行。
+- 终端 WebSocket 默认由服务端每 10 秒发送一次心跳；仅在运维确有需要时，才在 `.env` 中把 `NEXUS_WS_HEARTBEAT_MS` 设置为其他正数。
 
 从另一个终端进入 native session：
 

@@ -85,7 +85,7 @@ bash start.sh
 | `rust-runtime/src/server/layouts.rs` | PC split-view active layout API 与 `data/workspace-layouts.json` 持久化 |
 | `rust-runtime/src/server/workspace.rs` | workspace / 文件系统相关 handler |
 | `rust-runtime/src/server/version.rs` | 版本与更新检查 |
-| `rust-runtime/src/server/session_ws.rs` | project / channel / websocket 入口；默认映射到 tmux，native 模式走 Rust PTY runtime |
+| `rust-runtime/src/server/session_ws.rs` | project / channel / websocket 入口；默认映射到 tmux，native 模式走 Rust PTY runtime；负责服务端心跳和关闭握手 |
 
 ### 共享逻辑
 
@@ -155,6 +155,7 @@ bash start.sh
 |---|---|
 | `frontend/src/Terminal.tsx` | 顶层编排：overlay、drawer、sidebar、toolbar、lazy 面板装配 |
 | `frontend/src/terminal/terminalConnection.ts` | 浏览器终端连接 port：URL、open/resize、data/autoscroll、close-code、retry/backoff 与 cleanup；production WebSocket 和测试 fake 共用 contract |
+| `frontend/src/terminal/terminalApplicationScroll.ts` | 全屏终端应用滚动识别与 SGR wheel 编码；为 Grok 等同步刷新 TUI 在重连后补偿应用内滚动 |
 | `frontend/src/terminal/useTerminalRuntime.ts` | 单窗 xterm、输入代理与移动端键盘行为；通过 adapter 投影连接状态 |
 | `frontend/src/terminal/useTerminalPaneRuntime.ts` | PC split-view pane 的 xterm/状态 adapter；共享 terminal connection policy |
 | `frontend/src/terminal/useTerminalSessions.ts` | tmux session/window 列表、切换、创建、轮询状态 |
@@ -164,6 +165,13 @@ bash start.sh
 | `frontend/src/terminal/SplitWorkspaceView.tsx` | PC 右侧主工作区 split-view 编排、layout toolbar、状态条 |
 | `frontend/src/terminal/TerminalPane.tsx` | 单个 split pane：header、drop target、empty/stale/error/loading/live 状态 |
 | `frontend/src/terminal/useWorkspaceLayout.ts` | active layout GET/PUT、前端 normalize、保存状态 |
+
+终端连接与应用内滚动的关键语义：
+
+- `session_ws.rs` 默认每 10 秒发送 WebSocket Ping；`NEXUS_WS_HEARTBEAT_MS` 可改为其他正数，无效值回退到默认值。
+- 浏览器关闭连接时，server 参与标准关闭握手；非预期断开由 `terminalConnection.ts` 走指数退避重连，最多 8 次。
+- xterm scrollback 只负责普通终端历史。全屏 TUI 若没有重新声明鼠标跟踪，但输出出现 Grok 签名或重复 synchronized-update 序列，单窗与 split pane runtime 会把鼠标滚轮或手机纵向滑动编码为 SGR wheel 发回应用。
+- 一旦 TUI 明确声明鼠标跟踪，前端停止使用上述补偿，避免重复发送滚轮事件。
 
 ## 数据落点
 

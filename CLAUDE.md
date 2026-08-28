@@ -124,5 +124,5 @@ Rules: English subject, imperative mood, no trailing period, blank line before b
 | Roadmap / scope change | `docs/ROADMAP.md` |
 | Architecture change | `docs/ARCHITECTURE.md` |
 | Process / convention | `CLAUDE.md` (this file) |
-| Env var added | `.env.example` + commit body |
+| Env var added | `.env.example` + `docs/QUICKSTART.md` + `docs/DEPLOYMENT-RUNBOOK.md` |
 | Bug fix | commit body (root cause) |

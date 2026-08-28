@@ -47,6 +47,7 @@ Switching backend:
 - UI: Settings -> Terminal Backend -> save -> restart `nexus`.
 - Config: set `NEXUS_SESSION_BACKEND=native` in `.env`, or write `data/session-backend.json`.
 - Native mode also needs `nexus-native-pty.service` running.
+- Terminal WebSockets use a 10-second server heartbeat by default; set a positive `NEXUS_WS_HEARTBEAT_MS` value in `.env` only when an operator needs a different interval.
 
 Attach to native sessions from another terminal:
 
