@@ -12,12 +12,20 @@ import {
   writeTerminalSelectionToClipboardEvent,
 } from './terminalClipboard'
 import { connectTerminal, type TerminalSocket } from './terminalConnection'
+import {
+  createSgrWheelReport,
+  createTerminalApplicationScrollState,
+  observeTerminalApplicationOutput,
+  resetTerminalApplicationScrollState,
+  shouldForwardTerminalWheelToApplication,
+} from './terminalApplicationScroll'
 
 const FONT_SIZE_KEY = 'nexus_font_size'
 const TAP_THRESHOLD = 8
 const CHANNEL_SWIPE_THRESHOLD = 60
 const SWIPE_DIRECTION_LOCK_THRESHOLD = 18
 const SWIPE_DIRECTION_GAP = 12
+const APPLICATION_TOUCH_WHEEL_STEP_PX = 32
 
 interface UseTerminalRuntimeArgs {
   activeTmuxSession: string
@@ -68,6 +76,7 @@ export function useTerminalRuntime({
   const keyboardVisibleRef = useRef(false)
   const isComposingRef = useRef(false)
   const overlayOpenRef = useRef(overlayOpen)
+  const applicationScrollStateRef = useRef(createTerminalApplicationScrollState())
   const [isConnecting, setIsConnecting] = useState(false)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
   const [vvHeight, setVvHeight] = useState<number | null>(null)
@@ -186,6 +195,7 @@ export function useTerminalRuntime({
 
     const fontSize = parseInt(localStorage.getItem(FONT_SIZE_KEY) || '16', 10)
     const initialTheme = getInitialTheme()
+    resetTerminalApplicationScrollState(applicationScrollStateRef.current)
     const term = new XTerm({
       theme: THEMES[initialTheme],
       fontSize,
@@ -367,6 +377,7 @@ export function useTerminalRuntime({
     let touchStartY = 0
     let touchLastY = 0
     let touchScrollRemainder = 0
+    let applicationTouchWheelRemainder = 0
     let touchScrollLineHeight = 0
     let lastObservedScrollTop = 0
     let nativeViewportMoved = false
@@ -456,6 +467,7 @@ export function useTerminalRuntime({
       fallbackCheckGeneration += 1
       cancelFallbackCheck()
       touchScrollRemainder = 0
+      applicationTouchWheelRemainder = 0
       touchScrollLineHeight = 0
       lastObservedScrollTop = viewport?.scrollTop ?? 0
       nativeViewportMoved = false
@@ -578,6 +590,27 @@ export function useTerminalRuntime({
       }
 
       if (swipeAxis === 'vertical') {
+        if (shouldForwardTerminalWheelToApplication(applicationScrollStateRef.current)) {
+          event.preventDefault()
+          const deltaY = currentY - touchLastY
+          applicationTouchWheelRemainder += deltaY
+          const reports = Math.min(3, Math.floor(Math.abs(applicationTouchWheelRemainder) / APPLICATION_TOUCH_WHEEL_STEP_PX))
+          if (reports > 0) {
+            const reportDeltaY = applicationTouchWheelRemainder > 0 ? -1 : 1
+            for (let index = 0; index < reports; index += 1) {
+              sendApplicationWheelReport(
+                event.touches[0].clientX,
+                currentY,
+                reportDeltaY,
+              )
+            }
+            applicationTouchWheelRemainder -= Math.sign(applicationTouchWheelRemainder)
+              * reports
+              * APPLICATION_TOUCH_WHEEL_STEP_PX
+          }
+          touchLastY = currentY
+          return
+        }
         if (nativeViewportMoved) return
         if (manualScrollFallbackActive) {
           scrollTerminalByTouch(currentY - touchLastY)
@@ -683,12 +716,43 @@ export function useTerminalRuntime({
       if (inputRef.current) inputRef.current.inputMode = 'text'
     }
 
+    function sendApplicationWheelReport(
+      clientX: number,
+      clientY: number,
+      deltaY: number,
+      modifiers: { altKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean } = {},
+    ): boolean {
+      const socket = wsRef.current
+      const target = screen ?? viewport ?? containerEl
+      if (socket?.readyState !== WebSocket.OPEN) return false
+      const report = createSgrWheelReport({
+        ...modifiers,
+        clientX,
+        clientY,
+        cols: term.cols,
+        deltaY,
+        rows: term.rows,
+        screenRect: target.getBoundingClientRect(),
+      })
+      if (!report) return false
+      socket.send(report)
+      return true
+    }
+
+    function onWheel(event: WheelEvent) {
+      if (event.ctrlKey || !shouldForwardTerminalWheelToApplication(applicationScrollStateRef.current)) return
+      if (!sendApplicationWheelReport(event.clientX, event.clientY, event.deltaY, event)) return
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
     containerEl.addEventListener('touchstart', onTouchStart, { passive: true })
-    containerEl.addEventListener('touchmove', onTouchMove, { passive: true })
+    containerEl.addEventListener('touchmove', onTouchMove, { passive: false })
     containerEl.addEventListener('touchend', onTouchEnd, { passive: true })
     containerEl.addEventListener('touchcancel', finishPinch, { passive: true })
-    viewport?.addEventListener('touchmove', onViewportTouchMove, { passive: true })
+    viewport?.addEventListener('touchmove', onViewportTouchMove, { passive: false })
     viewport?.addEventListener('scroll', onViewportScroll, { passive: true })
+    containerEl.addEventListener('wheel', onWheel, { capture: true, passive: false })
 
     function onDragOver(event: DragEvent) {
       event.preventDefault()
@@ -752,6 +816,7 @@ export function useTerminalRuntime({
       containerEl.removeEventListener('touchcancel', finishPinch)
       viewport?.removeEventListener('touchmove', onViewportTouchMove)
       viewport?.removeEventListener('scroll', onViewportScroll)
+      containerEl.removeEventListener('wheel', onWheel, true)
       fallbackCheckGeneration += 1
       cancelFallbackCheck()
       if (viewportScrollSyncRaf !== null) cancelAnimationFrame(viewportScrollSyncRaf)
@@ -790,13 +855,19 @@ export function useTerminalRuntime({
         setConnecting: () => setIsConnecting(true),
         setLive: () => setIsConnecting(false),
         setError: () => setIsConnecting(false),
-        reset: () => termRef.current?.reset(),
+        reset: () => {
+          resetTerminalApplicationScrollState(applicationScrollStateRef.current)
+          termRef.current?.reset()
+        },
         fit: () => fitAddonRef.current?.fit(),
         dimensions: () => {
           const term = termRef.current
           return term ? { cols: term.cols, rows: term.rows } : null
         },
-        write: (data, callback) => termRef.current?.write(data, callback),
+        write: (data, callback) => {
+          observeTerminalApplicationOutput(applicationScrollStateRef.current, data)
+          termRef.current?.write(data, callback)
+        },
         shouldAutoScroll: () => !userScrolledRef.current,
         scrollToBottom: () => termRef.current?.scrollToBottom(),
       },

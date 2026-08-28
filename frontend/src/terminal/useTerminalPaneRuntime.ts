@@ -11,6 +11,13 @@ import {
   writeTerminalSelectionToClipboardEvent,
 } from './terminalClipboard'
 import { connectTerminal, type TerminalSocket } from './terminalConnection'
+import {
+  createSgrWheelReport,
+  createTerminalApplicationScrollState,
+  observeTerminalApplicationOutput,
+  resetTerminalApplicationScrollState,
+  shouldForwardTerminalWheelToApplication,
+} from './terminalApplicationScroll'
 
 const FONT_SIZE_KEY = 'nexus_font_size'
 const USER_SCROLL_HOLD_MS = 1200
@@ -39,6 +46,7 @@ export function useTerminalPaneRuntime({
   const userScrolledRef = useRef(false)
   const userScrollHoldUntilRef = useRef(0)
   const lastContainerSizeRef = useRef({ w: 0, h: 0 })
+  const applicationScrollStateRef = useRef(createTerminalApplicationScrollState())
   const [connectionState, setConnectionState] = useState<PaneConnectionState>(target ? 'loading' : 'empty')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
@@ -147,6 +155,7 @@ export function useTerminalPaneRuntime({
 
     const storedFontSize = parseInt(localStorage.getItem(FONT_SIZE_KEY) || '16', 10)
     const fontSize = compact ? Math.min(storedFontSize, 12) : Math.min(storedFontSize, 15)
+    resetTerminalApplicationScrollState(applicationScrollStateRef.current)
     const term = new XTerm({
       theme: THEMES[themeMode],
       fontSize,
@@ -202,6 +211,26 @@ export function useTerminalPaneRuntime({
     })
 
     function onWheel(event: WheelEvent) {
+      if (!event.ctrlKey && shouldForwardTerminalWheelToApplication(applicationScrollStateRef.current)) {
+        const target = screen ?? viewport ?? containerEl
+        const report = createSgrWheelReport({
+          altKey: event.altKey || event.metaKey,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          cols: term.cols,
+          ctrlKey: event.ctrlKey,
+          deltaY: event.deltaY,
+          rows: term.rows,
+          screenRect: target.getBoundingClientRect(),
+          shiftKey: event.shiftKey,
+        })
+        if (report && wsRef.current?.readyState === WebSocket.OPEN) {
+          event.preventDefault()
+          event.stopPropagation()
+          wsRef.current.send(report)
+          return
+        }
+      }
       if (event.deltaY < 0) {
         markUserScrolled()
       }
@@ -215,16 +244,14 @@ export function useTerminalPaneRuntime({
       writeTerminalSelectionToClipboardEvent(term, event)
     }
 
-    containerEl.addEventListener('wheel', onWheel, { passive: true })
-    viewport?.addEventListener('wheel', onWheel, { passive: true })
+    containerEl.addEventListener('wheel', onWheel, { capture: true, passive: false })
     containerEl.addEventListener('contextmenu', onContextMenu)
     containerEl.addEventListener('copy', onCopy)
 
     requestAnimationFrame(() => fitAddon.fit())
 
     return () => {
-      containerEl.removeEventListener('wheel', onWheel)
-      viewport?.removeEventListener('wheel', onWheel)
+      containerEl.removeEventListener('wheel', onWheel, true)
       containerEl.removeEventListener('contextmenu', onContextMenu)
       containerEl.removeEventListener('copy', onCopy)
       term.dispose()
@@ -259,13 +286,19 @@ export function useTerminalPaneRuntime({
           setConnectionState('error')
           setErrorMessage(message)
         },
-        reset: () => termRef.current?.reset(),
+        reset: () => {
+          resetTerminalApplicationScrollState(applicationScrollStateRef.current)
+          termRef.current?.reset()
+        },
         fit: () => fitAddonRef.current?.fit(),
         dimensions: () => {
           const term = termRef.current
           return term ? { cols: term.cols, rows: term.rows } : null
         },
-        write: (data, callback) => termRef.current?.write(data, callback),
+        write: (data, callback) => {
+          observeTerminalApplicationOutput(applicationScrollStateRef.current, data)
+          termRef.current?.write(data, callback)
+        },
         shouldAutoScroll,
         scrollToBottom: () => termRef.current?.scrollToBottom(),
       },

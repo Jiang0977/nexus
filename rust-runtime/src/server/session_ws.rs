@@ -1,5 +1,16 @@
 use super::*;
 
+const DEFAULT_WS_HEARTBEAT_MS: u64 = 10_000;
+
+fn websocket_heartbeat_interval() -> Duration {
+    let milliseconds = env::var("NEXUS_WS_HEARTBEAT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_WS_HEARTBEAT_MS);
+    Duration::from_millis(milliseconds)
+}
+
 pub(super) async fn handle_pty_websocket(
     mut socket: WebSocket,
     state: Arc<AppState>,
@@ -65,6 +76,9 @@ pub(super) async fn handle_pty_websocket(
     };
 
     let mut disconnect_notify: Option<&'static str> = None;
+    let mut heartbeat = tokio::time::interval(websocket_heartbeat_interval());
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    heartbeat.tick().await;
 
     loop {
         tokio::select! {
@@ -99,6 +113,7 @@ pub(super) async fn handle_pty_websocket(
                         }
                     }
                     Some(Ok(Message::Close(_))) => {
+                        let _ = timeout(Duration::from_secs(1), socket.recv()).await;
                         disconnect_notify = Some("closeConnection");
                         break;
                     }
@@ -112,6 +127,12 @@ pub(super) async fn handle_pty_websocket(
                         disconnect_notify = Some("closeConnection");
                         break;
                     }
+                }
+            }
+            _ = heartbeat.tick() => {
+                if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    disconnect_notify = Some("errorConnection");
+                    break;
                 }
             }
             runtime_event = event_receiver.recv() => {

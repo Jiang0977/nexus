@@ -567,6 +567,36 @@ function waitForWebSocketMessage(ws) {
   })
 }
 
+function waitForWebSocketPing(ws, timeoutMs = 1000) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error(`websocket did not receive a ping within ${timeoutMs}ms`))
+    }, timeoutMs)
+    const handlePing = (data) => {
+      cleanup()
+      resolve(data)
+    }
+    const handleError = (error) => {
+      cleanup()
+      reject(error)
+    }
+    const handleClose = (code, reason) => {
+      cleanup()
+      reject(new Error(`websocket closed before ping (${code}: ${reason.toString()})`))
+    }
+    const cleanup = () => {
+      clearTimeout(timeout)
+      ws.off('ping', handlePing)
+      ws.off('error', handleError)
+      ws.off('close', handleClose)
+    }
+    ws.on('ping', handlePing)
+    ws.on('error', handleError)
+    ws.on('close', handleClose)
+  })
+}
+
 function waitForWebSocketClose(ws) {
   return new Promise((resolve, reject) => {
     const handleClose = (code, reason) => {
@@ -1348,6 +1378,7 @@ test('rust nexus-server bridges pty websocket traffic through the rust runtime',
     ACC_PASSWORD_HASH: passwordHash,
     NEXUS_PTY_BROKER_RUST_EXECUTABLE: process.execPath,
     NEXUS_PTY_BROKER_RUST_ARGS: JSON.stringify([PTY_FIXTURE]),
+    NEXUS_WS_HEARTBEAT_MS: '25',
   })
 
   t.after(async () => {
@@ -1362,11 +1393,15 @@ test('rust nexus-server bridges pty websocket traffic through the rust runtime',
   const closed = waitForWebSocketClose(ws)
 
   await waitForWebSocketOpen(ws)
+  await waitForWebSocketPing(ws)
   ws.send('pwd\n')
   assert.equal(await waitForWebSocketMessage(ws), 'pwd\n')
 
-  ws.close()
-  await closed
+  ws.close(1000, 'test complete')
+  assert.deepEqual(await closed, {
+    code: 1000,
+    reason: 'test complete',
+  })
 
   await delay(100)
 

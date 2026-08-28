@@ -506,11 +506,17 @@ async function assertSplitPaneTerminalScrollbarGutter(page, paneSelector) {
 function installWebSocketCapture() {
   const NativeWebSocket = window.WebSocket
   window.__nexusWsInstances = []
+  window.__nexusWsSends = []
   function PatchedWebSocket(url, protocols) {
     const socket = protocols === undefined
       ? new NativeWebSocket(url)
       : new NativeWebSocket(url, protocols)
     socket.__nexusUrl = String(url)
+    const nativeSend = socket.send.bind(socket)
+    socket.send = (data) => {
+      window.__nexusWsSends.push({ data, url: socket.__nexusUrl })
+      return nativeSend(data)
+    }
     window.__nexusWsInstances.push(socket)
     return socket
   }
@@ -520,6 +526,13 @@ function installWebSocketCapture() {
     writable: true,
     value: PatchedWebSocket,
   })
+}
+
+function describeCapturedWebSocketSends(sends) {
+  return JSON.stringify(sends.map(({ data, url }) => ({
+    data: String(data),
+    url: String(url).replace(/\?.*$/, ''),
+  })))
 }
 
 async function dispatchCapturedWebSocketMessage(page, urlPart, data) {
@@ -1987,6 +2000,129 @@ test('browser regression: delayed native viewport movement prevents mobile termi
     touchMoveStats.preventDefaultCalls,
     0,
     `delayed native movement must stay on the browser-native scroll path, got ${JSON.stringify(touchMoveStats)}`,
+  )
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: reconnected Grok TUI forwards mouse wheel and touch scroll to the application', { timeout: 120000 }, async (t) => {
+  const grokTuiReplay = 'Grok 4.6 reconnect frame without retained mouse mode'
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    mobile: true,
+    ptySnapshots: {
+      'nexus-preview-rust:0': {
+        output: grokTuiReplay,
+        clients: 1,
+      },
+    },
+  })
+  await page.addInitScript(installWebSocketCapture)
+
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => (window.__nexusWsInstances || []).some((socket) => String(socket.__nexusUrl || '').includes('window=0')))
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('Grok 4.6 reconnect frame'))
+
+  const terminalBounds = await page.locator('.xterm-viewport').first().evaluate((viewport) => {
+    const bounds = viewport.getBoundingClientRect()
+    return {
+      height: bounds.height,
+      left: bounds.left,
+      top: bounds.top,
+      width: bounds.width,
+    }
+  })
+  const centerX = terminalBounds.left + terminalBounds.width / 2
+  const centerY = terminalBounds.top + terminalBounds.height / 2
+
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await page.mouse.move(centerX, centerY)
+  await page.mouse.wheel(0, -120)
+  await delay(100)
+  const wheelSends = await page.evaluate(() => window.__nexusWsSends || [])
+  assert.ok(
+    wheelSends.some(({ data, url }) => (
+      String(url).includes('window=0') && /^\x1b\[<64;\d+;\d+M$/.test(String(data))
+    )),
+    `expected reconnect fallback to forward mouse wheel-up as SGR input, got ${describeCapturedWebSocketSends(wheelSends)}`,
+  )
+
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await dispatchMobileSwipe(page, [
+    [centerX, centerY],
+    [centerX, centerY + 40],
+    [centerX, centerY + 90],
+    [centerX, centerY + 130],
+  ])
+  await delay(100)
+  const touchSends = await page.evaluate(() => window.__nexusWsSends || [])
+  assert.ok(
+    touchSends.some(({ data, url }) => (
+      String(url).includes('window=0') && /^\x1b\[<64;\d+;\d+M$/.test(String(data))
+    )),
+    `expected reconnect fallback to forward downward touch drag as SGR wheel-up input, got ${describeCapturedWebSocketSends(touchSends)}`,
+  )
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: desktop pane forwards reconnected synchronized TUI wheel to the application', { timeout: 120000 }, async (t) => {
+  const synchronizedTuiReplay = [
+    '\x1b[?2026hGrok desktop reconnect frame one\x1b[?2026l',
+    '\x1b[?2026hGrok desktop reconnect frame two\x1b[?2026l',
+  ].join('')
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    extraChannels: [{ index: 0, name: 'preview', active: false, cwd: '/workspace' }],
+    ptySnapshots: {
+      'nexus-preview-rust:0': {
+        output: synchronizedTuiReplay,
+        clients: 1,
+      },
+    },
+  })
+  await page.addInitScript(installWebSocketCapture)
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+  const channelRow = page.locator('[draggable="true"]').filter({ hasText: 'preview' }).first()
+  await channelRow.waitFor()
+  await channelRow.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  const targetRows = page.getByTestId('terminal-pane-pane-1').locator('.xterm-rows').filter({ hasText: 'Grok desktop reconnect frame two' }).first()
+  await targetRows.waitFor()
+  const targetTerminal = targetRows.locator('xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " xterm ")][1]')
+  const targetViewport = targetTerminal.locator('.xterm-viewport')
+  const terminalBounds = await targetViewport.evaluate((viewport) => {
+    const bounds = viewport.getBoundingClientRect()
+    return {
+      left: bounds.left,
+      top: bounds.top,
+      width: bounds.width,
+      height: bounds.height,
+    }
+  })
+
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await page.mouse.move(
+    terminalBounds.left + terminalBounds.width / 2,
+    terminalBounds.top + terminalBounds.height / 2,
+  )
+  await page.mouse.wheel(0, -120)
+  await delay(100)
+  const wheelSends = await page.evaluate(() => window.__nexusWsSends || [])
+  assert.ok(
+    wheelSends.some(({ data, url }) => (
+      String(url).includes('window=0') && /^\x1b\[<64;\d+;\d+M$/.test(String(data))
+    )),
+    `expected desktop pane reconnect fallback to forward wheel-up as SGR input, got ${describeCapturedWebSocketSends(wheelSends)}`,
   )
 
   assert.deepEqual(
