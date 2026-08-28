@@ -170,7 +170,7 @@ bash start.sh
 
 - `session_ws.rs` 默认每 10 秒发送 WebSocket Ping；`NEXUS_WS_HEARTBEAT_MS` 可改为其他正数，无效值回退到默认值。
 - 浏览器关闭连接时，server 参与标准关闭握手；非预期断开由 `terminalConnection.ts` 走指数退避重连，最多 8 次。
-- xterm scrollback 只负责普通终端历史。全屏 TUI 若没有重新声明鼠标跟踪，但输出出现 Grok 签名或重复 synchronized-update 序列，单窗与 split pane runtime 会把鼠标滚轮或手机纵向滑动编码为 SGR wheel 发回应用。
+- xterm scrollback 只负责普通终端历史。全屏 Grok TUI 若没有重新声明鼠标跟踪，但输出出现 Grok 版本或终端标题签名，单窗与 split pane runtime 会把鼠标滚轮或手机纵向滑动编码为 SGR wheel 发回应用；通用 synchronized-update 序列不作为应用识别依据，以免误拦截 Codex 的普通历史滚动。
 - 一旦 TUI 明确声明鼠标跟踪，前端停止使用上述补偿，避免重复发送滚轮事件。
 
 ## 数据落点

@@ -2075,6 +2075,7 @@ test('browser regression: reconnected Grok TUI forwards mouse wheel and touch sc
 
 test('browser regression: desktop pane forwards reconnected synchronized TUI wheel to the application', { timeout: 120000 }, async (t) => {
   const synchronizedTuiReplay = [
+    '\x1b]0;Grok desktop reconnect\x07',
     '\x1b[?2026hGrok desktop reconnect frame one\x1b[?2026l',
     '\x1b[?2026hGrok desktop reconnect frame two\x1b[?2026l',
   ].join('')
@@ -2123,6 +2124,85 @@ test('browser regression: desktop pane forwards reconnected synchronized TUI whe
       String(url).includes('window=0') && /^\x1b\[<64;\d+;\d+M$/.test(String(data))
     )),
     `expected desktop pane reconnect fallback to forward wheel-up as SGR input, got ${describeCapturedWebSocketSends(wheelSends)}`,
+  )
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: desktop Codex synchronized updates keep native xterm scrollback', { timeout: 120000 }, async (t) => {
+  const codexHistory = Array.from({ length: 180 }, (_unused, index) => (
+    `Codex history line ${String(index + 1).padStart(3, '0')}\r\n`
+  )).join('')
+  const codexReplay = [
+    '\x1b[?2026hCodex synchronized frame one\x1b[?2026l\r\n',
+    '\x1b[?2026hCodex synchronized frame two\x1b[?2026l\r\n',
+    codexHistory,
+  ].join('')
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    extraChannels: [{ index: 0, name: 'codex', active: false, cwd: '/workspace' }],
+    ptySnapshots: {
+      'nexus-preview-rust:0': {
+        output: codexReplay,
+        clients: 1,
+      },
+    },
+  })
+  await page.addInitScript(installWebSocketCapture)
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+  const channelRow = page.locator('[draggable="true"]').filter({ hasText: 'codex' }).first()
+  await channelRow.waitFor()
+  await channelRow.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  const targetRows = page.getByTestId('terminal-pane-pane-1').locator('.xterm-rows').filter({ hasText: 'Codex history line 180' }).first()
+  await targetRows.waitFor()
+  const targetViewport = page.getByTestId('terminal-pane-pane-1').locator('.xterm-viewport')
+  await targetViewport.evaluate((viewport) => {
+    viewport.scrollTop = viewport.scrollHeight
+  })
+  const before = await targetViewport.evaluate((viewport) => ({
+    maxScrollTop: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+    scrollTop: viewport.scrollTop,
+  }))
+  assert.ok(before.maxScrollTop > 400, `expected Codex scrollback range, got ${JSON.stringify(before)}`)
+
+  const terminalBounds = await targetViewport.evaluate((viewport) => {
+    const bounds = viewport.getBoundingClientRect()
+    return {
+      left: bounds.left,
+      top: bounds.top,
+      width: bounds.width,
+      height: bounds.height,
+    }
+  })
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await page.mouse.move(
+    terminalBounds.left + terminalBounds.width / 2,
+    terminalBounds.top + terminalBounds.height / 2,
+  )
+  await page.mouse.wheel(0, -900)
+  await delay(100)
+
+  const after = await targetViewport.evaluate((viewport) => ({
+    scrollTop: viewport.scrollTop,
+  }))
+  const wheelSends = await page.evaluate(() => window.__nexusWsSends || [])
+  assert.equal(
+    wheelSends.some(({ data, url }) => (
+      String(url).includes('window=0') && /^\x1b\[<6[45];\d+;\d+M$/.test(String(data))
+    )),
+    false,
+    `Codex wheel must not be forwarded as SGR input, got ${describeCapturedWebSocketSends(wheelSends)}`,
+  )
+  assert.ok(
+    after.scrollTop < before.scrollTop - 20,
+    `expected Codex xterm history to scroll, before=${before.scrollTop}, after=${after.scrollTop}`,
   )
 
   assert.deepEqual(

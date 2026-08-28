@@ -1,11 +1,9 @@
-const SYNCHRONIZED_UPDATE_MODE = '\x1b[?2026h'
-const SYNCHRONIZED_UPDATE_THRESHOLD = 2
 const GROK_TUI_SIGNATURE = /\bGrok\s+\d+(?:\.\d+)*\b/
+const GROK_TUI_TITLE_SIGNATURE = /\x1b\](?:0|2);[^\x07]*(?:\bGrok\b)[^\x07]*(?:\x07|\x1b\\)/i
 
 export interface TerminalApplicationScrollState {
   applicationSignatureObserved: boolean
   mouseTrackingObserved: boolean
-  synchronizedUpdateCount: number
 }
 
 interface SgrWheelReportArgs {
@@ -24,14 +22,12 @@ export function createTerminalApplicationScrollState(): TerminalApplicationScrol
   return {
     applicationSignatureObserved: false,
     mouseTrackingObserved: false,
-    synchronizedUpdateCount: 0,
   }
 }
 
 export function resetTerminalApplicationScrollState(state: TerminalApplicationScrollState): void {
   state.applicationSignatureObserved = false
   state.mouseTrackingObserved = false
-  state.synchronizedUpdateCount = 0
 }
 
 export function observeTerminalApplicationOutput(
@@ -41,28 +37,18 @@ export function observeTerminalApplicationOutput(
   if (!state.mouseTrackingObserved && /\x1b\[\?(?:1000|1002|1003)[hl]/.test(data)) {
     state.mouseTrackingObserved = true
   }
-  if (!state.applicationSignatureObserved && GROK_TUI_SIGNATURE.test(data)) {
+  if (
+    !state.applicationSignatureObserved
+    && (GROK_TUI_SIGNATURE.test(data) || GROK_TUI_TITLE_SIGNATURE.test(data))
+  ) {
     state.applicationSignatureObserved = true
-  }
-
-  if (state.synchronizedUpdateCount >= SYNCHRONIZED_UPDATE_THRESHOLD) return
-  let searchFrom = 0
-  while (state.synchronizedUpdateCount < SYNCHRONIZED_UPDATE_THRESHOLD) {
-    const next = data.indexOf(SYNCHRONIZED_UPDATE_MODE, searchFrom)
-    if (next < 0) return
-    state.synchronizedUpdateCount += 1
-    searchFrom = next + SYNCHRONIZED_UPDATE_MODE.length
   }
 }
 
 export function shouldForwardTerminalWheelToApplication(
   state: TerminalApplicationScrollState,
 ): boolean {
-  return !state.mouseTrackingObserved
-    && (
-      state.applicationSignatureObserved
-      || state.synchronizedUpdateCount >= SYNCHRONIZED_UPDATE_THRESHOLD
-    )
+  return !state.mouseTrackingObserved && state.applicationSignatureObserved
 }
 
 export function createSgrWheelReport({

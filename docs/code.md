@@ -134,7 +134,7 @@
 
 - `Terminal.tsx` 只负责顶层装配
 - WebSocket URL / resize / reconnect / close policy 集中在 `terminalConnection.ts`
-- Grok 等全屏 TUI 的应用内滚动识别和 SGR wheel 编码集中在 `terminalApplicationScroll.ts`
+- Grok 全屏 TUI 的明确版本/终端标题识别和 SGR wheel 编码集中在 `terminalApplicationScroll.ts`；通用 synchronized-update 输出仍走 xterm scrollback
 - runtime hooks 只装配 xterm、交互和连接状态 adapter
 - session / window 状态下沉到 sessions hook
 - scrollback / upload / 通知下沉到 artifacts hook
