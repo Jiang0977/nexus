@@ -27,6 +27,7 @@ interface Props {
   onUpload?: () => void
   onUploadFile?: (file: File) => void
   onOpenFiles?: () => void
+  onOpenPromptLibrary?: () => void
   onOpenWorkspace?: () => void
   onFitTerminal?: () => void
   /** When true: renders as a compact sidebar section (no theme/settings, flex-wrap key grid) */
@@ -77,7 +78,7 @@ interface DragState {
 
 const ITEM_HEIGHT = 48 // px，每行编辑项高度
 
-export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _termRef, themeMode, onToggleTheme, onOpenSettings, onUploadFile, onOpenFiles, onOpenWorkspace, onFitTerminal, embedded, collapsed: controlledCollapsed, onCollapsedChange }: Props) {
+export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _termRef, themeMode, onToggleTheme, onOpenSettings, onUploadFile, onOpenFiles, onOpenPromptLibrary, onOpenWorkspace, onFitTerminal, embedded, collapsed: controlledCollapsed, onCollapsedChange }: Props) {
   const { t } = useTranslation()
   const [config, setConfig]           = useState<ToolbarConfig>(loadConfig)
   const isControlled = controlledCollapsed !== undefined
@@ -585,6 +586,13 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
             ><Icon name="paperclip" size={18} /></button>
           </div>
           <div className="flex items-center gap-0.5">
+            {onOpenPromptLibrary && (
+              <button
+                className={iconBtnPCClass}
+                onPointerDown={(e) => { e.preventDefault(); onOpenPromptLibrary() }}
+                title={t('toolbar.promptLibrary')}
+              ><Icon name="clipboard" size={18} /></button>
+            )}
             {onOpenFiles && (
               <button
                 className={iconBtnPCClass}
@@ -639,6 +647,11 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
           {onOpenWorkspace && (
             <button className={iconBtnPCClass} onPointerDown={(e) => { e.preventDefault(); onOpenWorkspace() }} title={t('toolbar.workspace')}>
               <Icon name="folder" size={18} />
+            </button>
+          )}
+          {onOpenPromptLibrary && (
+            <button className={iconBtnPCClass} onPointerDown={(e) => { e.preventDefault(); onOpenPromptLibrary() }} title={t('toolbar.promptLibrary')}>
+              <Icon name="clipboard" size={18} />
             </button>
           )}
           <button
@@ -783,6 +796,12 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
                 <button className={quickMenuItemClass} onPointerDown={(e) => { e.preventDefault(); setEditing(true); setShowQuickMenu(false) }}>
                   <Icon name="pencil" size={16} /><span>{t('toolbar.editShortcuts')}</span>
                 </button>
+                {onOpenPromptLibrary && (
+                  <button className={quickMenuItemClass} onPointerDown={(e) => { e.preventDefault(); onOpenPromptLibrary(); setShowQuickMenu(false) }}>
+                    <Icon name="clipboard" size={16} />
+                    <span>{t('toolbar.promptLibrary')}</span>
+                  </button>
+                )}
                 {onOpenFiles && (
                   <button className={quickMenuItemClass} onPointerDown={(e) => { e.preventDefault(); onOpenFiles(); setShowQuickMenu(false) }}>
                     <Icon name="image" size={16} />

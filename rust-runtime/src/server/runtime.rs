@@ -34,6 +34,7 @@ pub(super) struct AppState {
     pub(super) project_defaults_file: Arc<PathBuf>,
     pub(super) toolbar_config_file: Arc<PathBuf>,
     pub(super) workspace_layouts_file: Arc<PathBuf>,
+    pub(super) prompt_store: Arc<PromptStore>,
     pub(super) uploads_dir: Arc<PathBuf>,
     pub(super) proxy_vars: Arc<Vec<(String, String)>>,
     pub(super) public_dir: Arc<PathBuf>,

@@ -88,7 +88,9 @@ export function useTerminalRuntime({
   const sendToWs = useCallback((data: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(data)
+      return true
     }
+    return false
   }, [])
 
   const fitNow = useCallback(() => {

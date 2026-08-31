@@ -10,6 +10,7 @@ const loadNewWindowDialog = () => import('../NewWindowDialog')
 const loadFilePanel = () => import('../FilePanel')
 const loadWorkspaceBrowser = () => import('../WorkspaceBrowser')
 const loadGeneralSettings = () => import('../GeneralSettings')
+const loadPromptLibrary = () => import('../PromptLibrary')
 export const preloadCodexSessionsPanel = () => import('../CodexSessionsPanel')
 
 const SessionManager = lazy(loadSessionManager)
@@ -19,6 +20,7 @@ const NewWindowDialog = lazy(loadNewWindowDialog)
 const FilePanel = lazy(loadFilePanel)
 const WorkspaceBrowser = lazy(loadWorkspaceBrowser)
 const GeneralSettings = lazy(loadGeneralSettings)
+const PromptLibrary = lazy(loadPromptLibrary)
 const CodexSessionsPanel = lazy(preloadCodexSessionsPanel)
 
 interface Props {
@@ -33,6 +35,7 @@ interface Props {
   onCloseGeneralSettings: () => void
   onCloseNewSession: () => void
   onCloseNewWindow: () => void
+  onClosePromptLibrary: () => void
   onCloseSessionManager: () => void
   onCloseSessionManagerV2: () => void
   onCloseWorkspace: () => void
@@ -41,6 +44,7 @@ interface Props {
   onCreateSession: (path: string, shellType: ShellType, profile?: string) => void
   onNewWindowConfirm: (shellType: ShellType, profile?: string) => void
   onOpenApiConfig: () => void
+  onInsertPromptToTerminal: (content: string) => boolean
   onSessionManagerNewChannel: () => void
   onSessionManagerNewProject: () => void
   onStartNewCodexFromModal: () => void
@@ -51,6 +55,7 @@ interface Props {
   showGeneralSettings: boolean
   showNewSession: boolean
   showNewWindow: boolean
+  showPromptLibrary: boolean
   showSessionManager: boolean
   showSessionManagerV2: boolean
   showWorkspace: boolean
@@ -71,6 +76,7 @@ export function TerminalModalStack({
   onCloseGeneralSettings,
   onCloseNewSession,
   onCloseNewWindow,
+  onClosePromptLibrary,
   onCloseSessionManager,
   onCloseSessionManagerV2,
   onCloseWorkspace,
@@ -79,6 +85,7 @@ export function TerminalModalStack({
   onCreateSession,
   onNewWindowConfirm,
   onOpenApiConfig,
+  onInsertPromptToTerminal,
   onSessionManagerNewChannel,
   onSessionManagerNewProject,
   onStartNewCodexFromModal,
@@ -89,6 +96,7 @@ export function TerminalModalStack({
   showGeneralSettings,
   showNewSession,
   showNewWindow,
+  showPromptLibrary,
   showSessionManager,
   showSessionManagerV2,
   showWorkspace,
@@ -103,6 +111,15 @@ export function TerminalModalStack({
           <FilePanel
             token={token}
             onClose={onCloseFiles}
+          />
+        </Suspense>
+      )}
+      {showPromptLibrary && (
+        <Suspense fallback={null}>
+          <PromptLibrary
+            token={token}
+            onClose={onClosePromptLibrary}
+            onInsertToTerminal={onInsertPromptToTerminal}
           />
         </Suspense>
       )}

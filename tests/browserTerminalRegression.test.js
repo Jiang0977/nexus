@@ -569,6 +569,140 @@ test('browser regression: desktop login opens the terminal shell and session man
   )
 })
 
+test('browser regression: desktop prompt library persists, copies, inserts, edits, and deletes prompts', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+  await page.addInitScript(installWebSocketCapture)
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: `http://127.0.0.1:${port}`,
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+  const shellSource = page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first()
+  await shellSource.waitFor()
+  await shellSource.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await page.waitForFunction(() => document.body.textContent?.includes('notes ready'))
+
+  await page.getByTitle('Prompt library').click()
+  await page.getByRole('dialog', { name: 'Prompt Library' }).waitFor()
+
+  await page.getByRole('button', { name: 'New prompt' }).first().click()
+  await page.getByLabel('Title').fill('Independent review')
+  await page.getByLabel('Prompt content').fill('Review this diff carefully.\nDo not auto-submit.')
+  const createResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library')
+      && response.request().method() === 'POST'
+      && response.status() === 201
+  ))
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await createResponse
+
+  await page.getByRole('button', { name: 'Copy', exact: true }).click()
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'Review this diff carefully.\nDo not auto-submit.')
+
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await page.getByRole('button', { name: 'Insert into terminal' }).click()
+  await page.getByRole('dialog', { name: 'Prompt Library' }).waitFor({ state: 'detached' })
+  await page.waitForFunction(() => (window.__nexusWsSends || []).some((send) => (
+    send.data === 'Review this diff carefully.\nDo not auto-submit.'
+  )))
+
+  await page.getByTitle('Prompt library').click()
+  await page.getByLabel('Title').fill('Independent review v2')
+  await page.getByLabel('Prompt content').fill('Review the final diff only.')
+  const updateResponse = page.waitForResponse((response) => (
+    response.url().includes('/api/prompt-library/prompt_')
+      && response.request().method() === 'PUT'
+      && response.ok()
+  ))
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await updateResponse
+  await page.getByPlaceholder('Search title or content').fill('final diff')
+  await page.getByText('Independent review v2', { exact: true }).waitFor()
+
+  await page.evaluate(() => navigator.clipboard.writeText(''))
+  await page.getByRole('button', { name: 'Copy “Independent review v2”', exact: true }).click()
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'Review the final diff only.')
+
+  page.once('dialog', dialog => dialog.accept())
+  const deleteResponse = page.waitForResponse((response) => (
+    response.url().includes('/api/prompt-library/prompt_')
+      && response.request().method() === 'DELETE'
+      && response.ok()
+  ))
+  await page.getByRole('button', { name: 'Delete “Independent review v2”', exact: true }).click()
+  await deleteResponse
+  await page.getByText('No matching prompts').waitFor()
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: mobile prompt editor blocks terminal input until explicit insertion', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, { mobile: true })
+  await page.addInitScript(installWebSocketCapture)
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: `http://127.0.0.1:${port}`,
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+  await page.getByTitle('More').click()
+  await page.getByRole('button', { name: 'Prompt library' }).click()
+  await page.getByRole('button', { name: 'Create your first prompt' }).click()
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+
+  await page.getByLabel('Title').fill('Mobile draft')
+  await page.getByLabel('Prompt content').fill('mobile-prompt-body')
+  const typedSends = await page.evaluate(() => (window.__nexusWsSends || [])
+    .filter((send) => !String(send.data).includes('"resize"'))
+    .map((send) => String(send.data)))
+  assert.deepEqual(typedSends, [], `prompt editor input leaked to terminal: ${JSON.stringify(typedSends)}`)
+
+  const createResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library')
+      && response.request().method() === 'POST'
+      && response.status() === 201
+  ))
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await createResponse
+
+  await page.getByRole('button', { name: 'Back to prompt list' }).click()
+  await page.getByRole('button', { name: 'Copy “Mobile draft”', exact: true }).click()
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'mobile-prompt-body')
+
+  await page.getByRole('button', { name: /Mobile draft/ }).first().click()
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await page.getByRole('button', { name: 'Insert into terminal' }).click()
+  await page.waitForFunction(() => (window.__nexusWsSends || []).some((send) => send.data === 'mobile-prompt-body'))
+
+  const inserted = await page.evaluate(() => (window.__nexusWsSends || [])
+    .filter((send) => send.data === 'mobile-prompt-body'))
+  assert.equal(inserted.length, 1)
+
+  await page.getByTitle('More').click()
+  await page.getByRole('button', { name: 'Prompt library' }).click()
+  page.once('dialog', dialog => dialog.accept())
+  const deleteResponse = page.waitForResponse((response) => (
+    response.url().includes('/api/prompt-library/prompt_')
+      && response.request().method() === 'DELETE'
+      && response.ok()
+  ))
+  await page.getByRole('button', { name: 'Delete “Mobile draft”', exact: true }).click()
+  await deleteResponse
+  await page.getByText('Your prompt library is empty').waitFor()
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
 test('browser regression: desktop split workspace fills the available height', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
 

@@ -302,6 +302,7 @@ mod tests {
             project_defaults_file: Arc::new(PathBuf::from("/tmp/nexus/project-defaults.json")),
             toolbar_config_file: Arc::new(PathBuf::from("/tmp/nexus/toolbar-config.json")),
             workspace_layouts_file: Arc::new(layout_file),
+            prompt_store: PromptStore::new(PathBuf::from("/tmp/nexus/prompts.json")),
             uploads_dir: Arc::new(PathBuf::from("/tmp/nexus/uploads")),
             proxy_vars: Arc::new(Vec::new()),
             public_dir: Arc::new(PathBuf::from("/tmp/nexus/public")),

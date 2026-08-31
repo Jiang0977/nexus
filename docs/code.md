@@ -63,6 +63,8 @@
 | `rust-runtime/src/server/tasks.rs` | task / SSE 相关 handler |
 | `rust-runtime/src/server/telegram.rs` | Telegram setup / webhook |
 | `rust-runtime/src/server/config.rs` | 配置、profile、feature config |
+| `rust-runtime/src/server/layouts.rs` | PC split-view active layout API 与持久化 |
+| `rust-runtime/src/server/prompts.rs` | 提示词库鉴权 CRUD、校验、锁与原子 JSON 持久化 |
 | `rust-runtime/src/server/workspace.rs` | workspace / file system handler |
 | `rust-runtime/src/server/version.rs` | 版本与更新检查 |
 | `rust-runtime/src/server/session_ws.rs` | session / channel / websocket 入口；服务端心跳与关闭握手 |
@@ -121,14 +123,17 @@
 前端主入口当前推荐阅读顺序：
 
 1. `frontend/src/Terminal.tsx`
-2. `frontend/src/terminal/terminalConnection.ts`
-3. `frontend/src/terminal/terminalApplicationScroll.ts`
-4. `frontend/src/terminal/useTerminalRuntime.ts`
-5. `frontend/src/terminal/useTerminalPaneRuntime.ts`
-6. `frontend/src/terminal/useTerminalSessions.ts`
-7. `frontend/src/terminal/useTerminalArtifacts.ts`
-8. `frontend/src/terminal/DesktopSidebar.tsx`
-9. `frontend/src/terminal/MobileSessionDrawer.tsx`
+2. `frontend/src/terminal/TerminalModalStack.tsx`
+3. `frontend/src/PromptLibrary.tsx`
+4. `frontend/src/promptLibrary/api.ts`
+5. `frontend/src/terminal/terminalConnection.ts`
+6. `frontend/src/terminal/terminalApplicationScroll.ts`
+7. `frontend/src/terminal/useTerminalRuntime.ts`
+8. `frontend/src/terminal/useTerminalPaneRuntime.ts`
+9. `frontend/src/terminal/useTerminalSessions.ts`
+10. `frontend/src/terminal/useTerminalArtifacts.ts`
+11. `frontend/src/terminal/DesktopSidebar.tsx`
+12. `frontend/src/terminal/MobileSessionDrawer.tsx`
 
 这样读能更快看清：
 
@@ -138,6 +143,7 @@
 - runtime hooks 只装配 xterm、交互和连接状态 adapter
 - session / window 状态下沉到 sessions hook
 - scrollback / upload / 通知下沉到 artifacts hook
+- 提示词库通过 `TerminalModalStack` 懒加载；编辑时阻止 xterm 输入，插入时复用当前 focused pane / mobile terminal 的 `sendToWs` 且不追加回车
 
 ## 最重要的调用链
 
@@ -166,6 +172,13 @@
 3. session runtime 通过 catalog / lifecycle / cleanup capability port 调用 factory 选出的 adapter
 4. 默认 factory 选择 tmux；仅 `NEXUS_SESSION_BACKEND=native` 时选择 native registry/process adapter
 5. 浏览器刷新列表
+
+### 管理并插入提示词
+
+1. 桌面收起侧栏、桌面展开侧栏底部工具栏或移动端更多菜单打开提示词库
+2. 浏览器通过鉴权 `/api/prompt-library` GET/POST/PUT/DELETE 管理全局提示词
+3. `prompts.rs` 在同一锁内读取、校验、修改并原子替换 `data/prompts.json`；损坏文件拒绝所有写入
+4. 点击“插入当前终端”时，桌面发送到 focused pane，移动端发送到当前终端；连接不可写时显示失败，不额外发送 `Enter`
 
 ## 验证入口
 

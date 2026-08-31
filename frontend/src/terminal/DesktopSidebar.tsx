@@ -16,6 +16,7 @@ interface Props {
   onOpenFiles: () => void
   onOpenNewSession: () => void
   onOpenNewWindow: () => void
+  onOpenPromptLibrary: () => void
   onOpenSettings: () => void
   onOpenUpload: () => void
   onOpenWorkspace: () => void
@@ -39,6 +40,7 @@ export function DesktopSidebar({
   onOpenFiles,
   onOpenNewSession,
   onOpenNewWindow,
+  onOpenPromptLibrary,
   onOpenSettings,
   onOpenUpload,
   onOpenWorkspace,
@@ -149,6 +151,18 @@ export function DesktopSidebar({
               title="上传文件"
             >
               <Icon name="paperclip" size={18} />
+            </button>
+
+            <button
+              onClick={(event) => {
+                event.stopPropagation()
+                onOpenPromptLibrary()
+              }}
+              className="w-12 h-10 bg-transparent border-none text-nexus-text-2 flex items-center justify-center cursor-pointer"
+              title={t('promptLibrary.title')}
+              aria-label={t('promptLibrary.title')}
+            >
+              <Icon name="clipboard" size={18} />
             </button>
 
             {codexHistoryEnabled && (

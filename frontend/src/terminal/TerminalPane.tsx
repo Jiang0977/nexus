@@ -10,7 +10,7 @@ import type { ThemeMode } from './theme'
 export interface FocusedPaneRuntime {
   fitTerminal: () => void
   scrollToBottom: () => void
-  sendToWs: (data: string) => void
+  sendToWs: (data: string) => boolean
   target: PaneTarget | null
   termRef: MutableRefObject<XTerm | null>
 }

@@ -31,6 +31,7 @@ Browser / PWA
 - PC split view：single / vertical / horizontal / 2x2 / 3x3 多 pane 终端。
 - 异步任务执行：`/api/tasks`、SSE streaming、Telegram bridge。
 - 文件浏览器：浏览、编辑、上传、重命名、移动、复制、删除工作区文件。
+- 提示词库：保存、编辑、搜索、复制提示词，并可在不自动提交的前提下插入当前终端。
 - Codex / Claude profile 启动器，包含 Codex history / resume 流程。
 - PWA、深色/浅色主题。
 - Rust 优先运行链：`nexus-server` 直接伺服 `frontend/dist/`。

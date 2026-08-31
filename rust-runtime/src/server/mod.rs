@@ -59,6 +59,7 @@ use tower_http::compression::CompressionLayer;
 
 mod config;
 mod layouts;
+mod prompts;
 mod runtime;
 mod session_ws;
 mod tasks;
@@ -68,6 +69,7 @@ mod workspace;
 
 use self::config::*;
 use self::layouts::*;
+use self::prompts::*;
 use self::runtime::*;
 use self::session_ws::*;
 use self::tasks::*;
@@ -101,6 +103,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         runtime_manager.task_runner.clone(),
     )
     .await;
+    let prompt_store = PromptStore::new(config.prompts_file);
     let telegram_bridge = Arc::new(TelegramBridge::new(
         config.telegram_bot_token,
         config.telegram_webhook_secret,
@@ -125,6 +128,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         project_defaults_file: Arc::new(config.project_defaults_file),
         toolbar_config_file: Arc::new(config.toolbar_config_file),
         workspace_layouts_file: Arc::new(config.workspace_layouts_file),
+        prompt_store,
         uploads_dir: Arc::new(config.uploads_dir),
         proxy_vars: Arc::new(config.proxy_vars),
         public_dir: Arc::new(config.project_root.join("public")),
@@ -189,6 +193,14 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/workspace-layouts/active",
             get(api_get_active_workspace_layout).put(api_put_active_workspace_layout),
+        )
+        .route(
+            "/api/prompt-library",
+            get(api_get_prompt_library).post(api_create_prompt),
+        )
+        .route(
+            "/api/prompt-library/{id}",
+            put(api_update_prompt).delete(api_delete_prompt),
         )
         .route("/api/webhooks/telegram", post(api_telegram_webhook))
         .route("/api/telegram/setup", get(api_telegram_setup))

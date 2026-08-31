@@ -31,6 +31,7 @@ import {
   type SidebarChannelDragPayload,
 } from './terminal/splitLayoutTypes'
 import type { FocusedPaneRuntime } from './terminal/TerminalPane'
+import useOverlayGuard from './useOverlayGuard'
 
 const SessionManagerV2 = lazy(preloadSessionManagerV2)
 
@@ -57,6 +58,7 @@ export default function Terminal({ token }: Props) {
   const codexHistoryTriggerRef = useRef<HTMLElement | null>(null)
   const [showNewSession, setShowNewSession] = useState(false)
   const [showNewWindow, setShowNewWindow] = useState(false)
+  const [showPromptLibrary, setShowPromptLibrary] = useState(false)
   const [showSessionDrawer, setShowSessionDrawer] = useState(false)
   const [sidebarDetailView, setSidebarDetailView] = useState<SessionManagerSidebarDetailView>('channels')
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialTheme)
@@ -88,6 +90,7 @@ export default function Terminal({ token }: Props) {
   useEffect(() => { toolbarCollapsedRef.current = toolbarCollapsed }, [toolbarCollapsed])
   const sessionManagerRef = useRef<SessionManagerV2Handle>(null)
   const { dismissProfileGuide, markProfilesDetected, showProfileGuide } = useProfileGuide({ token })
+  useOverlayGuard(termRef, showPromptLibrary)
 
   const {
     activeTmuxSession,
@@ -159,7 +162,7 @@ export default function Terminal({ token }: Props) {
     token,
   })
 
-  const runtimeOverlayOpen = showSessionDrawer || showSettings || showGeneralSettings || showNewSession || showNewWindow || showScrollback || showSessionManagerV2 || showCodexSessions || showFiles
+  const runtimeOverlayOpen = showSessionDrawer || showSettings || showGeneralSettings || showNewSession || showNewWindow || showPromptLibrary || showScrollback || showSessionManagerV2 || showCodexSessions || showFiles
   const {
     containerRef,
     fitTerminal,
@@ -201,6 +204,14 @@ export default function Terminal({ token }: Props) {
     }
     sendToWs(path)
   }
+
+  const insertPromptToTerminal = useCallback((content: string) => {
+    if (!content) return false
+    if (isWidePC) {
+      return focusedPaneRuntimeRef.current?.sendToWs(content) ?? false
+    }
+    return sendToWs(content)
+  }, [isWidePC, sendToWs])
 
   useEffect(() => {
     const check = () => setIsWidePC(window.innerWidth >= 768)
@@ -355,6 +366,7 @@ export default function Terminal({ token }: Props) {
     onToggleTheme: toggleTheme,
     onOpenSettings: () => setShowGeneralSettings(true),
     onOpenFiles: () => setShowFiles(true),
+    onOpenPromptLibrary: () => setShowPromptLibrary(true),
     onOpenWorkspace: () => setShowWorkspace(true),
     onUpload: handleFileUpload,
     onUploadFile: uploadFile,
@@ -532,6 +544,7 @@ export default function Terminal({ token }: Props) {
               onOpenFiles={() => setShowFiles(true)}
               onOpenNewSession={openNewSessionDialog}
               onOpenNewWindow={handleCreateWindow}
+              onOpenPromptLibrary={() => setShowPromptLibrary(true)}
               onOpenSettings={() => setShowSessionManagerV2(true)}
               onOpenUpload={handleFileUpload}
               onOpenWorkspace={() => setShowWorkspace(true)}
@@ -622,6 +635,7 @@ export default function Terminal({ token }: Props) {
         onCloseGeneralSettings={() => setShowGeneralSettings(false)}
         onCloseNewSession={() => setShowNewSession(false)}
         onCloseNewWindow={() => setShowNewWindow(false)}
+        onClosePromptLibrary={() => setShowPromptLibrary(false)}
         onCloseSessionManager={() => setShowSettings(false)}
         onCloseSessionManagerV2={() => setShowSessionManagerV2(false)}
         onCloseWorkspace={() => setShowWorkspace(false)}
@@ -630,6 +644,7 @@ export default function Terminal({ token }: Props) {
         onCreateSession={handleCreateSession}
         onNewWindowConfirm={handleNewWindowConfirm}
         onOpenApiConfig={handleOpenApiConfig}
+        onInsertPromptToTerminal={insertPromptToTerminal}
         onSessionManagerNewChannel={handleSessionManagerModalNewChannel}
         onSessionManagerNewProject={handleSessionManagerModalNewProject}
         onStartNewCodexFromModal={handleModalStartNewCodex}
@@ -640,6 +655,7 @@ export default function Terminal({ token }: Props) {
         showGeneralSettings={showGeneralSettings}
         showNewSession={showNewSession}
         showNewWindow={showNewWindow}
+        showPromptLibrary={showPromptLibrary}
         showSessionManager={showSettings}
         showSessionManagerV2={showSessionManagerV2}
         showWorkspace={showWorkspace}
