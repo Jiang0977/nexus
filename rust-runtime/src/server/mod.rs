@@ -198,6 +198,7 @@ fn build_router(state: Arc<AppState>) -> Router {
             "/api/prompt-library",
             get(api_get_prompt_library).post(api_create_prompt),
         )
+        .route("/api/prompt-library/order", put(api_reorder_prompt_library))
         .route(
             "/api/prompt-library/{id}",
             put(api_update_prompt).delete(api_delete_prompt),

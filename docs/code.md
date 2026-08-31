@@ -64,7 +64,7 @@
 | `rust-runtime/src/server/telegram.rs` | Telegram setup / webhook |
 | `rust-runtime/src/server/config.rs` | 配置、profile、feature config |
 | `rust-runtime/src/server/layouts.rs` | PC split-view active layout API 与持久化 |
-| `rust-runtime/src/server/prompts.rs` | 提示词库鉴权 CRUD、校验、锁与原子 JSON 持久化 |
+| `rust-runtime/src/server/prompts.rs` | 提示词库鉴权 CRUD/排序、校验、锁与原子 JSON 持久化 |
 | `rust-runtime/src/server/workspace.rs` | workspace / file system handler |
 | `rust-runtime/src/server/version.rs` | 版本与更新检查 |
 | `rust-runtime/src/server/session_ws.rs` | session / channel / websocket 入口；服务端心跳与关闭握手 |
@@ -176,7 +176,7 @@
 ### 管理并插入提示词
 
 1. 桌面收起侧栏、桌面展开侧栏底部工具栏或移动端更多菜单打开提示词库
-2. 浏览器通过鉴权 `/api/prompt-library` GET/POST/PUT/DELETE 管理全局提示词
+2. 浏览器通过鉴权 `/api/prompt-library` GET/POST/PUT/DELETE 管理全局提示词，并通过 `PUT /api/prompt-library/order` 携带期望基线、原子保存完整排序
 3. `prompts.rs` 在同一锁内读取、校验、修改并原子替换 `data/prompts.json`；损坏文件拒绝所有写入
 4. 点击“插入当前终端”时，桌面发送到 focused pane，移动端发送到当前终端；连接不可写时显示失败，不额外发送 `Enter`
 

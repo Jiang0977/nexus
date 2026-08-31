@@ -21,6 +21,16 @@ export interface PromptInput {
   content: string
 }
 
+export class PromptLibraryRequestError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'PromptLibraryRequestError'
+    this.status = status
+  }
+}
+
 async function request<T>(token: string, path: string, init?: RequestInit): Promise<T> {
   try {
     const response = await fetch(path, {
@@ -32,7 +42,10 @@ async function request<T>(token: string, path: string, init?: RequestInit): Prom
       },
     })
     if (!response.ok) {
-      throw new Error(await parseApiError(response, 'Prompt library request failed'))
+      throw new PromptLibraryRequestError(
+        await parseApiError(response, 'Prompt library request failed'),
+        response.status,
+      )
     }
     return await response.json() as T
   } catch (error) {
@@ -57,6 +70,17 @@ export function updatePrompt(token: string, id: string, input: PromptInput): Pro
   return request<PromptRecord>(token, `/api/prompt-library/${encodeURIComponent(id)}`, {
     method: 'PUT',
     body: JSON.stringify(input),
+  })
+}
+
+export function reorderPrompts(
+  token: string,
+  ids: string[],
+  expectedIds: string[],
+): Promise<PromptLibraryResponse> {
+  return request<PromptLibraryResponse>(token, '/api/prompt-library/order', {
+    method: 'PUT',
+    body: JSON.stringify({ ids, expectedIds }),
   })
 }
 

@@ -83,7 +83,7 @@ bash start.sh
 | `rust-runtime/src/server/telegram.rs` | Telegram setup 与桥接入口 |
 | `rust-runtime/src/server/config.rs` | 配置读取、profile / feature config 入口 |
 | `rust-runtime/src/server/layouts.rs` | PC split-view active layout API 与 `data/workspace-layouts.json` 持久化 |
-| `rust-runtime/src/server/prompts.rs` | 单用户提示词库的鉴权 CRUD、校验、并发锁与 `data/prompts.json` 原子持久化 |
+| `rust-runtime/src/server/prompts.rs` | 单用户提示词库的鉴权 CRUD/排序、校验、并发锁与 `data/prompts.json` 原子持久化 |
 | `rust-runtime/src/server/workspace.rs` | workspace / 文件系统相关 handler |
 | `rust-runtime/src/server/version.rs` | 版本与更新检查 |
 | `rust-runtime/src/server/session_ws.rs` | project / channel / websocket 入口；默认映射到 tmux，native 模式走 Rust PTY runtime；负责服务端心跳和关闭握手 |
@@ -155,7 +155,7 @@ bash start.sh
 | 路径 | 作用 |
 |---|---|
 | `frontend/src/Terminal.tsx` | 顶层编排：overlay、drawer、sidebar、toolbar、lazy 面板装配 |
-| `frontend/src/PromptLibrary.tsx` | 提示词库列表/编辑器、搜索、复制、脏状态与响应式交互 |
+| `frontend/src/PromptLibrary.tsx` | 提示词库列表/编辑器、搜索、拖拽排序、复制、脏状态与响应式交互 |
 | `frontend/src/promptLibrary/api.ts` | 提示词库鉴权 REST client、类型与前后端共享长度边界 |
 | `frontend/src/terminal/terminalConnection.ts` | 浏览器终端连接 port：URL、open/resize、data/autoscroll、close-code、retry/backoff 与 cleanup；production WebSocket 和测试 fake 共用 contract |
 | `frontend/src/terminal/terminalApplicationScroll.ts` | 全屏终端应用滚动识别与 SGR wheel 编码；为 Grok 等同步刷新 TUI 在重连后补偿应用内滚动 |

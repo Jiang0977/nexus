@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const PROMPT_LIBRARY_VERSION: u32 = 1;
 const MAX_PROMPTS: usize = 500;
@@ -31,9 +31,17 @@ pub(super) struct PromptInput {
     content: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PromptOrderInput {
+    ids: Vec<String>,
+    expected_ids: Vec<String>,
+}
+
 #[derive(Debug, PartialEq)]
 enum PromptStoreError {
     Invalid(String),
+    Conflict(String),
     NotFound,
     Storage(String),
 }
@@ -42,6 +50,7 @@ impl PromptStoreError {
     fn status(&self) -> StatusCode {
         match self {
             Self::Invalid(_) => StatusCode::BAD_REQUEST,
+            Self::Conflict(_) => StatusCode::CONFLICT,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -49,7 +58,7 @@ impl PromptStoreError {
 
     fn message(&self) -> &str {
         match self {
-            Self::Invalid(message) | Self::Storage(message) => message,
+            Self::Invalid(message) | Self::Conflict(message) | Self::Storage(message) => message,
             Self::NotFound => "prompt not found",
         }
     }
@@ -115,6 +124,65 @@ impl PromptStore {
         let updated = prompt.clone();
         self.save_locked(&library).await?;
         Ok(updated)
+    }
+
+    async fn reorder(
+        &self,
+        input: PromptOrderInput,
+    ) -> Result<PromptLibraryFile, PromptStoreError> {
+        let requested_ids = validate_prompt_order_ids(&input.ids)?;
+        validate_prompt_order_ids(&input.expected_ids)?;
+
+        let _guard = self.store_lock.lock().await;
+        let mut library = self.load_locked().await?;
+        if !library
+            .prompts
+            .iter()
+            .map(|prompt| prompt.id.as_str())
+            .eq(input.expected_ids.iter().map(String::as_str))
+        {
+            return Err(PromptStoreError::Conflict(
+                "prompt library changed; reload before reordering".to_string(),
+            ));
+        }
+        let current_ids = library
+            .prompts
+            .iter()
+            .map(|prompt| prompt.id.as_str())
+            .collect::<HashSet<_>>();
+        if current_ids.len() != requested_ids.len()
+            || !requested_ids.iter().all(|id| current_ids.contains(id))
+        {
+            return Err(PromptStoreError::Conflict(
+                "prompt library changed; reload before reordering".to_string(),
+            ));
+        }
+
+        if library
+            .prompts
+            .iter()
+            .map(|prompt| prompt.id.as_str())
+            .eq(input.ids.iter().map(String::as_str))
+        {
+            return Ok(library);
+        }
+
+        let mut prompts_by_id = library
+            .prompts
+            .drain(..)
+            .map(|prompt| (prompt.id.clone(), prompt))
+            .collect::<HashMap<_, _>>();
+        library.prompts = input
+            .ids
+            .iter()
+            .map(|id| {
+                prompts_by_id
+                    .remove(id)
+                    .expect("validated prompt order must contain every stored id")
+            })
+            .collect();
+        self.save_locked(&library).await?;
+        Ok(library)
     }
 
     async fn delete(&self, id: &str) -> Result<(), PromptStoreError> {
@@ -271,6 +339,21 @@ pub(super) async fn api_update_prompt(
     }
 }
 
+pub(super) async fn api_reorder_prompt_library(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(input): Json<PromptOrderInput>,
+) -> Response {
+    if let Some(response) = require_auth(&headers, &state) {
+        return response;
+    }
+
+    match state.prompt_store.reorder(input).await {
+        Ok(library) => Json(library).into_response(),
+        Err(error) => prompt_store_error_response(error),
+    }
+}
+
 pub(super) async fn api_delete_prompt(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -373,6 +456,25 @@ fn validate_prompt_id(id: &str) -> Result<(), String> {
         return Err("invalid prompt id".to_string());
     }
     Ok(())
+}
+
+fn validate_prompt_order_ids(ids: &[String]) -> Result<HashSet<&str>, PromptStoreError> {
+    if ids.len() > MAX_PROMPTS {
+        return Err(PromptStoreError::Invalid(format!(
+            "prompt order exceeds {MAX_PROMPTS} entries"
+        )));
+    }
+
+    let mut validated = HashSet::with_capacity(ids.len());
+    for id in ids {
+        validate_prompt_id(id).map_err(PromptStoreError::Invalid)?;
+        if !validated.insert(id.as_str()) {
+            return Err(PromptStoreError::Invalid(
+                "prompt order contains duplicate ids".to_string(),
+            ));
+        }
+    }
+    Ok(validated)
 }
 
 #[cfg(test)]
@@ -568,6 +670,124 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prompt_reorder_persists_exact_requested_order() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("prompts.json");
+        let store = PromptStore::new(file.clone());
+        let first = store.create(input("First", "one")).await.expect("first");
+        let second = store.create(input("Second", "two")).await.expect("second");
+        let third = store.create(input("Third", "three")).await.expect("third");
+
+        let reordered = store
+            .reorder(PromptOrderInput {
+                ids: vec![first.id.clone(), third.id.clone(), second.id.clone()],
+                expected_ids: vec![third.id.clone(), second.id.clone(), first.id.clone()],
+            })
+            .await
+            .expect("reorder");
+
+        assert_eq!(
+            reordered
+                .prompts
+                .iter()
+                .map(|prompt| prompt.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![first.id.as_str(), third.id.as_str(), second.id.as_str()]
+        );
+        let restored = PromptStore::new(file).list().await.expect("restored");
+        assert_eq!(restored.prompts, reordered.prompts);
+    }
+
+    #[tokio::test]
+    async fn prompt_reorder_rejects_invalid_sets_without_writing() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("prompts.json");
+        let store = PromptStore::new(file.clone());
+        let first = store.create(input("First", "one")).await.expect("first");
+        let second = store.create(input("Second", "two")).await.expect("second");
+        let original = fs::read_to_string(&file).await.expect("original file");
+
+        let expected_ids = vec![second.id.clone(), first.id.clone()];
+        let invalid_orders = [
+            vec![first.id.clone()],
+            vec![first.id.clone(), first.id.clone()],
+            vec![first.id.clone(), "prompt_unknown_0".to_string()],
+            vec![first.id.clone(), "invalid/id".to_string()],
+        ];
+        for ids in invalid_orders {
+            assert!(
+                store
+                    .reorder(PromptOrderInput {
+                        ids,
+                        expected_ids: expected_ids.clone(),
+                    })
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                fs::read_to_string(&file).await.expect("unchanged file"),
+                original
+            );
+        }
+
+        let library = store.list().await.expect("unchanged library");
+        assert_eq!(
+            library
+                .prompts
+                .iter()
+                .map(|prompt| prompt.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![second.id.as_str(), first.id.as_str()]
+        );
+    }
+
+    #[tokio::test]
+    async fn prompt_reorder_rejects_stale_baseline_without_overwriting_newer_order() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("prompts.json");
+        let store = PromptStore::new(file.clone());
+        let first = store.create(input("First", "one")).await.expect("first");
+        let second = store.create(input("Second", "two")).await.expect("second");
+        let third = store.create(input("Third", "three")).await.expect("third");
+        let original = vec![third.id.clone(), second.id.clone(), first.id.clone()];
+        let newer = vec![first.id.clone(), third.id.clone(), second.id.clone()];
+
+        store
+            .reorder(PromptOrderInput {
+                ids: newer.clone(),
+                expected_ids: original.clone(),
+            })
+            .await
+            .expect("first reorder");
+        let after_newer = fs::read_to_string(&file).await.expect("newer file");
+
+        let stale = store
+            .reorder(PromptOrderInput {
+                ids: vec![second.id.clone(), first.id.clone(), third.id.clone()],
+                expected_ids: original,
+            })
+            .await
+            .expect_err("stale reorder");
+
+        assert!(matches!(stale, PromptStoreError::Conflict(_)));
+        assert_eq!(
+            fs::read_to_string(&file).await.expect("unchanged"),
+            after_newer
+        );
+        assert_eq!(
+            store
+                .list()
+                .await
+                .expect("library")
+                .prompts
+                .iter()
+                .map(|prompt| prompt.id.as_str())
+                .collect::<Vec<_>>(),
+            newer.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
     async fn prompt_library_api_requires_auth_for_every_operation() {
         let dir = tempdir().expect("tempdir");
         let state = test_state(dir.path().join("prompts.json")).await;
@@ -586,6 +806,15 @@ mod tests {
             Json(input("Title", "Body")),
         )
         .await;
+        let reorder = api_reorder_prompt_library(
+            State(Arc::clone(&state)),
+            HeaderMap::new(),
+            Json(PromptOrderInput {
+                ids: Vec::new(),
+                expected_ids: Vec::new(),
+            }),
+        )
+        .await;
         let delete = api_delete_prompt(
             State(state),
             HeaderMap::new(),
@@ -596,6 +825,7 @@ mod tests {
         assert_eq!(list.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(create.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(update.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(reorder.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(delete.status(), StatusCode::UNAUTHORIZED);
     }
 }

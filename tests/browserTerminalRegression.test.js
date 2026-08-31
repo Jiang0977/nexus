@@ -295,6 +295,15 @@ async function dispatchMobileSwipe(page, points) {
   })
 }
 
+async function dispatchMobileTap(page, locator) {
+  const bounds = await locator.boundingBox()
+  assert.ok(bounds, 'expected mobile tap target geometry')
+  await dispatchMobileSwipe(page, [[
+    bounds.x + bounds.width / 2,
+    bounds.y + bounds.height / 2,
+  ]])
+}
+
 async function dispatchSyntheticTouch(page, targetSelector, type, x, y) {
   await page.evaluate(({ selector, eventType, x, y }) => {
     const target = document.querySelector(selector)
@@ -626,6 +635,238 @@ test('browser regression: desktop prompt library persists, copies, inserts, edit
   await page.getByRole('button', { name: 'Copy “Independent review v2”', exact: true }).click()
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'Review the final diff only.')
 
+  await page.getByPlaceholder('Search title or content').fill('')
+  await page.getByRole('button', { name: 'New prompt' }).first().click()
+  await page.getByLabel('Title').fill('Release checklist')
+  await page.getByLabel('Prompt content').fill('Check build, tests, and rollout notes.')
+  const createSecondResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library')
+      && response.request().method() === 'POST'
+      && response.status() === 201
+  ))
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await createSecondResponse
+
+  await page.getByRole('button', { name: 'New prompt' }).first().click()
+  await page.getByLabel('Title').fill('Debug assistant')
+  await page.getByLabel('Prompt content').fill('Trace the failure before proposing a fix.')
+  const createThirdResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library')
+      && response.request().method() === 'POST'
+      && response.status() === 201
+  ))
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await createThirdResponse
+
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['Debug assistant', 'Release checklist', 'Independent review v2'],
+  )
+  const independentCard = page.getByTestId('prompt-card').filter({ hasText: 'Independent review v2' })
+  const independentHandle = page.getByRole('button', { name: /Drag to reorder “Independent review v2”/ })
+  const independentId = await independentCard.getAttribute('data-prompt-id')
+  assert.ok(independentId, 'expected prompt card id before reorder')
+  const debugCard = page.getByTestId('prompt-card').filter({ hasText: 'Debug assistant' })
+  const [cancelHandleBounds, cancelTargetBounds] = await Promise.all([
+    independentHandle.boundingBox(),
+    debugCard.boundingBox(),
+  ])
+  assert.ok(cancelHandleBounds && cancelTargetBounds, 'expected desktop drag geometry')
+  let cancelledReorderRequests = 0
+  const countCancelledReorders = (request) => {
+    if (request.url().endsWith('/api/prompt-library/order')) cancelledReorderRequests += 1
+  }
+  page.on('request', countCancelledReorders)
+  await page.mouse.move(
+    cancelHandleBounds.x + cancelHandleBounds.width / 2,
+    cancelHandleBounds.y + cancelHandleBounds.height / 2,
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    cancelTargetBounds.x + cancelTargetBounds.width / 2,
+    cancelTargetBounds.y + cancelTargetBounds.height / 2,
+    { steps: 4 },
+  )
+  await page.getByTestId('prompt-drag-placeholder').waitFor()
+  await page.getByTestId('prompt-drag-ghost').waitFor()
+  const [cancelPlaceholderBounds, movedDebugBounds] = await Promise.all([
+    page.getByTestId('prompt-drag-placeholder').boundingBox(),
+    debugCard.boundingBox(),
+  ])
+  assert.ok(cancelPlaceholderBounds && movedDebugBounds, 'expected desktop drag feedback geometry')
+  assert.ok(cancelPlaceholderBounds.y < movedDebugBounds.y, 'expected placeholder to move before the first card')
+  await page.keyboard.press('Escape')
+  await page.mouse.up()
+  await delay(100)
+  page.off('request', countCancelledReorders)
+  assert.equal(cancelledReorderRequests, 0)
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['Debug assistant', 'Release checklist', 'Independent review v2'],
+  )
+
+  let pointerCancelRequests = 0
+  const countPointerCancelReorders = (request) => {
+    if (request.url().endsWith('/api/prompt-library/order')) pointerCancelRequests += 1
+  }
+  page.on('request', countPointerCancelReorders)
+  await independentHandle.evaluate(handle => {
+    handle.addEventListener('pointerdown', (event) => {
+      handle.dataset.lastPointerId = String(event.pointerId)
+    }, { once: true })
+  })
+  await page.mouse.move(
+    cancelHandleBounds.x + cancelHandleBounds.width / 2,
+    cancelHandleBounds.y + cancelHandleBounds.height / 2,
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    cancelTargetBounds.x + cancelTargetBounds.width / 2,
+    cancelTargetBounds.y + cancelTargetBounds.height / 2,
+    { steps: 4 },
+  )
+  const cancelledPointerId = Number(await independentHandle.getAttribute('data-last-pointer-id'))
+  assert.ok(Number.isInteger(cancelledPointerId), 'expected pointer id before pointer cancellation')
+  await independentHandle.dispatchEvent('pointercancel', {
+    bubbles: true,
+    cancelable: true,
+    pointerId: cancelledPointerId,
+    pointerType: 'mouse',
+  })
+  await page.mouse.up()
+  await delay(100)
+  page.off('request', countPointerCancelReorders)
+  assert.equal(pointerCancelRequests, 0)
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['Debug assistant', 'Release checklist', 'Independent review v2'],
+  )
+
+  const reorderResponsePromise = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library/order')
+      && response.request().method() === 'PUT'
+      && response.ok()
+  ))
+  await independentHandle.dragTo(debugCard)
+  const reorderResponse = await reorderResponsePromise
+  const reorderPayload = reorderResponse.request().postDataJSON()
+  assert.equal(reorderPayload.ids[0], independentId)
+  assert.equal(reorderPayload.expectedIds[2], independentId)
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['Independent review v2', 'Debug assistant', 'Release checklist'],
+  )
+
+  await page.getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('dialog', { name: 'Prompt Library' }).waitFor({ state: 'detached' })
+  await page.getByTitle('Prompt library').click()
+  await page.getByRole('dialog', { name: 'Prompt Library' }).waitFor()
+  await page.getByTestId('prompt-card-title').filter({ hasText: 'Independent review v2' }).waitFor()
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['Independent review v2', 'Debug assistant', 'Release checklist'],
+  )
+  await page.getByPlaceholder('Search title or content').fill('debug')
+  assert.equal(await page.getByTestId('prompt-drag-handle').first().isDisabled(), true)
+  await page.getByPlaceholder('Search title or content').fill('')
+
+  const serverOrder = await page.evaluate(async () => {
+    const token = localStorage.getItem('nexus_token')
+    const cards = [...document.querySelectorAll('[data-testid="prompt-card"]')]
+    const idsByTitle = Object.fromEntries(cards.map(card => [
+      card.querySelector('[data-testid="prompt-card-title"]')?.textContent,
+      card.getAttribute('data-prompt-id'),
+    ]))
+    const expectedIds = [
+      idsByTitle['Independent review v2'],
+      idsByTitle['Debug assistant'],
+      idsByTitle['Release checklist'],
+    ]
+    const ids = [
+      idsByTitle['Release checklist'],
+      idsByTitle['Independent review v2'],
+      idsByTitle['Debug assistant'],
+    ]
+    const response = await fetch('/api/prompt-library/order', {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids, expectedIds }),
+    })
+    return { ids, ok: response.ok }
+  })
+  assert.equal(serverOrder.ok, true)
+  const staleReorderResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library/order')
+      && response.request().method() === 'PUT'
+      && response.status() === 409
+  ))
+  const conflictReloadResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library')
+      && response.request().method() === 'GET'
+      && response.ok()
+  ))
+  await page
+    .getByRole('button', { name: /Drag to reorder “Debug assistant”/ })
+    .press('ArrowUp')
+  await staleReorderResponse
+  await conflictReloadResponse
+  await page.getByText('Prompt order changed elsewhere. The latest order has been loaded.').waitFor()
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['Release checklist', 'Independent review v2', 'Debug assistant'],
+  )
+
+  await page.route('**/api/prompt-library/order', async route => {
+    await route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'forced reorder failure' }),
+    })
+  }, { times: 1 })
+  await page
+    .getByRole('button', { name: /Drag to reorder “Independent review v2”/ })
+    .press('ArrowUp')
+  await page.getByText('Could not save the new order. The previous order was restored.').waitFor()
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['Release checklist', 'Independent review v2', 'Debug assistant'],
+  )
+
+  const debugHandle = page.getByRole('button', { name: /Drag to reorder “Debug assistant”/ })
+  const keyboardUpResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library/order')
+      && response.request().method() === 'PUT'
+      && response.ok()
+  ))
+  await debugHandle.press('ArrowUp')
+  await keyboardUpResponse
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['Release checklist', 'Debug assistant', 'Independent review v2'],
+  )
+  assert.equal(await debugHandle.evaluate(handle => document.activeElement === handle), true)
+
+  const keyboardDownResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library/order')
+      && response.request().method() === 'PUT'
+      && response.ok()
+  ))
+  await debugHandle.press('ArrowDown')
+  await keyboardDownResponse
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['Release checklist', 'Independent review v2', 'Debug assistant'],
+  )
+
+  await page.evaluate(() => navigator.clipboard.writeText(''))
+  await page.getByRole('button', { name: 'Copy “Independent review v2”', exact: true }).click()
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'Review the final diff only.')
+  await independentCard.getByTestId('prompt-open-button').click()
+  await page.getByLabel('Title').waitFor()
+
   page.once('dialog', dialog => dialog.accept())
   const deleteResponse = page.waitForResponse((response) => (
     response.url().includes('/api/prompt-library/prompt_')
@@ -634,7 +875,18 @@ test('browser regression: desktop prompt library persists, copies, inserts, edit
   ))
   await page.getByRole('button', { name: 'Delete “Independent review v2”', exact: true }).click()
   await deleteResponse
-  await page.getByText('No matching prompts').waitFor()
+
+  for (const title of ['Debug assistant', 'Release checklist']) {
+    page.once('dialog', dialog => dialog.accept())
+    const cleanupResponse = page.waitForResponse((response) => (
+      response.url().includes('/api/prompt-library/prompt_')
+        && response.request().method() === 'DELETE'
+        && response.ok()
+    ))
+    await page.getByRole('button', { name: `Delete “${title}”`, exact: true }).click()
+    await cleanupResponse
+  }
+  await page.getByText('Your prompt library is empty').waitFor()
 
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),
@@ -672,10 +924,127 @@ test('browser regression: mobile prompt editor blocks terminal input until expli
   await createResponse
 
   await page.getByRole('button', { name: 'Back to prompt list' }).click()
+  await page.getByRole('button', { name: 'New prompt' }).click()
+  await page.getByLabel('Title').fill('Mobile second')
+  await page.getByLabel('Prompt content').fill('mobile-second-body')
+  const createSecondResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library')
+      && response.request().method() === 'POST'
+      && response.status() === 201
+  ))
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await createSecondResponse
+  await page.getByRole('button', { name: 'Back to prompt list' }).click()
+
+  await page.getByRole('button', { name: 'New prompt' }).click()
+  await page.getByLabel('Title').fill('提交代码')
+  await page.getByLabel('Prompt content').fill('检查改动并提交代码。')
+  const createThirdResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library')
+      && response.request().method() === 'POST'
+      && response.status() === 201
+  ))
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await createThirdResponse
+  await page.getByRole('button', { name: 'Back to prompt list' }).click()
+
+  await page.getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('dialog', { name: 'Prompt Library' }).waitFor({ state: 'detached' })
+  await dispatchMobileTap(page, page.getByTitle('More'))
+  await delay(400)
+  await dispatchMobileTap(page, page.getByRole('button', { name: 'Prompt library' }))
+  await page.getByRole('dialog', { name: 'Prompt Library' }).waitFor()
+  await page.getByText('提交代码', { exact: true }).waitFor()
+  assert.equal(await page.getByLabel('Title').isVisible(), false, 'opening the mobile prompt library must stay on the list')
+  const firstPromptBounds = await page.getByTestId('prompt-card').first().boundingBox()
+  assert.ok(firstPromptBounds, 'expected first prompt geometry for compatibility-click regression')
+  await page.mouse.click(
+    firstPromptBounds.x + firstPromptBounds.width / 2,
+    firstPromptBounds.y + firstPromptBounds.height / 2,
+  )
+  await delay(50)
+  assert.equal(await page.getByLabel('Title').isVisible(), false, 'opening-tap compatibility click must be shielded')
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['提交代码', 'Mobile second', 'Mobile draft'],
+  )
+  await delay(400)
+
+  const submitHandle = page.getByRole('button', { name: /Drag to reorder “提交代码”/ })
+  const mobileDraftCard = page.getByTestId('prompt-card').filter({ hasText: 'Mobile draft' })
+  const [submitHandleBounds, mobileDraftCardBounds] = await Promise.all([
+    submitHandle.boundingBox(),
+    mobileDraftCard.boundingBox(),
+  ])
+  assert.ok(submitHandleBounds && mobileDraftCardBounds, 'expected three-item mobile drag geometry')
+  const submitStartX = submitHandleBounds.x + submitHandleBounds.width / 2
+  const submitStartY = submitHandleBounds.y + submitHandleBounds.height / 2
+  const submitEndX = mobileDraftCardBounds.x + mobileDraftCardBounds.width / 2
+  const submitEndY = mobileDraftCardBounds.y + mobileDraftCardBounds.height / 2
+  const touchSession = await page.context().newCDPSession(page)
+  const submitReorderResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library/order')
+      && response.request().method() === 'PUT'
+      && response.ok()
+  ))
+  await touchSession.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: submitStartX, y: submitStartY, radiusX: 2, radiusY: 2, force: 1, id: 1 }],
+  })
+  await touchSession.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: submitEndX, y: submitEndY, radiusX: 2, radiusY: 2, force: 1, id: 1 }],
+  })
+  await delay(50)
+  const placeholderVisible = await page.getByTestId('prompt-drag-placeholder').isVisible().catch(() => false)
+  const ghostVisible = await page.getByTestId('prompt-drag-ghost').isVisible().catch(() => false)
+  await touchSession.send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [],
+  })
+  await submitReorderResponse
+  assert.equal(placeholderVisible, true, 'active touch drag must render a dashed placeholder')
+  assert.equal(ghostVisible, true, 'active touch drag must render a lifted ghost')
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['Mobile second', 'Mobile draft', '提交代码'],
+  )
+
+  const mobileDraftHandle = page.getByRole('button', { name: /Drag to reorder “Mobile draft”/ })
+  const mobileSecondCard = page.getByTestId('prompt-card').filter({ hasText: 'Mobile second' })
+  const [handleBounds, targetBounds] = await Promise.all([
+    mobileDraftHandle.boundingBox(),
+    mobileSecondCard.boundingBox(),
+  ])
+  assert.ok(handleBounds && targetBounds, 'expected mobile drag geometry')
+  const startX = handleBounds.x + handleBounds.width / 2
+  const startY = handleBounds.y + handleBounds.height / 2
+  const endX = targetBounds.x + targetBounds.width / 2
+  const endY = targetBounds.y + targetBounds.height / 2
+  const touchReorderResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/prompt-library/order')
+      && response.request().method() === 'PUT'
+      && response.ok()
+  ))
+  await dispatchMobileSwipe(page, [
+    [startX, startY],
+    [startX, startY - 24],
+    [endX, endY],
+  ])
+  await touchReorderResponse
+  assert.deepEqual(
+    await page.getByTestId('prompt-card-title').allTextContents(),
+    ['Mobile draft', 'Mobile second', '提交代码'],
+  )
+
   await page.getByRole('button', { name: 'Copy “Mobile draft”', exact: true }).click()
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'mobile-prompt-body')
 
-  await page.getByRole('button', { name: /Mobile draft/ }).first().click()
+  await page
+    .getByTestId('prompt-card')
+    .filter({ hasText: 'Mobile draft' })
+    .getByTestId('prompt-open-button')
+    .click()
   await page.evaluate(() => { window.__nexusWsSends = [] })
   await page.getByRole('button', { name: 'Insert into terminal' }).click()
   await page.waitForFunction(() => (window.__nexusWsSends || []).some((send) => send.data === 'mobile-prompt-body'))
@@ -694,6 +1063,24 @@ test('browser regression: mobile prompt editor blocks terminal input until expli
   ))
   await page.getByRole('button', { name: 'Delete “Mobile draft”', exact: true }).click()
   await deleteResponse
+
+  page.once('dialog', dialog => dialog.accept())
+  const deleteSecondResponse = page.waitForResponse((response) => (
+    response.url().includes('/api/prompt-library/prompt_')
+      && response.request().method() === 'DELETE'
+      && response.ok()
+  ))
+  await page.getByRole('button', { name: 'Delete “Mobile second”', exact: true }).click()
+  await deleteSecondResponse
+
+  page.once('dialog', dialog => dialog.accept())
+  const deleteThirdResponse = page.waitForResponse((response) => (
+    response.url().includes('/api/prompt-library/prompt_')
+      && response.request().method() === 'DELETE'
+      && response.ok()
+  ))
+  await page.getByRole('button', { name: 'Delete “提交代码”', exact: true }).click()
+  await deleteThirdResponse
   await page.getByText('Your prompt library is empty').waitFor()
 
   assert.deepEqual(

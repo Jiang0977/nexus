@@ -1,12 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { useTranslation } from 'react-i18next'
+import GhostShield from './GhostShield'
 import { Icon } from './icons'
 import {
   MAX_PROMPT_CONTENT_CHARS,
   MAX_PROMPT_TITLE_CHARS,
+  PromptLibraryRequestError,
   createPrompt,
   deletePrompt,
   listPrompts,
+  reorderPrompts,
   updatePrompt,
   type PromptRecord,
 } from './promptLibrary/api'
@@ -23,12 +34,47 @@ interface Draft {
 
 type MobileView = 'list' | 'editor'
 
+interface PromptDragState {
+  pointerId: number
+  promptId: string
+  handle: HTMLButtonElement
+  baseline: PromptRecord[]
+  current: PromptRecord[]
+  offsetX: number
+  offsetY: number
+}
+
+interface PromptDragPreview {
+  left: number
+  top: number
+  width: number
+  height: number
+  prompt: PromptRecord
+  orderedIds: string[]
+}
+
 const EMPTY_DRAFT: Draft = { title: '', content: '' }
+
+function movePromptToIndex(prompts: PromptRecord[], promptId: string, targetIndex: number) {
+  const sourceIndex = prompts.findIndex(prompt => prompt.id === promptId)
+  if (sourceIndex < 0 || sourceIndex === targetIndex) return prompts
+  const next = [...prompts]
+  const [moved] = next.splice(sourceIndex, 1)
+  next.splice(targetIndex, 0, moved)
+  return next
+}
+
+function promptOrderMatches(left: PromptRecord[], right: PromptRecord[]) {
+  return left.length === right.length && left.every((prompt, index) => prompt.id === right[index]?.id)
+}
 
 export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Props) {
   const { t, i18n } = useTranslation()
   const titleInputRef = useRef<HTMLInputElement>(null)
+  const promptListRef = useRef<HTMLDivElement>(null)
   const noticeTimerRef = useRef<number | null>(null)
+  const dragRef = useRef<PromptDragState | null>(null)
+  const reorderInFlightRef = useRef(false)
   const [prompts, setPrompts] = useState<PromptRecord[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
@@ -39,6 +85,10 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
   const [loadedSuccessfully, setLoadedSuccessfully] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [reordering, setReordering] = useState(false)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [dragPreview, setDragPreview] = useState<PromptDragPreview | null>(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -59,11 +109,65 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
       || prompt.content.toLocaleLowerCase().includes(normalizedQuery)
     ))
   }, [normalizedQuery, prompts])
+  const sortingUnavailable = !loadedSuccessfully
+    || loading
+    || saving
+    || deleting
+    || Boolean(normalizedQuery)
+    || prompts.length < 2
+  const sortingDisabled = sortingUnavailable || reordering
 
   const showNotice = useCallback((message: string) => {
     setNotice(message)
     if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current)
     noticeTimerRef.current = window.setTimeout(() => setNotice(''), 2200)
+  }, [])
+
+  const persistPromptOrder = useCallback(async (previous: PromptRecord[], next: PromptRecord[]) => {
+    if (reorderInFlightRef.current || promptOrderMatches(previous, next)) return
+    reorderInFlightRef.current = true
+    setReordering(true)
+    setError('')
+    try {
+      const library = await reorderPrompts(
+        token,
+        next.map(prompt => prompt.id),
+        previous.map(prompt => prompt.id),
+      )
+      setPrompts(library.prompts)
+      showNotice(t('promptLibrary.reorderSaved'))
+    } catch (reorderError) {
+      if (reorderError instanceof PromptLibraryRequestError && reorderError.status === 409) {
+        try {
+          const library = await listPrompts(token)
+          setPrompts(library.prompts)
+          setError(t('promptLibrary.reorderConflict'))
+        } catch {
+          setPrompts(previous)
+          setError(t('promptLibrary.reorderFailed'))
+        }
+      } else {
+        setPrompts(previous)
+        setError(t('promptLibrary.reorderFailed'))
+      }
+    } finally {
+      reorderInFlightRef.current = false
+      setReordering(false)
+    }
+  }, [showNotice, t, token])
+
+  const cancelActiveDrag = useCallback(() => {
+    const drag = dragRef.current
+    if (!drag) return false
+    dragRef.current = null
+    if (drag.handle.hasPointerCapture(drag.pointerId)) {
+      drag.handle.releasePointerCapture(drag.pointerId)
+    }
+    setPrompts(drag.baseline)
+    setDraggingId(null)
+    setDragOverId(null)
+    setDragPreview(null)
+    return true
   }, [])
 
   const applySelection = useCallback((prompt: PromptRecord | null) => {
@@ -94,6 +198,11 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
     void loadLibrary(controller.signal)
     return () => {
       controller.abort()
+      const drag = dragRef.current
+      if (drag?.handle.hasPointerCapture(drag.pointerId)) {
+        drag.handle.releasePointerCapture(drag.pointerId)
+      }
+      dragRef.current = null
       if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current)
     }
   }, [loadLibrary])
@@ -103,11 +212,12 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
   ), [dirty, t])
 
   const handleClose = useCallback(() => {
-    if (saving || deleting || !confirmDiscard()) return
+    if (cancelActiveDrag() || saving || deleting || reordering || !confirmDiscard()) return
     onClose()
-  }, [confirmDiscard, deleting, onClose, saving])
+  }, [cancelActiveDrag, confirmDiscard, deleting, onClose, reordering, saving])
 
   const handleSave = useCallback(async () => {
+    if (reordering || dragRef.current) return
     const title = draft.title.trim()
     if (!title) {
       setError(t('promptLibrary.titleRequired'))
@@ -139,13 +249,17 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
     } finally {
       setSaving(false)
     }
-  }, [applySelection, creatingNew, draft, selectedId, showNotice, t, token])
+  }, [applySelection, creatingNew, draft, reordering, selectedId, showNotice, t, token])
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && cancelActiveDrag()) {
+        event.preventDefault()
+        return
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 's') {
         event.preventDefault()
-        if (!saving && (creatingNew || selectedPrompt)) void handleSave()
+        if (!saving && !reordering && !dragRef.current && (creatingNew || selectedPrompt)) void handleSave()
       }
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -154,7 +268,7 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [creatingNew, handleClose, handleSave, saving, selectedPrompt])
+  }, [cancelActiveDrag, creatingNew, handleClose, handleSave, reordering, saving, selectedPrompt])
 
   function handleSelect(prompt: PromptRecord) {
     if (prompt.id === selectedId && !creatingNew) {
@@ -168,7 +282,7 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
   }
 
   function handleNew() {
-    if (!loadedSuccessfully || !confirmDiscard()) return
+    if (!loadedSuccessfully || reordering || dragRef.current || !confirmDiscard()) return
     setSelectedId(null)
     setCreatingNew(true)
     setDraft(EMPTY_DRAFT)
@@ -185,7 +299,119 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
     setMobileView('list')
   }
 
+  function handlePromptPointerDown(event: ReactPointerEvent<HTMLButtonElement>, prompt: PromptRecord) {
+    if (sortingDisabled || reorderInFlightRef.current || event.button !== 0) return
+    const card = event.currentTarget.closest<HTMLElement>('[data-prompt-id]')
+    if (!card) return
+    const bounds = card.getBoundingClientRect()
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.focus({ preventScroll: true })
+    event.currentTarget.setPointerCapture(event.pointerId)
+    dragRef.current = {
+      pointerId: event.pointerId,
+      promptId: prompt.id,
+      handle: event.currentTarget,
+      baseline: prompts,
+      current: prompts,
+      offsetX: event.clientX - bounds.left,
+      offsetY: event.clientY - bounds.top,
+    }
+    setDraggingId(prompt.id)
+    setDragOverId(prompt.id)
+    setDragPreview({
+      left: bounds.left,
+      top: bounds.top,
+      width: bounds.width,
+      height: bounds.height,
+      prompt,
+      orderedIds: prompts.map(item => item.id),
+    })
+    setError('')
+  }
+
+  function handlePromptPointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    event.preventDefault()
+
+    const list = promptListRef.current
+    if (list) {
+      const bounds = list.getBoundingClientRect()
+      const edge = Math.min(56, bounds.height / 4)
+      if (event.clientY < bounds.top + edge) list.scrollBy({ top: -14 })
+      else if (event.clientY > bounds.bottom - edge) list.scrollBy({ top: 14 })
+    }
+
+    const cards = list
+      ? [...list.querySelectorAll<HTMLElement>('[data-prompt-id]')]
+      : []
+    const target = cards.reduce<HTMLElement | null>((closest, card) => {
+      if (!closest) return card
+      const cardBounds = card.getBoundingClientRect()
+      const closestBounds = closest.getBoundingClientRect()
+      const cardDistance = Math.abs(event.clientY - (cardBounds.top + cardBounds.height / 2))
+      const closestDistance = Math.abs(event.clientY - (closestBounds.top + closestBounds.height / 2))
+      return cardDistance < closestDistance ? card : closest
+    }, null)
+    const targetId = target?.dataset.promptId
+    if (!targetId) return
+    const targetIndex = drag.current.findIndex(prompt => prompt.id === targetId)
+    if (targetIndex < 0) return
+    const next = movePromptToIndex(drag.current, drag.promptId, targetIndex)
+    setDragOverId(targetId)
+    if (next !== drag.current) drag.current = next
+    setDragPreview(current => current ? {
+      ...current,
+      left: Math.min(
+        Math.max(8, event.clientX - drag.offsetX),
+        Math.max(8, window.innerWidth - current.width - 8),
+      ),
+      top: event.clientY - drag.offsetY,
+      orderedIds: drag.current.map(item => item.id),
+    } : current)
+  }
+
+  function handlePromptPointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    setDraggingId(null)
+    setDragOverId(null)
+    setDragPreview(null)
+    setPrompts(drag.current)
+    void persistPromptOrder(drag.baseline, drag.current)
+  }
+
+  function handlePromptPointerCancel(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    event.preventDefault()
+    cancelActiveDrag()
+  }
+
+  function handlePromptReorderKey(event: ReactKeyboardEvent<HTMLButtonElement>, prompt: PromptRecord) {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    event.preventDefault()
+    event.stopPropagation()
+    if (sortingDisabled || reorderInFlightRef.current) return
+    const sourceIndex = prompts.findIndex(item => item.id === prompt.id)
+    if (sourceIndex < 0) return
+    const targetIndex = event.key === 'ArrowUp' ? sourceIndex - 1 : sourceIndex + 1
+    if (targetIndex < 0 || targetIndex >= prompts.length) return
+    const previous = prompts
+    const next = movePromptToIndex(previous, prompt.id, targetIndex)
+    setPrompts(next)
+    void persistPromptOrder(previous, next)
+  }
+
   async function deletePromptRecord(prompt: PromptRecord, returnToList: boolean) {
+    if (reordering || dragRef.current) return
     if (!window.confirm(t('promptLibrary.deleteConfirm', { title: prompt.title }))) return
     setDeleting(true)
     setError('')
@@ -204,6 +430,7 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
   }
 
   async function handleDelete() {
+    if (reordering || dragRef.current) return
     if (creatingNew) {
       if (!confirmDiscard()) return
       applySelection(prompts[0] ?? null)
@@ -271,6 +498,7 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
 
   return (
     <div className="fixed inset-0 z-[460] flex items-center justify-center bg-black/70 md:p-5">
+      <GhostShield />
       <div
         className="relative flex h-full w-full flex-col overflow-hidden bg-nexus-bg text-nexus-text md:h-[min(760px,calc(100dvh-40px))] md:max-w-[980px] md:rounded-xl md:border md:border-nexus-border md:shadow-[0_20px_60px_rgba(0,0,0,0.5)]"
         role="dialog"
@@ -289,7 +517,8 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
             <button
               type="button"
               onClick={handleNew}
-              disabled={!loadedSuccessfully || saving || deleting}
+              disabled={!loadedSuccessfully || saving || deleting || reordering}
+              aria-label={t('promptLibrary.new')}
               className="flex items-center gap-1.5 rounded-md bg-nexus-accent px-2.5 py-1.5 text-sm font-medium text-white transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Icon name="plus" size={15} />
@@ -298,7 +527,8 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
             <button
               type="button"
               onClick={handleClose}
-              className="flex h-8 w-8 items-center justify-center bg-transparent text-nexus-text-2 transition-colors hover:text-nexus-text"
+              disabled={reordering}
+              className="flex h-8 w-8 items-center justify-center bg-transparent text-nexus-text-2 transition-colors hover:text-nexus-text disabled:opacity-40"
               aria-label={t('common.close')}
             >
               <Icon name="x" size={20} />
@@ -322,7 +552,7 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
               </label>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-2">
+            <div ref={promptListRef} className="min-h-0 flex-1 overflow-y-auto p-2">
               {loading ? (
                 <div className="flex h-full items-center justify-center gap-2 text-sm text-nexus-muted">
                   <Icon name="refresh" size={18} className="animate-spin" />
@@ -363,23 +593,58 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
                   )}
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="flex flex-col gap-2">
                   {filteredPrompts.map(prompt => {
                     const active = prompt.id === selectedId && !creatingNew
+                    const isDragging = draggingId === prompt.id
+                    const visualOrder = dragPreview?.orderedIds.indexOf(prompt.id)
                     return (
                       <div
                         key={prompt.id}
-                        className={`overflow-hidden rounded-lg border transition-colors ${active
+                        data-prompt-id={prompt.id}
+                        data-testid={isDragging ? 'prompt-drag-placeholder' : 'prompt-card'}
+                        style={visualOrder === undefined || visualOrder < 0 ? undefined : { order: visualOrder }}
+                        className={`relative overflow-hidden rounded-lg border transition-[border-color,background-color,box-shadow] ${isDragging
+                          ? 'border-2 border-dashed border-nexus-accent/70 bg-nexus-accent/5 shadow-[inset_0_0_0_1px_rgba(59,130,246,0.08)]'
+                          : dragOverId === prompt.id && draggingId
+                            ? 'border-nexus-accent bg-nexus-accent/10 ring-1 ring-inset ring-nexus-accent'
+                            : active
                           ? 'border-nexus-accent/60 bg-nexus-accent/10'
                           : 'border-nexus-border bg-nexus-bg-2 hover:border-nexus-text-2/50'
                         }`}
                       >
                         <button
                           type="button"
-                          onClick={() => handleSelect(prompt)}
-                          className="relative block w-full px-3 py-2.5 text-left"
+                          data-testid="prompt-drag-handle"
+                          onPointerDown={event => handlePromptPointerDown(event, prompt)}
+                          onPointerMove={handlePromptPointerMove}
+                          onPointerUp={handlePromptPointerUp}
+                          onPointerCancel={handlePromptPointerCancel}
+                          onLostPointerCapture={handlePromptPointerCancel}
+                          onKeyDown={event => handlePromptReorderKey(event, prompt)}
+                          onClick={event => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                          }}
+                          disabled={sortingUnavailable}
+                          aria-disabled={sortingDisabled}
+                          aria-label={normalizedQuery
+                            ? t('promptLibrary.reorderSearchDisabled')
+                            : t('promptLibrary.reorderPrompt', { title: prompt.title })}
+                          title={normalizedQuery
+                            ? t('promptLibrary.reorderSearchDisabled')
+                            : t('promptLibrary.reorderPrompt', { title: prompt.title })}
+                          className={`absolute left-0.5 top-0.5 z-10 flex h-11 w-11 touch-none items-center justify-center rounded-md text-nexus-muted transition-colors hover:bg-nexus-bg hover:text-nexus-text active:cursor-grabbing aria-disabled:cursor-not-allowed aria-disabled:opacity-35 enabled:cursor-grab md:left-1.5 md:top-1.5 md:h-8 md:w-8 ${isDragging ? 'opacity-0' : ''}`}
                         >
-                          <div className="truncate pr-5 text-sm font-medium text-nexus-text">{prompt.title}</div>
+                          <Icon name="grip" size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="prompt-open-button"
+                          onClick={() => handleSelect(prompt)}
+                          className={`relative block w-full py-2.5 pl-12 pr-3 text-left md:pl-11 ${isDragging ? 'opacity-0' : ''}`}
+                        >
+                          <div data-testid="prompt-card-title" className="truncate pr-5 text-sm font-medium text-nexus-text">{prompt.title}</div>
                           <div className="mt-1 line-clamp-2 text-xs leading-5 text-nexus-text-2">
                             {prompt.content.replace(/\s+/g, ' ')}
                           </div>
@@ -390,11 +655,11 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
                             <Icon name="arrowRight" size={13} />
                           </span>
                         </button>
-                        <div className="grid grid-cols-2 border-t border-nexus-border/80">
+                        <div className={`grid grid-cols-2 border-t border-nexus-border/80 ${isDragging ? 'opacity-0' : ''}`}>
                           <button
                             type="button"
                             onClick={() => void copyPromptContent(prompt.content)}
-                            disabled={deleting}
+                            disabled={deleting || reordering}
                             aria-label={t('promptLibrary.copyPrompt', { title: prompt.title })}
                             className="flex h-9 items-center justify-center gap-1.5 border-r border-nexus-border/80 text-xs text-nexus-text-2 transition-colors hover:bg-nexus-bg hover:text-nexus-text disabled:opacity-40"
                           >
@@ -404,7 +669,7 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
                           <button
                             type="button"
                             onClick={() => void deletePromptRecord(prompt, false)}
-                            disabled={deleting}
+                            disabled={deleting || reordering}
                             aria-label={t('promptLibrary.deletePrompt', { title: prompt.title })}
                             className="flex h-9 items-center justify-center gap-1.5 text-xs text-nexus-text-2 transition-colors hover:bg-nexus-error/10 hover:text-nexus-error disabled:opacity-40"
                           >
@@ -419,7 +684,11 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
               )}
             </div>
             <div className="shrink-0 border-t border-nexus-border px-3 py-2 text-xs text-nexus-muted">
-              {t('promptLibrary.count', { count: filteredPrompts.length })}
+              {reordering
+                ? t('promptLibrary.reordering')
+                : normalizedQuery
+                  ? t('promptLibrary.reorderSearchDisabled')
+                  : t('promptLibrary.count', { count: filteredPrompts.length })}
             </div>
           </aside>
 
@@ -502,7 +771,7 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
                   <button
                     type="button"
                     onClick={() => void handleDelete()}
-                    disabled={saving || deleting}
+                    disabled={saving || deleting || reordering}
                     className="flex h-9 items-center justify-center gap-1.5 rounded-md border border-nexus-border bg-transparent px-3 text-sm text-nexus-error transition-colors hover:bg-nexus-error/10 disabled:opacity-40 sm:mr-auto"
                   >
                     <Icon name="trash" size={15} />
@@ -529,7 +798,7 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
                   <button
                     type="button"
                     onClick={() => void handleSave()}
-                    disabled={saving || deleting || (!dirty && !creatingNew)}
+                    disabled={saving || deleting || reordering || (!dirty && !creatingNew)}
                     className="flex h-9 items-center justify-center gap-1.5 rounded-md bg-nexus-accent px-4 text-sm font-medium text-white transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:bg-nexus-bg-2 disabled:text-nexus-muted"
                   >
                     <Icon name="save" size={15} />
@@ -554,6 +823,35 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
           </div>
         )}
       </div>
+      {dragPreview && (
+        <div
+          data-testid="prompt-drag-ghost"
+          aria-hidden="true"
+          className="pointer-events-none fixed z-20 overflow-hidden rounded-lg border border-nexus-accent/80 bg-nexus-bg-2 shadow-[0_18px_38px_rgba(0,0,0,0.48),0_0_0_1px_rgba(59,130,246,0.16)]"
+          style={{
+            left: dragPreview.left,
+            top: dragPreview.top,
+            width: dragPreview.width,
+            minHeight: dragPreview.height,
+            transform: 'scale(1.015) rotate(-0.35deg)',
+            transformOrigin: '22px 22px',
+          }}
+        >
+          <div className="relative py-2.5 pl-12 pr-3 text-left md:pl-11">
+            <span className="absolute left-0.5 top-0.5 flex h-11 w-11 items-center justify-center text-nexus-accent md:left-1.5 md:top-1.5 md:h-8 md:w-8">
+              <Icon name="grip" size={16} />
+            </span>
+            <div className="truncate pr-5 text-sm font-medium text-nexus-text">{dragPreview.prompt.title}</div>
+            <div className="mt-1 line-clamp-2 text-xs leading-5 text-nexus-text-2">
+              {dragPreview.prompt.content.replace(/\s+/g, ' ')}
+            </div>
+            <div className="mt-1.5 text-[10px] text-nexus-muted">
+              {formatUpdatedAt(dragPreview.prompt.updatedAt)}
+            </div>
+          </div>
+          <div className="h-9 border-t border-nexus-border/80 bg-nexus-accent/5" />
+        </div>
+      )}
     </div>
   )
 }

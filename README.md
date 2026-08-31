@@ -31,7 +31,7 @@ Browser / PWA
 - Desktop split view: single / vertical / horizontal / 2x2 / 3x3 terminal panes.
 - Async task runner via `/api/tasks`, SSE streaming, and Telegram bridge.
 - File browser for workspace browsing, editing, upload, rename, move, copy, and delete.
-- Authenticated prompt library for saving, editing, searching, copying, and inserting reusable prompts into the active terminal without auto-submit.
+- Authenticated prompt library for saving, editing, searching, drag-sorting, copying, and inserting reusable prompts into the active terminal without auto-submit.
 - Codex and Claude profile launchers, including Codex history/resume flows.
 - PWA support with dark/light themes.
 - Rust-first runtime: `nexus-server` serves `frontend/dist/` directly.
