@@ -635,6 +635,19 @@ test('browser regression: desktop prompt library persists, copies, inserts, edit
   await page.getByRole('button', { name: 'Copy “Independent review v2”', exact: true }).click()
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'Review the final diff only.')
 
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await page.getByRole('button', { name: 'Insert “Independent review v2” into terminal', exact: true }).click()
+  await page.getByRole('dialog', { name: 'Prompt Library' }).waitFor({ state: 'detached' })
+  await page.waitForFunction(() => (window.__nexusWsSends || []).some((send) => send.data === 'Review the final diff only.'))
+  assert.equal(
+    await page.evaluate(() => (window.__nexusWsSends || [])
+      .filter((send) => send.data === 'Review the final diff only.').length),
+    1,
+  )
+
+  await page.getByTitle('Prompt library').click()
+  await page.getByRole('dialog', { name: 'Prompt Library' }).waitFor()
+
   await page.getByPlaceholder('Search title or content').fill('')
   await page.getByRole('button', { name: 'New prompt' }).first().click()
   await page.getByLabel('Title').fill('Release checklist')
@@ -1039,6 +1052,21 @@ test('browser regression: mobile prompt editor blocks terminal input until expli
 
   await page.getByRole('button', { name: 'Copy “Mobile draft”', exact: true }).click()
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'mobile-prompt-body')
+
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await page.getByRole('button', { name: 'Insert “Mobile draft” into terminal', exact: true }).click()
+  await page.getByRole('dialog', { name: 'Prompt Library' }).waitFor({ state: 'detached' })
+  await page.waitForFunction(() => (window.__nexusWsSends || []).some((send) => send.data === 'mobile-prompt-body'))
+  assert.equal(
+    await page.evaluate(() => (window.__nexusWsSends || [])
+      .filter((send) => send.data === 'mobile-prompt-body').length),
+    1,
+  )
+
+  await page.getByTitle('More').click()
+  await page.getByRole('button', { name: 'Prompt library' }).click()
+  await page.getByRole('dialog', { name: 'Prompt Library' }).waitFor()
+  assert.equal(await page.getByLabel('Title').isVisible(), false, 'list insertion must reopen on the list')
 
   await page
     .getByTestId('prompt-card')

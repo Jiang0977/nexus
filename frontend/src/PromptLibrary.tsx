@@ -485,6 +485,19 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
     onClose()
   }
 
+  function insertSavedPrompt(prompt: PromptRecord) {
+    if (!prompt.content.trim()) {
+      setError(t('promptLibrary.contentRequired'))
+      return
+    }
+    if (!onInsertToTerminal(prompt.content)) {
+      setError(t('promptLibrary.terminalUnavailable'))
+      return
+    }
+    setError('')
+    onClose()
+  }
+
   function formatUpdatedAt(value: string) {
     const date = new Date(value)
     if (Number.isNaN(date.getTime())) return value
@@ -655,10 +668,14 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
                             <Icon name="arrowRight" size={13} />
                           </span>
                         </button>
-                        <div className={`grid grid-cols-2 border-t border-nexus-border/80 ${isDragging ? 'opacity-0' : ''}`}>
+                        <div className={`grid grid-cols-3 border-t border-nexus-border/80 ${isDragging ? 'opacity-0' : ''}`}>
                           <button
                             type="button"
-                            onClick={() => void copyPromptContent(prompt.content)}
+                            onPointerDown={event => event.stopPropagation()}
+                            onClick={event => {
+                              event.stopPropagation()
+                              void copyPromptContent(prompt.content)
+                            }}
                             disabled={deleting || reordering}
                             aria-label={t('promptLibrary.copyPrompt', { title: prompt.title })}
                             className="flex h-9 items-center justify-center gap-1.5 border-r border-nexus-border/80 text-xs text-nexus-text-2 transition-colors hover:bg-nexus-bg hover:text-nexus-text disabled:opacity-40"
@@ -668,7 +685,25 @@ export default function PromptLibrary({ token, onClose, onInsertToTerminal }: Pr
                           </button>
                           <button
                             type="button"
-                            onClick={() => void deletePromptRecord(prompt, false)}
+                            onPointerDown={event => event.stopPropagation()}
+                            onClick={event => {
+                              event.stopPropagation()
+                              insertSavedPrompt(prompt)
+                            }}
+                            disabled={deleting || reordering}
+                            aria-label={t('promptLibrary.insertPrompt', { title: prompt.title })}
+                            className="flex h-9 items-center justify-center gap-1.5 border-r border-nexus-border/80 text-xs text-nexus-accent transition-colors hover:bg-nexus-accent/10 disabled:opacity-40"
+                          >
+                            <Icon name="arrowRight" size={14} />
+                            {t('promptLibrary.insert')}
+                          </button>
+                          <button
+                            type="button"
+                            onPointerDown={event => event.stopPropagation()}
+                            onClick={event => {
+                              event.stopPropagation()
+                              void deletePromptRecord(prompt, false)
+                            }}
                             disabled={deleting || reordering}
                             aria-label={t('promptLibrary.deletePrompt', { title: prompt.title })}
                             className="flex h-9 items-center justify-center gap-1.5 text-xs text-nexus-text-2 transition-colors hover:bg-nexus-error/10 hover:text-nexus-error disabled:opacity-40"

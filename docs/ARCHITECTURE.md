@@ -155,7 +155,7 @@ bash start.sh
 | 路径 | 作用 |
 |---|---|
 | `frontend/src/Terminal.tsx` | 顶层编排：overlay、drawer、sidebar、toolbar、lazy 面板装配 |
-| `frontend/src/PromptLibrary.tsx` | 提示词库列表/编辑器、搜索、拖拽排序、复制、脏状态与响应式交互 |
+| `frontend/src/PromptLibrary.tsx` | 提示词库列表/编辑器、搜索、拖拽排序、复制、列表直插当前终端、脏状态与响应式交互 |
 | `frontend/src/promptLibrary/api.ts` | 提示词库鉴权 REST client、类型与前后端共享长度边界 |
 | `frontend/src/terminal/terminalConnection.ts` | 浏览器终端连接 port：URL、open/resize、data/autoscroll、close-code、retry/backoff 与 cleanup；production WebSocket 和测试 fake 共用 contract |
 | `frontend/src/terminal/terminalApplicationScroll.ts` | 全屏终端应用滚动识别与 SGR wheel 编码；为 Grok 等同步刷新 TUI 在重连后补偿应用内滚动 |

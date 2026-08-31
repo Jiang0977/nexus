@@ -143,7 +143,7 @@
 - runtime hooks 只装配 xterm、交互和连接状态 adapter
 - session / window 状态下沉到 sessions hook
 - scrollback / upload / 通知下沉到 artifacts hook
-- 提示词库通过 `TerminalModalStack` 懒加载；编辑时阻止 xterm 输入，插入时复用当前 focused pane / mobile terminal 的 `sendToWs` 且不追加回车
+- 提示词库通过 `TerminalModalStack` 懒加载；编辑器和列表项都可插入当前终端，编辑时阻止 xterm 输入，插入时复用当前 focused pane / mobile terminal 的 `sendToWs` 且不追加回车
 
 ## 最重要的调用链
 
