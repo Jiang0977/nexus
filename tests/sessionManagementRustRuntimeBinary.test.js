@@ -258,6 +258,25 @@ esac
   return { baseDir, logFile, homeDir, dataDir }
 }
 
+function installFakeGitBin(baseDir) {
+  const logFile = join(baseDir, 'git.log')
+  const gitPath = join(baseDir, 'git')
+  writeFileSync(gitPath, `#!/bin/sh
+set -eu
+if [ "$1" != "-C" ] || [ "$3" != "rev-parse" ] || [ "$4" != "--show-toplevel" ]; then
+  exit 2
+fi
+cwd="$2"
+printf '%s\n' "$cwd" >> "$FAKE_GIT_LOG"
+if [ "$cwd" = "$FAKE_GIT_RESOLVED_CWD" ]; then
+  printf '%s\n' "$FAKE_GIT_REPO_ROOT"
+  exit 0
+fi
+exit 1
+`, { mode: 0o755 })
+  return logFile
+}
+
 function createClient(baseDir, extraEnv = {}) {
   return createSessionManagementRustClient({
     runtimeExecutable: RUNTIME,
@@ -628,6 +647,66 @@ test('real rust session runtime reads Codex metadata without loading transcript 
     nextCursor: null,
     warning: null,
   })
+})
+
+test('real rust session runtime resolves each distinct Codex cwd once per history request', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const { baseDir, homeDir } = createFakeTmuxBin()
+  const gitLogFile = installFakeGitBin(baseDir)
+  const codexHome = join(homeDir, '.codex')
+  const unresolvedCwd = '/tmp/nexus-codex-history-unresolved'
+  const sessions = [
+    { id: 'session-repo-1', cwd: ROOT },
+    { id: 'session-repo-2', cwd: ROOT },
+    { id: 'session-unresolved-1', cwd: unresolvedCwd },
+    { id: 'session-unresolved-2', cwd: unresolvedCwd },
+  ]
+  writeJsonl(join(codexHome, 'session_index.jsonl'), sessions.map(({ id }, index) => JSON.stringify({
+    id,
+    thread_name: id,
+    updated_at: `2026-04-14T12:00:0${index}.000Z`,
+  })))
+  for (const [index, session] of sessions.entries()) {
+    createSessionFile(codexHome, {
+      ...session,
+      datePath: `2026/04/${14 + index}`,
+      timestamp: `2026-04-14T12:00:0${index}.000Z`,
+    })
+  }
+
+  const client = createClient(baseDir, {
+    HOME: homeDir,
+    FAKE_TMUX_HAS_SESSION: '1',
+    FAKE_TMUX_CODEX_PROJECT_CWD: ROOT,
+    FAKE_GIT_LOG: gitLogFile,
+    FAKE_GIT_RESOLVED_CWD: ROOT,
+    FAKE_GIT_REPO_ROOT: ROOT,
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await client.ready()
+  const firstResponse = await client.listCodexSessions({
+    projectName: 'demo-project',
+    limit: 10,
+    cursor: '0',
+  })
+  const secondResponse = await client.listCodexSessions({
+    projectName: 'demo-project',
+    limit: 10,
+    cursor: '0',
+  })
+
+  for (const response of [firstResponse, secondResponse]) {
+    assert.deepEqual(response.items.map(({ id }) => id), ['session-repo-2', 'session-repo-1'])
+  }
+  const gitCwds = readFileSync(gitLogFile, 'utf8').trim().split('\n')
+  assert.equal(gitCwds.filter(cwd => cwd === ROOT).length, 2)
+  assert.equal(gitCwds.filter(cwd => cwd === unresolvedCwd).length, 2)
+  assert.equal(gitCwds.length, 4)
 })
 
 test('real rust session runtime handles codex history listing, detail, resume, and delete through fake tmux', { skip: process.platform === 'win32' }, async (t) => {

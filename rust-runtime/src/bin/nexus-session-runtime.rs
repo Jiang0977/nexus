@@ -250,6 +250,7 @@ struct CodexSessionSummary {
 struct CodexCollectionResult {
     scope: Value,
     items: Vec<CodexSessionSummary>,
+    session_meta_by_id: HashMap<String, CodexSessionMetaEntry>,
     warning: Value,
 }
 
@@ -650,7 +651,15 @@ fn collect_project_codex_sessions(
     codex_home: &str,
 ) -> CodexCollectionResult {
     let normalized_project_path = normalize_path(project_path);
-    let project_repo_root = resolve_git_root(&normalized_project_path);
+    let mut git_root_cache = HashMap::new();
+    let project_repo_root = if normalized_project_path.is_empty() {
+        String::new()
+    } else {
+        git_root_cache
+            .entry(normalized_project_path.clone())
+            .or_insert_with(|| resolve_git_root(&normalized_project_path))
+            .clone()
+    };
     let (entries, bad_index_lines) = load_session_index(codex_home);
     let (session_meta_by_id, bad_session_files) = load_session_meta_map(codex_home);
     let mut session_index_by_id = HashMap::new();
@@ -673,7 +682,10 @@ fn collect_project_codex_sessions(
             continue;
         }
 
-        let session_repo_root = resolve_git_root(&session_cwd);
+        let session_repo_root = git_root_cache
+            .entry(session_cwd.clone())
+            .or_insert_with(|| resolve_git_root(&session_cwd))
+            .as_str();
         let attribution_kind = if !project_repo_root.is_empty() && !session_repo_root.is_empty() {
             if project_repo_root != session_repo_root {
                 continue;
@@ -727,6 +739,7 @@ fn collect_project_codex_sessions(
             },
         }),
         items,
+        session_meta_by_id,
         warning: build_warning(
             bad_index_lines,
             bad_session_files,
@@ -787,8 +800,7 @@ fn get_project_codex_session_detail(params: GetCodexSessionDetailParams) -> Resu
         None => return Err("codex session not found in project".to_string()),
     };
 
-    let (session_meta_by_id, _) = load_session_meta_map(&codex_home);
-    let meta = match session_meta_by_id.get(&session_id) {
+    let meta = match result.session_meta_by_id.get(&session_id) {
         Some(meta) => meta,
         None => return Err("codex session not found in project".to_string()),
     };
@@ -843,17 +855,11 @@ fn remove_session_index_entry(codex_home: &str, session_id: &str) -> Result<(), 
     fs::write(session_index_path, next_content).map_err(|error| error.to_string())
 }
 
-fn delete_codex_session_file(session_id: &str, codex_home: &str) -> Result<PathBuf, String> {
-    let (session_meta_by_id, _) = load_session_meta_map(codex_home);
-    let meta = match session_meta_by_id.get(session_id) {
-        Some(meta) => meta,
-        None => {
-            return Err(format!(
-                "codex session file not found for session {}",
-                session_id
-            ));
-        }
-    };
+fn delete_codex_session_file(
+    session_id: &str,
+    codex_home: &str,
+    meta: &CodexSessionMetaEntry,
+) -> Result<PathBuf, String> {
     if !meta.file_path.exists() {
         return Err(format!(
             "codex session file not found for session {}",
@@ -879,8 +885,12 @@ fn delete_project_codex_session(params: DeleteProjectCodexSessionParams) -> Resu
     if !result.items.iter().any(|item| item.id == session_id) {
         return Err("codex session not found in project".to_string());
     }
+    let meta = match result.session_meta_by_id.get(&session_id) {
+        Some(meta) => meta,
+        None => return Err("codex session not found in project".to_string()),
+    };
 
-    delete_codex_session_file(&session_id, &codex_home)?;
+    delete_codex_session_file(&session_id, &codex_home, meta)?;
     let closed_window_indexes = CodexSessionCleanup::current()?.close_resume_channels(
         &project_name,
         &session_id,
