@@ -38,6 +38,242 @@ interface Props {
   onClose: () => void
 }
 
+interface CustomPickerOption {
+  value: string
+  primaryLabel: string
+  secondaryLabel?: string
+  badge?: string
+  ariaLabel?: string
+}
+
+interface CustomPickerProps {
+  label: string
+  value: string
+  options: CustomPickerOption[]
+  placeholder: string
+  disabled?: boolean
+  iconName?: "folder"
+  isOpen: boolean
+  onToggle: () => void
+  onClose: () => void
+  onSelect: (value: string) => void
+}
+
+function CustomPicker({
+  label,
+  value,
+  options,
+  placeholder,
+  disabled = false,
+  iconName,
+  isOpen,
+  onToggle,
+  onClose,
+  onSelect,
+}: CustomPickerProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const listboxRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const rawListboxId = useId()
+  const listboxId = `picker-${rawListboxId.replace(/[:]/g, "")}`
+  const [highlightedIndex, setHighlightedIndex] = useState<number>(-1)
+
+  const selectedIndex = useMemo(() => {
+    return options.findIndex((opt) => opt.value === value)
+  }, [options, value])
+
+  const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : null
+
+  useEffect(() => {
+    if (isOpen) {
+      setHighlightedIndex(selectedIndex >= 0 ? selectedIndex : 0)
+    } else {
+      setHighlightedIndex(-1)
+    }
+  }, [isOpen, selectedIndex])
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handlePointerDownOutside = (e: PointerEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDownOutside)
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDownOutside)
+    }
+  }, [isOpen, onClose])
+
+  useEffect(() => {
+    if (isOpen && highlightedIndex >= 0 && listboxRef.current) {
+      const item = listboxRef.current.children[highlightedIndex] as HTMLElement | undefined
+      if (item && typeof item.scrollIntoView === "function") {
+        item.scrollIntoView({ block: "nearest" })
+      }
+    }
+  }, [isOpen, highlightedIndex])
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (disabled) return
+
+    if (!isOpen) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === " ") {
+        e.preventDefault()
+        onToggle()
+      }
+      return
+    }
+
+    switch (e.key) {
+      case "Tab":
+        onClose()
+        break
+      case "Escape":
+        e.preventDefault()
+        onClose()
+        break
+      case "ArrowDown":
+        e.preventDefault()
+        setHighlightedIndex((prev) => (options.length === 0 ? -1 : (prev + 1) % options.length))
+        break
+      case "ArrowUp":
+        e.preventDefault()
+        setHighlightedIndex((prev) => (options.length === 0 ? -1 : (prev - 1 + options.length) % options.length))
+        break
+      case "Home":
+        e.preventDefault()
+        if (options.length > 0) setHighlightedIndex(0)
+        break
+      case "End":
+        e.preventDefault()
+        if (options.length > 0) setHighlightedIndex(options.length - 1)
+        break
+      case "Enter":
+      case " ":
+        e.preventDefault()
+        if (highlightedIndex >= 0 && highlightedIndex < options.length) {
+          onSelect(options[highlightedIndex].value)
+          onClose()
+          triggerRef.current?.focus()
+        }
+        break
+      default:
+        break
+    }
+  }
+
+  const activeDescendantId =
+    isOpen && highlightedIndex >= 0 && highlightedIndex < options.length
+      ? `${listboxId}-opt-${highlightedIndex}`
+      : undefined
+
+  return (
+    <div ref={containerRef} className="relative flex-1 min-w-0">
+      <button
+        ref={triggerRef}
+        type="button"
+        role="combobox"
+        aria-label={label}
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        aria-controls={isOpen ? listboxId : undefined}
+        aria-activedescendant={activeDescendantId}
+        disabled={disabled}
+        onClick={onToggle}
+        onKeyDown={handleKeyDown}
+        className="w-full flex items-center justify-between gap-2 bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text px-2 py-1 text-[13px] font-mono cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-left outline-none focus:border-nexus-accent"
+      >
+        <span className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
+          {iconName && <Icon name={iconName} size={14} className="shrink-0 text-nexus-muted" />}
+          {selectedOption ? (
+            <span
+              className="flex flex-col min-w-0 flex-1 leading-tight"
+              title={selectedOption.secondaryLabel ? `${selectedOption.primaryLabel} (${selectedOption.secondaryLabel})` : selectedOption.primaryLabel}
+            >
+              <span className="truncate font-medium text-nexus-text text-[13px]">{selectedOption.primaryLabel}</span>
+              {selectedOption.secondaryLabel && (
+                <span className="truncate text-nexus-muted text-[11px]">{selectedOption.secondaryLabel}</span>
+              )}
+            </span>
+          ) : (
+            <span className="text-nexus-muted truncate">{placeholder}</span>
+          )}
+        </span>
+        <Icon
+          name="chevronDown"
+          size={14}
+          className={`shrink-0 text-nexus-muted transition-transform duration-150 ${isOpen ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {isOpen && (
+        <div
+          id={listboxId}
+          ref={listboxRef}
+          role="listbox"
+          aria-label={label}
+          className="absolute left-0 top-[calc(100%+4px)] w-full max-h-[260px] z-50 overflow-y-auto bg-nexus-menu-bg border border-nexus-border rounded-md shadow-xl p-1 flex flex-col gap-0.5"
+        >
+          {options.map((opt, idx) => {
+            const isSelected = opt.value === value
+            const isHighlighted = idx === highlightedIndex
+            const fullTitle = opt.secondaryLabel ? `${opt.primaryLabel} (${opt.secondaryLabel})` : opt.primaryLabel
+            const baseAccessibleName = opt.ariaLabel || fullTitle
+            const accessibleName =
+              opt.badge && !baseAccessibleName.endsWith(opt.badge)
+                ? `${baseAccessibleName} ${opt.badge}`
+                : baseAccessibleName
+            return (
+              <button
+                key={idx}
+                id={`${listboxId}-opt-${idx}`}
+                type="button"
+                role="option"
+                tabIndex={-1}
+                aria-selected={isSelected}
+                aria-label={accessibleName}
+                title={fullTitle}
+                className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-left text-[12px] font-mono border-none cursor-pointer transition-colors ${
+                  isSelected
+                    ? "bg-nexus-tab-active text-nexus-text"
+                    : isHighlighted
+                    ? "bg-nexus-bg-2 text-nexus-text"
+                    : "bg-transparent text-nexus-text hover:bg-nexus-bg-2"
+                }`}
+                onPointerMove={() => setHighlightedIndex(idx)}
+                onMouseEnter={() => setHighlightedIndex(idx)}
+                onClick={() => {
+                  onSelect(opt.value)
+                  onClose()
+                  triggerRef.current?.focus()
+                }}
+              >
+                <span className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
+                  {isSelected ? <Icon name="check" size={14} className="shrink-0 text-nexus-accent" /> : <span className="w-3.5 shrink-0" />}
+                  <span className="flex flex-col min-w-0 flex-1 leading-tight">
+                    <span className="truncate font-medium text-nexus-text text-[12px]">{opt.primaryLabel}</span>
+                    {opt.secondaryLabel && (
+                      <span className="truncate text-nexus-muted text-[11px]">{opt.secondaryLabel}</span>
+                    )}
+                  </span>
+                </span>
+                {opt.badge && (
+                  <span className="shrink-0 text-[10px] px-1.5 py-0.5 bg-nexus-bg-2 text-nexus-muted rounded border border-nexus-border/40 leading-none">
+                    {opt.badge}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function TaskPanel({ token, windows, activeWindowName, tmuxSession, onClose }: Props) {
   const { t } = useTranslation()
   const titleId = useId()
@@ -60,6 +296,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
   const [projectsError, setProjectsError] = useState<string | null>(null)
   const [channelsError, setChannelsError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [openPicker, setOpenPicker] = useState<'project' | 'channel' | null>(null)
 
   const isMountedRef = useRef(true)
   const outputRef = useRef<HTMLPreElement>(null)
@@ -468,13 +705,29 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
           {/* Project selector */}
           <div className="flex items-center gap-2">
             <span className="text-nexus-text-2 text-[13px] shrink-0 w-16">{t('tasks.project')}</span>
-            <select
-              aria-label={t('tasks.project')}
-              className="flex-1 min-w-0 bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text px-2 py-1 text-[13px] font-mono cursor-pointer disabled:opacity-50"
+            <CustomPicker
+              label={t('tasks.project')}
               value={selectedProject}
+              iconName="folder"
               disabled={isRunning || loadingProjects || projects.length === 0}
-              onChange={e => {
-                const nextProj = e.target.value
+              placeholder={loadingProjects ? t('tasks.loadingProjects') : t('tasks.noProjects')}
+              isOpen={openPicker === 'project'}
+              onToggle={() => setOpenPicker((prev) => (prev === 'project' ? null : 'project'))}
+              onClose={() => setOpenPicker((prev) => (prev === 'project' ? null : prev))}
+              options={projects.map((p) => ({
+                value: p.name,
+                primaryLabel: p.name,
+                secondaryLabel: p.path,
+                badge: p.active
+                  ? t('tasks.activeBadge')
+                  : p.channelCount !== undefined
+                  ? t('tasks.windowsCount', { count: p.channelCount })
+                  : undefined,
+                ariaLabel: p.path ? `${p.name} ${p.path}` : p.name,
+              }))}
+              onSelect={(nextProj) => {
+                // Re-selecting the current project is a no-op to avoid wiping channels and the user selection.
+                if (nextProj === selectedProject) return
                 setSelectedProject(nextProj)
                 setChannelsProject(null)
                 setChannels([])
@@ -482,43 +735,31 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
                 setChannelsError(null)
                 lastLoadedProjectRef.current = null
               }}
-            >
-              {loadingProjects ? (
-                <option value="">{t('tasks.loadingProjects')}</option>
-              ) : projects.length === 0 ? (
-                <option value="">{t('tasks.noProjects')}</option>
-              ) : (
-                projects.map(p => (
-                  <option key={p.name} value={p.name} title={p.path}>
-                    {p.name} ({p.path})
-                  </option>
-                ))
-              )}
-            </select>
+            />
           </div>
 
           {/* Channel selector */}
           <div className="flex items-center gap-2">
             <span className="text-nexus-text-2 text-[13px] shrink-0 w-16">{t('tasks.channel')}</span>
-            <select
-              aria-label={t('tasks.channel')}
-              className="flex-1 min-w-0 bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text px-2 py-1 text-[13px] font-mono cursor-pointer disabled:opacity-50"
+            <CustomPicker
+              label={t('tasks.channel')}
               value={selectedChannel}
               disabled={isRunning || loadingChannels || channels.length === 0}
-              onChange={e => setSelectedChannel(e.target.value)}
-            >
-              {loadingChannels ? (
-                <option value="">{t('tasks.loadingChannels')}</option>
-              ) : channels.length === 0 ? (
-                <option value="">{t('tasks.noChannels')}</option>
-              ) : (
-                channels.map(c => (
-                  <option key={c.index} value={c.name}>
-                    {c.index}: {c.name}{c.active ? ' *' : ''}
-                  </option>
-                ))
-              )}
-            </select>
+              placeholder={loadingChannels ? t('tasks.loadingChannels') : t('tasks.noChannels')}
+              isOpen={openPicker === 'channel'}
+              onToggle={() => setOpenPicker((prev) => (prev === 'channel' ? null : 'channel'))}
+              onClose={() => setOpenPicker((prev) => (prev === 'channel' ? null : prev))}
+              options={channels.map((c) => ({
+                value: c.name,
+                primaryLabel: `${c.index}: ${c.name}`,
+                secondaryLabel: c.cwd,
+                badge: c.active ? t('tasks.activeBadge') : undefined,
+                ariaLabel: c.cwd ? `${c.index}: ${c.name} ${c.cwd}` : `${c.index}: ${c.name}`,
+              }))}
+              onSelect={(nextChan) => {
+                setSelectedChannel(nextChan)
+              }}
+            />
           </div>
         </div>
 

@@ -2990,46 +2990,108 @@ test('browser regression: web async task panel manages task runs and streams out
   const customPrompt = 'browser task prompt'
   await promptInput.fill(customPrompt)
 
-  const projectSelect = dialog.getByRole('combobox', { name: 'Project:' })
-  await projectSelect.waitFor({ state: 'visible', timeout: 5000 })
-  const projectOptionText = await projectSelect.locator('option[value="demo-project"]').textContent()
-  assert.ok(
-    projectOptionText && projectOptionText.includes('/workspace/demo'),
-    `expected project option to include full path /workspace/demo, got ${projectOptionText}`,
+  assert.strictEqual(
+    await dialog.locator('select').count(),
+    0,
+    'expected native project/channel selects to be replaced by custom comboboxes',
   )
 
-  const channelSelect = dialog.getByRole('combobox', { name: 'Channel:' })
-  await channelSelect.waitFor({ state: 'visible', timeout: 5000 })
-  await channelSelect.locator('option[value="review"]').waitFor({ state: 'attached', timeout: 5000 })
-  await channelSelect.selectOption('review')
-  assert.strictEqual(await channelSelect.inputValue(), 'review')
+  const projectCombobox = dialog.getByRole('combobox', { name: 'Project:', exact: true })
+  await projectCombobox.waitFor({ state: 'visible', timeout: 5000 })
+
+  await projectCombobox.click()
+  const demoProjectOption = dialog.getByRole('option').filter({ hasText: 'demo-project' }).first()
+  await demoProjectOption.waitFor({ state: 'visible', timeout: 5000 })
+  const demoProjectText = await demoProjectOption.textContent()
+  assert.ok(
+    demoProjectText && demoProjectText.includes('/workspace/demo'),
+    `expected demo-project option to include /workspace/demo, got ${demoProjectText}`,
+  )
+
+  await projectCombobox.press('Escape')
+  await demoProjectOption.waitFor({ state: 'hidden', timeout: 5000 })
+
+  await projectCombobox.click()
+  await demoProjectOption.waitFor({ state: 'visible', timeout: 5000 })
+  await projectCombobox.press('Tab')
+  await demoProjectOption.waitFor({ state: 'hidden', timeout: 5000 })
+
+  const channelCombobox = dialog.getByRole('combobox', { name: 'Channel:', exact: true })
+  const isChannelFocused = await channelCombobox.evaluate((el) => document.activeElement === el)
+  assert.strictEqual(isChannelFocused, true, 'expected Tab to advance focus from project combobox to channel combobox')
+  await channelCombobox.waitFor({ state: 'visible', timeout: 5000 })
+  await channelCombobox.click()
+
+  const reviewOption = dialog.getByRole('option').filter({ hasText: 'review' }).first()
+  await reviewOption.waitFor({ state: 'visible', timeout: 5000 })
+  const reviewText = await reviewOption.textContent()
+  assert.ok(
+    reviewText && reviewText.includes('/workspace/demo'),
+    `expected review option to include /workspace/demo cwd, got ${reviewText}`,
+  )
+  await reviewOption.click()
+  await reviewOption.waitFor({ state: 'hidden', timeout: 5000 })
+  assert.ok(
+    (await channelCombobox.textContent() || '').includes('review'),
+    'expected channel combobox trigger to display review',
+  )
 
   await page.waitForTimeout(2300)
-  assert.strictEqual(
-    await channelSelect.inputValue(),
-    'review',
+  assert.ok(
+    (await channelCombobox.textContent() || '').includes('review'),
     'expected user-selected channel to remain review across parent polling interval',
   )
 
+  // Regression: re-selecting the already selected project must not wipe channel/selection.
   const sendButton = dialog.getByRole('button', { name: 'Send Task' })
-  await projectSelect.selectOption('demo-project')
+  assert.ok(
+    !(await sendButton.isDisabled()),
+    'expected send button to be enabled while prompt non-empty and review channel selected',
+  )
+
+  await projectCombobox.click()
+  const currentlySelectedOption = dialog.locator('[role="option"][aria-selected="true"]').first()
+  await currentlySelectedOption.waitFor({ state: 'visible', timeout: 5000 })
+  const currentlySelectedLabel = (await currentlySelectedOption.textContent()) || ''
+  await currentlySelectedOption.click()
+  await currentlySelectedOption.waitFor({ state: 'hidden', timeout: 5000 })
+
+  assert.ok(
+    !(currentlySelectedLabel.includes('demo-project')),
+    `expected the initially selected project to be the active project, not demo-project (got ${currentlySelectedLabel})`,
+  )
+  assert.ok(
+    (await channelCombobox.textContent() || '').includes('review'),
+    'expected channel to remain review after re-selecting the already selected project',
+  )
+  assert.ok(
+    !(await sendButton.isDisabled()),
+    'expected send button to remain enabled after re-selecting the already selected project',
+  )
+
+  await projectCombobox.click()
+  const demoOptionToSelect = dialog.getByRole('option').filter({ hasText: 'demo-project' }).first()
+  await demoOptionToSelect.waitFor({ state: 'visible', timeout: 5000 })
+  await demoOptionToSelect.click()
+
   assert.ok(
     await sendButton.isDisabled(),
     'expected send button to be disabled while new project channels are invalid/loading',
   )
 
   await page.waitForFunction(() => {
-    const select = document.querySelector('select[aria-label="Channel:"]')
-    return select && !select.disabled && select.value === 'shell'
+    const btn = document.querySelector('button[role="combobox"][aria-label="Channel:"]')
+    return btn && !btn.disabled && btn.textContent?.includes('shell')
   })
-  assert.strictEqual(
-    await channelSelect.inputValue(),
-    'shell',
+  assert.ok(
+    (await channelCombobox.textContent() || '').includes('shell'),
     'expected default channel after switching projects to be active shell, not preserved review',
   )
 
-  await channelSelect.locator('option[value="review"]').waitFor({ state: 'attached', timeout: 5000 })
-  await channelSelect.selectOption('review')
+  await channelCombobox.click()
+  const reviewOptionDemo = dialog.getByRole('option').filter({ hasText: 'review' }).first()
+  await reviewOptionDemo.waitFor({ state: 'visible', timeout: 5000 })
+  await reviewOptionDemo.click()
   assert.ok(!(await sendButton.isDisabled()), 'expected send button to be enabled when valid target selected')
   await sendButton.click()
 

@@ -358,7 +358,9 @@
     "loadingProjects": "Loading projects...",
     "loadingChannels": "Loading channels...",
     "loadProjectsFailed": "Failed to load projects: {{status}}{{details}}",
-    "loadChannelsFailed": "Failed to load channels: {{status}}{{details}}"
+    "loadChannelsFailed": "Failed to load channels: {{status}}{{details}}",
+    "activeBadge": "Active",
+    "windowsCount": "{{count}} windows"
   },
   "files": {
     "title": "Uploaded Files",
