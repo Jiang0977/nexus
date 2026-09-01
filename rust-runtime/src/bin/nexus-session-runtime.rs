@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -532,22 +533,21 @@ fn load_session_meta_map(codex_home: &str) -> (HashMap<String, CodexSessionMetaE
     let mut bad_session_files = 0;
 
     for file_path in files {
-        let content = match fs::read_to_string(&file_path) {
-            Ok(content) => content,
+        let file = match fs::File::open(&file_path) {
+            Ok(file) => file,
             Err(_) => {
                 bad_session_files += 1;
                 continue;
             }
         };
-        let first_line = match content.lines().next() {
-            Some(line) if !line.trim().is_empty() => line.trim(),
-            _ => {
-                bad_session_files += 1;
-                continue;
-            }
-        };
+        let mut first_line = String::new();
+        if BufReader::new(file).read_line(&mut first_line).is_err() || first_line.trim().is_empty()
+        {
+            bad_session_files += 1;
+            continue;
+        }
 
-        let parsed = match serde_json::from_str::<Value>(first_line) {
+        let parsed = match serde_json::from_str::<Value>(first_line.trim()) {
             Ok(parsed) => parsed,
             Err(_) => {
                 bad_session_files += 1;

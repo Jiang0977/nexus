@@ -571,6 +571,65 @@ test('real rust session runtime hides internal nexus-pty sessions from discovera
   ])
 })
 
+test('real rust session runtime reads Codex metadata without loading transcript bodies', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const { baseDir, homeDir } = createFakeTmuxBin()
+  const codexHome = join(homeDir, '.codex')
+  writeJsonl(join(codexHome, 'session_index.jsonl'), [
+    JSON.stringify({
+      id: 'session-corrupt-body',
+      thread_name: 'Keep metadata readable',
+      updated_at: '2026-04-14T12:00:00.000Z',
+    }),
+  ])
+  const sessionFile = createSessionFile(codexHome, {
+    id: 'session-corrupt-body',
+    datePath: '2026/04/14',
+    cwd: ROOT,
+  })
+  writeFileSync(sessionFile, Buffer.concat([
+    readFileSync(sessionFile),
+    Buffer.from([0xff, 0xfe, 0xfd, 0x0a]),
+  ]))
+
+  const client = createClient(baseDir, {
+    HOME: homeDir,
+    FAKE_TMUX_HAS_SESSION: '1',
+    FAKE_TMUX_CODEX_PROJECT_CWD: ROOT,
+  })
+
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await client.ready()
+
+  assert.deepEqual(await client.listCodexSessions({
+    projectName: 'demo-project',
+    limit: 10,
+    cursor: '0',
+  }), {
+    scope: {
+      project: 'demo-project',
+      path: ROOT,
+      repoRoot: ROOT,
+      summary: `repo root: ${ROOT}`,
+    },
+    items: [
+      {
+        id: 'session-corrupt-body',
+        title: 'Keep metadata readable',
+        updatedAt: '2026-04-14T12:00:00.000Z',
+        cwd: ROOT,
+        attributionKind: 'repo-root',
+      },
+    ],
+    nextCursor: null,
+    warning: null,
+  })
+})
+
 test('real rust session runtime handles codex history listing, detail, resume, and delete through fake tmux', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
   const { baseDir, logFile, homeDir, dataDir } = createFakeTmuxBin()
