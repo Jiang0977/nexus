@@ -177,7 +177,7 @@ export function DesktopSidebar({
                 title={t('toolbar.tasks')}
                 aria-label={t('toolbar.tasks')}
               >
-                <Icon name="clipboard" size={18} />
+                <Icon name="play" size={18} />
               </button>
             )}
 

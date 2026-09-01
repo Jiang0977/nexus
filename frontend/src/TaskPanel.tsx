@@ -6,6 +6,7 @@ import { Icon } from './icons'
 interface Task {
   id: string
   session_name: string
+  tmux_session?: string
   prompt: string
   status: 'success' | 'error' | 'running'
   output?: string
@@ -13,6 +14,20 @@ interface Task {
   createdAt: string
   completedAt?: string
   exitCode?: number
+}
+
+interface ProjectOption {
+  name: string
+  path: string
+  active?: boolean
+  channelCount?: number
+}
+
+interface ChannelOption {
+  index: number
+  name: string
+  active?: boolean
+  cwd?: string
 }
 
 interface Props {
@@ -31,14 +46,31 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [isRunning, setIsRunning] = useState(false)
   const [streamOutput, setStreamOutput] = useState('')
-  const [sessionName, setSessionName] = useState(
+
+  const [projects, setProjects] = useState<ProjectOption[]>([])
+  const [selectedProject, setSelectedProject] = useState(tmuxSession || '')
+  const [channelsProject, setChannelsProject] = useState<string | null>(null)
+  const [channels, setChannels] = useState<ChannelOption[]>([])
+  const [selectedChannel, setSelectedChannel] = useState(
     activeWindowName || (windows.find(w => w.active)?.name ?? (windows[0]?.name ?? ''))
   )
-  const [requestError, setRequestError] = useState<string | null>(null)
+
+  const [loadingProjects, setLoadingProjects] = useState(false)
+  const [loadingChannels, setLoadingChannels] = useState(false)
+  const [projectsError, setProjectsError] = useState<string | null>(null)
+  const [channelsError, setChannelsError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const isMountedRef = useRef(true)
   const outputRef = useRef<HTMLPreElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const channelRequestIdRef = useRef(0)
+  const initialProjectRef = useRef(tmuxSession || '')
+  const initialChannelRef = useRef(
+    activeWindowName || (windows.find(w => w.active)?.name ?? (windows[0]?.name ?? ''))
+  )
+  const lastLoadedProjectRef = useRef<string | null>(null)
+  const initialLoadedRef = useRef(false)
 
   useEffect(() => {
     isMountedRef.current = true
@@ -50,6 +82,128 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
       }
     }
   }, [])
+
+  // Fetch projects on mount / token change
+  useEffect(() => {
+    let active = true
+    setLoadingProjects(true)
+    setProjectsError(null)
+
+    fetch('/api/projects', { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (r) => {
+        if (!active) return
+        if (r.ok) {
+          const data = await r.json()
+          if (!active) return
+          const projectList: ProjectOption[] = Array.isArray(data) ? data : []
+          setProjects(projectList)
+          setSelectedProject((current) => {
+            if (current && projectList.some(p => p.name === current)) {
+              return current
+            }
+            if (tmuxSession && projectList.some(p => p.name === tmuxSession)) {
+              return tmuxSession
+            }
+            const activeProj = projectList.find(p => p.active)
+            if (activeProj) return activeProj.name
+            return projectList[0]?.name ?? ''
+          })
+        } else {
+          const errText = await r.text().catch(() => '')
+          if (!active) return
+          setProjectsError(t('tasks.loadProjectsFailed', { status: r.status, details: errText ? ` (${errText})` : '' }))
+        }
+      })
+      .catch((e: any) => {
+        if (!active) return
+        setProjectsError(t('tasks.networkError', { message: e.message || String(e) }))
+      })
+      .finally(() => {
+        if (active) setLoadingProjects(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [token, tmuxSession, t])
+
+  // When selectedProject changes, fetch channels for it
+  useEffect(() => {
+    const proj = selectedProject.trim()
+    if (!proj) {
+      setChannelsProject(null)
+      setChannels([])
+      setSelectedChannel('')
+      setChannelsError(null)
+      lastLoadedProjectRef.current = null
+      setLoadingChannels(false)
+      return
+    }
+
+    const requestId = ++channelRequestIdRef.current
+    setLoadingChannels(true)
+    setChannelsError(null)
+
+    fetch(`/api/projects/${encodeURIComponent(proj)}/channels`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (r) => {
+        if (!isMountedRef.current || channelRequestIdRef.current !== requestId) return
+        if (r.ok) {
+          const data = await r.json()
+          if (!isMountedRef.current || channelRequestIdRef.current !== requestId) return
+          const responseProject = typeof data.project === 'string' && data.project.trim() ? data.project.trim() : proj
+          const rawChannels: ChannelOption[] = Array.isArray(data.channels) ? data.channels : []
+          setChannelsProject(responseProject)
+          setChannels(rawChannels)
+          if (lastLoadedProjectRef.current === responseProject) {
+            setSelectedChannel(prev => {
+              if (prev && rawChannels.some(c => c.name === prev)) {
+                return prev
+              }
+              const activeCh = rawChannels.find(c => c.active)
+              if (activeCh) return activeCh.name
+              return rawChannels[0]?.name ?? ''
+            })
+          } else if (!initialLoadedRef.current && responseProject === initialProjectRef.current) {
+            initialLoadedRef.current = true
+            const preferred = initialChannelRef.current
+            if (preferred && rawChannels.some(c => c.name === preferred)) {
+              setSelectedChannel(preferred)
+            } else {
+              const activeCh = rawChannels.find(c => c.active)
+              setSelectedChannel(activeCh ? activeCh.name : (rawChannels[0]?.name ?? ''))
+            }
+          } else {
+            initialLoadedRef.current = true
+            const activeCh = rawChannels.find(c => c.active)
+            setSelectedChannel(activeCh ? activeCh.name : (rawChannels[0]?.name ?? ''))
+          }
+          lastLoadedProjectRef.current = responseProject
+        } else {
+          const errText = await r.text().catch(() => '')
+          if (!isMountedRef.current || channelRequestIdRef.current !== requestId) return
+          setChannelsProject(null)
+          setChannels([])
+          setSelectedChannel('')
+          setChannelsError(t('tasks.loadChannelsFailed', { status: r.status, details: errText ? ` (${errText})` : '' }))
+          lastLoadedProjectRef.current = null
+        }
+      })
+      .catch((e: any) => {
+        if (!isMountedRef.current || channelRequestIdRef.current !== requestId) return
+        setChannelsProject(null)
+        setChannels([])
+        setSelectedChannel('')
+        setChannelsError(t('tasks.networkError', { message: e.message || String(e) }))
+        lastLoadedProjectRef.current = null
+      })
+      .finally(() => {
+        if (isMountedRef.current && channelRequestIdRef.current === requestId) {
+          setLoadingChannels(false)
+        }
+      })
+  }, [selectedProject, token, t])
 
   useEffect(() => {
     fetchTasks()
@@ -63,15 +217,6 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
     }
   }, [streamOutput])
 
-  useEffect(() => {
-    if (!sessionName) {
-      const fallback = activeWindowName || (windows.find(w => w.active)?.name ?? (windows[0]?.name ?? ''))
-      if (fallback) {
-        setSessionName(fallback)
-      }
-    }
-  }, [activeWindowName, windows, sessionName])
-
   async function fetchTasks() {
     try {
       const r = await fetch('/api/tasks', { headers: { Authorization: `Bearer ${token}` } })
@@ -80,17 +225,17 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
         const data = await r.json()
         if (isMountedRef.current) {
           setTasks(Array.isArray(data) ? data : [])
-          setRequestError(null)
+          setActionError(null)
         }
       } else {
         const errText = await r.text().catch(() => '')
         if (isMountedRef.current) {
-          setRequestError(t('tasks.fetchFailed', { status: r.status, details: errText ? ` (${errText})` : '' }))
+          setActionError(t('tasks.fetchFailed', { status: r.status, details: errText ? ` (${errText})` : '' }))
         }
       }
     } catch (e: any) {
       if (isMountedRef.current) {
-        setRequestError(t('tasks.networkError', { message: e.message || String(e) }))
+        setActionError(t('tasks.networkError', { message: e.message || String(e) }))
       }
     }
   }
@@ -106,14 +251,14 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
       if (r.ok) {
         setTasks(prev => prev.filter(item => item.id !== id))
         if (selectedTaskId === id) setSelectedTaskId(null)
-        setRequestError(null)
+        setActionError(null)
       } else {
         const errText = await r.text().catch(() => '')
-        setRequestError(t('tasks.deleteFailed', { status: r.status, details: errText ? ` (${errText})` : '' }))
+        setActionError(t('tasks.deleteFailed', { status: r.status, details: errText ? ` (${errText})` : '' }))
       }
     } catch (e: any) {
       if (isMountedRef.current) {
-        setRequestError(t('tasks.networkError', { message: e.message || String(e) }))
+        setActionError(t('tasks.networkError', { message: e.message || String(e) }))
       }
     }
   }
@@ -149,12 +294,29 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
     return false
   }
 
+  const targetProject = selectedProject.trim()
+  const targetChannel = selectedChannel.trim()
+
+  const isTargetsReady = Boolean(
+    !loadingProjects &&
+    !loadingChannels &&
+    !projectsError &&
+    !channelsError &&
+    targetProject &&
+    projects.some(p => p.name === targetProject) &&
+    channelsProject === targetProject &&
+    targetChannel &&
+    channels.some(c => c.name === targetChannel)
+  )
+
   async function runTask() {
-    if (!prompt.trim() || isRunning || !sessionName || !tmuxSession) return
+    const targetProject = selectedProject.trim()
+    const targetChannel = selectedChannel.trim()
+    if (!prompt.trim() || isRunning || !targetProject || !targetChannel || !isTargetsReady) return
     setIsRunning(true)
     setStreamOutput('')
     setSelectedTaskId(null)
-    setRequestError(null)
+    setActionError(null)
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -164,7 +326,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
       const r = await fetch('/api/tasks', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_name: sessionName, prompt: prompt.trim(), tmux_session: tmuxSession }),
+        body: JSON.stringify({ session_name: targetChannel, prompt: prompt.trim(), tmux_session: targetProject }),
         signal: controller.signal,
       })
 
@@ -175,7 +337,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
         if (isMountedRef.current) {
           const errMsg = t('tasks.requestFailed', { status: r.status }) + (errText ? ` (${errText})` : '')
           setStreamOutput(errMsg)
-          setRequestError(errMsg)
+          setActionError(errMsg)
           setIsRunning(false)
         }
         return
@@ -227,13 +389,13 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
       if (!sawDone && isMountedRef.current && !controller.signal.aborted) {
         const interruptedMsg = t('tasks.streamInterrupted')
         setStreamOutput(prev => (prev ? prev + '\n' : '') + interruptedMsg)
-        setRequestError(interruptedMsg)
+        setActionError(interruptedMsg)
       }
     } catch (e: any) {
       if (e.name !== 'AbortError' && isMountedRef.current) {
         const errMsg = t('tasks.networkError', { message: e.message || String(e) })
         setStreamOutput(prev => (prev ? prev + '\n' : '') + errMsg)
-        setRequestError(errMsg)
+        setActionError(errMsg)
       }
     } finally {
       abortRef.current = null
@@ -252,6 +414,8 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
     return tasks.find(t => t.id === selectedTaskId) ?? null
   }, [selectedTaskId, tasks])
 
+  const displayedError = projectsError || channelsError || actionError
+
   return (
     <div
       role="dialog"
@@ -264,7 +428,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-nexus-border shrink-0">
           <span id={titleId} className="flex items-center gap-2 text-nexus-text text-[15px] font-semibold">
-            <Icon name="clipboard" size={20} />
+            <Icon name="play" size={20} />
             {t('tasks.title')}
           </span>
           <button
@@ -282,31 +446,80 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
         </div>
 
         {/* Global Request/Action Error Message */}
-        {requestError && (
+        {displayedError && (
           <div className="px-5 py-2 bg-nexus-error/10 border-b border-nexus-error/20 text-[12px] text-nexus-error shrink-0 flex items-center justify-between">
-            <span className="truncate" title={requestError}>{requestError}</span>
+            <span className="truncate" title={displayedError}>{displayedError}</span>
             <button
               aria-label={t('common.close')}
               className="bg-transparent border-none text-nexus-error cursor-pointer text-xs p-0 ml-2 shrink-0"
-              onClick={() => setRequestError(null)}
+              onClick={() => {
+                if (projectsError) setProjectsError(null)
+                if (channelsError) setChannelsError(null)
+                if (actionError) setActionError(null)
+              }}
             >
               ✕
             </button>
           </div>
         )}
 
-        {/* Session selector */}
-        <div className="flex items-center gap-2 px-5 py-2.5 border-b border-nexus-border shrink-0">
-          <span className="text-nexus-text-2 text-[13px] shrink-0">{t('tasks.session')}</span>
-          <select
-            className="flex-1 bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text px-2 py-1 text-[13px] font-mono cursor-pointer"
-            value={sessionName}
-            onChange={e => setSessionName(e.target.value)}
-          >
-            {windows.map(w => (
-              <option key={w.index} value={w.name}>{w.index}: {w.name}</option>
-            ))}
-          </select>
+        {/* Target selectors: Project & Channel */}
+        <div className="flex flex-col gap-2 px-5 py-2.5 border-b border-nexus-border shrink-0">
+          {/* Project selector */}
+          <div className="flex items-center gap-2">
+            <span className="text-nexus-text-2 text-[13px] shrink-0 w-16">{t('tasks.project')}</span>
+            <select
+              aria-label={t('tasks.project')}
+              className="flex-1 min-w-0 bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text px-2 py-1 text-[13px] font-mono cursor-pointer disabled:opacity-50"
+              value={selectedProject}
+              disabled={isRunning || loadingProjects || projects.length === 0}
+              onChange={e => {
+                const nextProj = e.target.value
+                setSelectedProject(nextProj)
+                setChannelsProject(null)
+                setChannels([])
+                setSelectedChannel('')
+                setChannelsError(null)
+                lastLoadedProjectRef.current = null
+              }}
+            >
+              {loadingProjects ? (
+                <option value="">{t('tasks.loadingProjects')}</option>
+              ) : projects.length === 0 ? (
+                <option value="">{t('tasks.noProjects')}</option>
+              ) : (
+                projects.map(p => (
+                  <option key={p.name} value={p.name} title={p.path}>
+                    {p.name} ({p.path})
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+
+          {/* Channel selector */}
+          <div className="flex items-center gap-2">
+            <span className="text-nexus-text-2 text-[13px] shrink-0 w-16">{t('tasks.channel')}</span>
+            <select
+              aria-label={t('tasks.channel')}
+              className="flex-1 min-w-0 bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text px-2 py-1 text-[13px] font-mono cursor-pointer disabled:opacity-50"
+              value={selectedChannel}
+              disabled={isRunning || loadingChannels || channels.length === 0}
+              onChange={e => setSelectedChannel(e.target.value)}
+            >
+              {loadingChannels ? (
+                <option value="">{t('tasks.loadingChannels')}</option>
+              ) : channels.length === 0 ? (
+                <option value="">{t('tasks.noChannels')}</option>
+              ) : (
+                channels.map(c => (
+                  <option key={c.index} value={c.name}>
+                    {c.index}: {c.name}{c.active ? ' *' : ''}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
         </div>
 
         {/* Prompt input */}
@@ -326,9 +539,9 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
           />
           <div className="flex gap-2 self-end">
             <button
-              className={`bg-nexus-accent border-none rounded-md text-white cursor-pointer text-[13px] font-semibold px-4 py-2 self-end transition-opacity duration-200 ${isRunning || !prompt.trim() || !sessionName || !tmuxSession ? 'opacity-50' : 'opacity-100'}`}
+              className={`bg-nexus-accent border-none rounded-md text-white cursor-pointer text-[13px] font-semibold px-4 py-2 self-end transition-opacity duration-200 ${isRunning || !prompt.trim() || !isTargetsReady ? 'opacity-50' : 'opacity-100'}`}
               onClick={runTask}
-              disabled={isRunning || !prompt.trim() || !sessionName || !tmuxSession}
+              disabled={isRunning || !prompt.trim() || !isTargetsReady}
             >
               {isRunning ? t('tasks.running') : t('tasks.sendTask')}
             </button>
@@ -348,7 +561,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
                   aria-label={t('tasks.backToHistory')}
                   onClick={() => {
                     setStreamOutput('')
-                    setRequestError(null)
+                    setActionError(null)
                     setSelectedTaskId(null)
                   }}
                 >
@@ -370,6 +583,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
               <div className="overflow-y-auto flex-1">
                 {tasks.map(task => {
                   const isTaskRunning = task.status === 'running'
+                  const targetLabel = task.tmux_session ? `${task.tmux_session} / ${task.session_name}` : task.session_name
                   return (
                     <div
                       key={task.id}
@@ -378,7 +592,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
                     >
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${task.status === 'success' ? 'bg-nexus-success' : isTaskRunning ? 'bg-nexus-warning animate-pulse' : 'bg-nexus-error'}`} />
                       <span className="flex-1 text-nexus-text text-[13px] font-mono overflow-hidden text-ellipsis whitespace-nowrap" title={task.prompt}>{task.prompt.slice(0, 60)}{task.prompt.length > 60 ? '...' : ''}</span>
-                      <span className="text-nexus-muted text-[11px] shrink-0">{task.session_name}</span>
+                      <span className="text-nexus-muted text-[11px] max-w-[120px] truncate shrink-0" title={targetLabel}>{targetLabel}</span>
                       {!isTaskRunning && (
                         <button
                           aria-label={t('common.delete')}
@@ -402,10 +616,13 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
           <div className="flex-1 flex flex-col min-h-0 overflow-hidden border-t border-nexus-border">
             <div className="flex items-center gap-2 px-5 py-2 border-b border-nexus-border shrink-0">
               {activeTask.status === 'running' && <span className="w-2 h-2 rounded-full bg-nexus-success animate-spin shrink-0" />}
-              <span className="text-nexus-text-2 text-xs font-mono">
-                {activeTask.session_name} — {activeTask.status === 'running' ? t('tasks.runningStatus') : activeTask.status}
+              <span
+                className="flex-1 min-w-0 truncate text-nexus-text-2 text-xs font-mono"
+                title={`${activeTask.tmux_session ? `${activeTask.tmux_session} / ${activeTask.session_name}` : activeTask.session_name} — ${activeTask.status === 'running' ? t('tasks.runningStatus') : activeTask.status}`}
+              >
+                {activeTask.tmux_session ? `${activeTask.tmux_session} / ${activeTask.session_name}` : activeTask.session_name} — {activeTask.status === 'running' ? t('tasks.runningStatus') : activeTask.status}
               </span>
-              <div className="flex gap-1 ml-auto">
+              <div className="flex gap-1 ml-auto shrink-0">
                 {activeTask.status !== 'running' && (
                   <button
                     className="bg-transparent border-none text-nexus-text-2 cursor-pointer text-[13px] px-1 py-0.5 leading-none rounded hover:text-nexus-text"

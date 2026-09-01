@@ -2990,7 +2990,47 @@ test('browser regression: web async task panel manages task runs and streams out
   const customPrompt = 'browser task prompt'
   await promptInput.fill(customPrompt)
 
-  const sendButton = dialog.locator('button:has-text("Send Task"), button:has-text("Run")').first()
+  const projectSelect = dialog.getByRole('combobox', { name: 'Project:' })
+  await projectSelect.waitFor({ state: 'visible', timeout: 5000 })
+  const projectOptionText = await projectSelect.locator('option[value="demo-project"]').textContent()
+  assert.ok(
+    projectOptionText && projectOptionText.includes('/workspace/demo'),
+    `expected project option to include full path /workspace/demo, got ${projectOptionText}`,
+  )
+
+  const channelSelect = dialog.getByRole('combobox', { name: 'Channel:' })
+  await channelSelect.waitFor({ state: 'visible', timeout: 5000 })
+  await channelSelect.locator('option[value="review"]').waitFor({ state: 'attached', timeout: 5000 })
+  await channelSelect.selectOption('review')
+  assert.strictEqual(await channelSelect.inputValue(), 'review')
+
+  await page.waitForTimeout(2300)
+  assert.strictEqual(
+    await channelSelect.inputValue(),
+    'review',
+    'expected user-selected channel to remain review across parent polling interval',
+  )
+
+  const sendButton = dialog.getByRole('button', { name: 'Send Task' })
+  await projectSelect.selectOption('demo-project')
+  assert.ok(
+    await sendButton.isDisabled(),
+    'expected send button to be disabled while new project channels are invalid/loading',
+  )
+
+  await page.waitForFunction(() => {
+    const select = document.querySelector('select[aria-label="Channel:"]')
+    return select && !select.disabled && select.value === 'shell'
+  })
+  assert.strictEqual(
+    await channelSelect.inputValue(),
+    'shell',
+    'expected default channel after switching projects to be active shell, not preserved review',
+  )
+
+  await channelSelect.locator('option[value="review"]').waitFor({ state: 'attached', timeout: 5000 })
+  await channelSelect.selectOption('review')
+  assert.ok(!(await sendButton.isDisabled()), 'expected send button to be enabled when valid target selected')
   await sendButton.click()
 
   await dialog.locator('text=streamed standard output content').first().waitFor({ state: 'visible', timeout: 10000 })
@@ -2999,8 +3039,8 @@ test('browser regression: web async task panel manages task runs and streams out
   assert.ok(recordedRequests.post, 'expected POST /api/tasks request to be made')
   assert.match(recordedRequests.post.authorization, /^Bearer\s+.+/, 'expected Bearer token in Authorization header')
   assert.strictEqual(recordedRequests.post.body.prompt, customPrompt, 'expected custom prompt in request body')
-  assert.ok(recordedRequests.post.body.session_name, 'expected session_name in request body')
-  assert.ok(recordedRequests.post.body.tmux_session, 'expected tmux_session in request body')
+  assert.strictEqual(recordedRequests.post.body.session_name, 'review', 'expected session_name to be review')
+  assert.strictEqual(recordedRequests.post.body.tmux_session, 'demo-project', 'expected tmux_session to be demo-project')
 
   const backButton = dialog.locator('button:has-text("Back to history"), button[title="Back to history"]').first()
   await backButton.waitFor({ state: 'visible', timeout: 5000 })

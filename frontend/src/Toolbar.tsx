@@ -593,7 +593,7 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
                 onPointerDown={(e) => { e.preventDefault(); onOpenTasks() }}
                 title={t('toolbar.tasks')}
                 aria-label={t('toolbar.tasks')}
-              ><Icon name="clipboard" size={18} /></button>
+              ><Icon name="play" size={18} /></button>
             )}
             {onOpenPromptLibrary && (
               <button
@@ -660,7 +660,7 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
           )}
           {onOpenTasks && (
             <button className={iconBtnPCClass} onPointerDown={(e) => { e.preventDefault(); onOpenTasks() }} title={t('toolbar.tasks')} aria-label={t('toolbar.tasks')}>
-              <Icon name="clipboard" size={18} />
+              <Icon name="play" size={18} />
             </button>
           )}
           {onOpenPromptLibrary && (
@@ -812,7 +812,7 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
                 </button>
                 {onOpenTasks && (
                   <button className={quickMenuItemClass} onPointerDown={(e) => { e.preventDefault(); onOpenTasks(); setShowQuickMenu(false) }} title={t('toolbar.tasks')} aria-label={t('toolbar.tasks')}>
-                    <Icon name="clipboard" size={16} />
+                    <Icon name="play" size={16} />
                     <span>{t('toolbar.tasks')}</span>
                   </button>
                 )}

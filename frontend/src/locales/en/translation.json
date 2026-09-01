@@ -350,7 +350,15 @@
     "requestFailed": "Request failed: {{status}}",
     "waitingOutput": "Waiting for output...",
     "noOutput": "(no output)",
-    "streamInterrupted": "Task output stream was interrupted before completion."
+    "streamInterrupted": "Task output stream was interrupted before completion.",
+    "project": "Project:",
+    "channel": "Channel:",
+    "noProjects": "No projects available",
+    "noChannels": "No channels available",
+    "loadingProjects": "Loading projects...",
+    "loadingChannels": "Loading channels...",
+    "loadProjectsFailed": "Failed to load projects: {{status}}{{details}}",
+    "loadChannelsFailed": "Failed to load channels: {{status}}{{details}}"
   },
   "files": {
     "title": "Uploaded Files",
