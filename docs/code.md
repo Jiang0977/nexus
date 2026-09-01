@@ -61,7 +61,6 @@
 | `rust-runtime/src/server/mod.rs` | server 入口、router 装配、服务生命周期 |
 | `rust-runtime/src/server/runtime.rs` | server 共享核心：`AppState`、managed runtimes、DTO、通用 helper |
 | `rust-runtime/src/server/tasks.rs` | task / SSE 相关 handler |
-| `rust-runtime/src/server/telegram.rs` | Telegram setup / webhook |
 | `rust-runtime/src/server/config.rs` | 配置、profile、feature config |
 | `rust-runtime/src/server/layouts.rs` | PC split-view active layout API 与持久化 |
 | `rust-runtime/src/server/prompts.rs` | 提示词库鉴权 CRUD/排序、校验、锁与原子 JSON 持久化 |
@@ -122,21 +121,27 @@
 
 前端主入口当前推荐阅读顺序：
 
-1. `frontend/src/Terminal.tsx`
-2. `frontend/src/terminal/TerminalModalStack.tsx`
-3. `frontend/src/PromptLibrary.tsx`
-4. `frontend/src/promptLibrary/api.ts`
-5. `frontend/src/terminal/terminalConnection.ts`
-6. `frontend/src/terminal/terminalApplicationScroll.ts`
-7. `frontend/src/terminal/useTerminalRuntime.ts`
-8. `frontend/src/terminal/useTerminalPaneRuntime.ts`
-9. `frontend/src/terminal/useTerminalSessions.ts`
-10. `frontend/src/terminal/useTerminalArtifacts.ts`
-11. `frontend/src/terminal/DesktopSidebar.tsx`
-12. `frontend/src/terminal/MobileSessionDrawer.tsx`
+1. `frontend/src/main.tsx`
+2. `frontend/src/Terminal.tsx`
+3. `frontend/src/terminal/TerminalModalStack.tsx`
+4. `frontend/src/TaskPanel.tsx`
+5. `frontend/src/WorkspaceBrowser.tsx`
+6. `frontend/src/PromptLibrary.tsx`
+7. `frontend/src/promptLibrary/api.ts`
+8. `frontend/src/terminal/terminalConnection.ts`
+9. `frontend/src/terminal/terminalApplicationScroll.ts`
+10. `frontend/src/terminal/useTerminalRuntime.ts`
+11. `frontend/src/terminal/useTerminalPaneRuntime.ts`
+12. `frontend/src/terminal/useTerminalSessions.ts`
+13. `frontend/src/terminal/useTerminalArtifacts.ts`
+14. `frontend/src/terminal/DesktopSidebar.tsx`
+15. `frontend/src/terminal/MobileSessionDrawer.tsx`
 
 这样读能更快看清：
 
+- `main.tsx` 在应用启动时挂载并在 load 事件注册 `/sw.js` Service Worker
+- `TaskPanel.tsx` 负责异步任务 Web 面板：通过 Bearer 鉴权进行 create / history / delete，并通过 SSE 接收 stdout/stderr；断开连接只停止本地流式消费，不取消后台任务
+- `WorkspaceBrowser.tsx` 负责工作区文件管理：文件查看/下载使用 Authorization Bearer fetch 与 Blob URL，JWT 不进入 URL query
 - `Terminal.tsx` 只负责顶层装配
 - WebSocket URL / resize / reconnect / close policy 集中在 `terminalConnection.ts`
 - Grok 全屏 TUI 的明确版本/终端标题识别和 SGR wheel 编码集中在 `terminalApplicationScroll.ts`；通用 synchronized-update 输出仍走 xterm scrollback

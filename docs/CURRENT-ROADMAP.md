@@ -1,6 +1,6 @@
 # CURRENT ROADMAP — Nexus
 
-最后整理：2026-07-25
+最后整理：2026-09-01
 
 目的：给“当前到底还有哪些 TODO、下一步该做什么”一个短而硬的答案，避免继续被历史文档误导。
 
@@ -48,6 +48,13 @@
 - 任务运行期 `stdout/stderr` 改为有界滚动缓冲；已于 2026-05-02 通过 Rust 单测与 server 任务回归验证闭环。
 - README / README_CN 已在 2026-05-20 删除旧视频演示和旧营销叙事，改为当前 Rust runtime + tmux/native backend 事实说明。
 - session backend capability ports、共享 Codex HOME 物化、共享 child runtime protocol 与前端 terminal connection adapter 已完成，当前边界见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+- 2026-09-01 阶段收口（当前仓库源码与本地测试回归已闭环，本轮未执行 production deploy/restart）：
+  - 旧外部 IM 接入从源码、配置、文档和测试中完整移除
+  - Web TaskPanel create/SSE/history/view/reuse/delete（关闭面板不取消后台任务）
+  - secure installer credentials+loopback+0600、upload/workspace Bearer、login per-peer rate limit
+  - tasks.json atomic 0600 + running delete 409
+  - PWA /sw.js registration
+  - checkout/install-tree deploy sync+rollback helper
 
 ## 当前主开发方向
 

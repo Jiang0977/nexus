@@ -19,9 +19,6 @@ export function WelcomeGuideOverlay({ onClose, visible }: WelcomeGuideOverlayPro
           <li>📁 新建工作区：在选定目录打开一个新的工作区</li>
           <li>➕ 新建窗口：在当前工作区目录再开一个窗口</li>
         </ul>
-        <p className="mt-2 text-[11px] text-nexus-muted">
-          Telegram Bot: /api/telegram/setup 一键配置
-        </p>
         <button
           onClick={onClose}
           className="mt-3 w-full rounded-md border-none bg-nexus-accent px-5 py-2.5 text-sm font-semibold text-white cursor-pointer"

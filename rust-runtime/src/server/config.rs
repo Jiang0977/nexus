@@ -4,11 +4,27 @@ use crate::runtime_config::read_session_backend_config_file;
 
 pub(super) async fn api_login(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<LoginRequest>,
 ) -> Response {
     let Some(password) = payload.password.filter(|value| !value.is_empty()) else {
         return json_error(StatusCode::BAD_REQUEST, "password required");
     };
+
+    let ip = peer_addr.ip();
+    if let Err(remaining) = state.login_limiter.check(ip) {
+        let retry_after_secs = remaining
+            .as_secs()
+            .saturating_add(u64::from(remaining.subsec_nanos() > 0))
+            .max(1);
+        let mut response = json_error(StatusCode::TOO_MANY_REQUESTS, "too many login attempts");
+        response.headers_mut().insert(
+            RETRY_AFTER,
+            HeaderValue::from_str(&retry_after_secs.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("60")),
+        );
+        return response;
+    }
 
     let password_matches = match verify(password, state.password_hash.as_str()) {
         Ok(matches) => matches,
@@ -16,8 +32,11 @@ pub(super) async fn api_login(
     };
 
     if !password_matches {
+        state.login_limiter.record_failure(ip);
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
+
+    state.login_limiter.record_success(ip);
 
     let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(duration) => duration.as_secs(),
@@ -345,53 +364,6 @@ pub(super) async fn api_save_toolbar_config(
     match write_toolbar_config_file(state.toolbar_config_file.as_ref(), &payload).await {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
         Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
-    }
-}
-
-pub(super) async fn api_telegram_webhook(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(update): Json<TelegramUpdate>,
-) -> Response {
-    if let Err(error) = state.telegram_bridge.verify_webhook_request(&headers) {
-        return json_error(error.status, &error.message);
-    }
-
-    let telegram_bridge = state.telegram_bridge.clone();
-    let task_state = state.clone();
-    tokio::spawn(async move {
-        if let Err(error) = telegram_bridge.handle_update(task_state, update).await {
-            eprintln!("telegram webhook error: {error}");
-        }
-    });
-
-    Json(json!({ "ok": true })).into_response()
-}
-
-pub(super) async fn api_telegram_setup(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Response {
-    if let Some(response) = require_auth(&headers, &state) {
-        return response;
-    }
-
-    let protocol =
-        forwarded_header_value(&headers, "x-forwarded-proto").unwrap_or_else(|| "http".to_string());
-    let host = forwarded_header_value(&headers, "x-forwarded-host")
-        .or_else(|| header_string(&headers, "host"))
-        .unwrap_or_default();
-    if host.is_empty() {
-        return json_error(StatusCode::INTERNAL_SERVER_ERROR, "host header missing");
-    }
-
-    match state
-        .telegram_bridge
-        .setup_webhook(protocol.trim(), host.trim())
-        .await
-    {
-        Ok(payload) => Json(payload).into_response(),
-        Err(error) => json_error(error.status, &error.message),
     }
 }
 

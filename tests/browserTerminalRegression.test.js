@@ -2833,3 +2833,195 @@ test('browser regression: window status polling requests a 4096-character output
     `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
   )
 })
+
+test('browser regression: web async task panel manages task runs and streams outputs', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
+
+  const tasks = [
+    {
+      id: 'task-running-1',
+      prompt: 'cargo test --workspace',
+      status: 'running',
+      session_name: 'default',
+      tmux_session: 'nexus-preview-rust',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      exitCode: null,
+      output: 'compiling nexus v0.1.0...',
+      error: '',
+    },
+    {
+      id: 'task-completed-1',
+      prompt: 'npm run check',
+      status: 'success',
+      session_name: 'default',
+      tmux_session: 'nexus-preview-rust',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      completedAt: '2026-09-01T00:00:10.000Z',
+      exitCode: 0,
+      output: 'all checks passed',
+      error: '',
+    },
+  ]
+
+  const recordedRequests = {
+    post: null,
+    delete: [],
+  }
+
+  await page.route('**/api/tasks**', async (route) => {
+    const request = route.request()
+    const method = request.method()
+    const url = request.url()
+
+    if (method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(tasks),
+      })
+      return
+    }
+
+    if (method === 'POST') {
+      const postData = request.postDataJSON() || {}
+      recordedRequests.post = {
+        authorization: request.headers().authorization || '',
+        body: postData,
+      }
+
+      const newTask = {
+        id: 'task-created-2',
+        prompt: postData.prompt || '',
+        status: 'success',
+        session_name: postData.session_name || 'default',
+        tmux_session: postData.tmux_session || 'nexus-preview-rust',
+        createdAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        exitCode: 0,
+        output: 'streamed standard output content\n',
+        error: 'streamed standard error content\n',
+      }
+      tasks.unshift(newTask)
+
+      const sseBody = [
+        'event: start',
+        `data: ${JSON.stringify({ id: 'task-created-2' })}`,
+        '',
+        'event: output',
+        `data: ${JSON.stringify({ chunk: 'streamed standard output content\n' })}`,
+        '',
+        'event: error',
+        `data: ${JSON.stringify({ chunk: 'streamed standard error content\n' })}`,
+        '',
+        'event: done',
+        `data: ${JSON.stringify({ exit_code: 0, status: 'success' })}`,
+        '',
+        '',
+      ].join('\n')
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        headers: {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        },
+        body: sseBody,
+      })
+      return
+    }
+
+    if (method === 'DELETE') {
+      const urlObj = new URL(url)
+      const pathSegments = urlObj.pathname.split('/')
+      const taskId = pathSegments[pathSegments.length - 1]
+      recordedRequests.delete.push(taskId)
+
+      const taskIndex = tasks.findIndex((task) => task.id === taskId)
+      if (taskIndex !== -1) {
+        tasks.splice(taskIndex, 1)
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      })
+      return
+    }
+
+    await route.continue()
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const asyncTasksButton = page.locator('[title="Async Tasks"]').first()
+  await asyncTasksButton.waitFor({ state: 'visible', timeout: 10000 })
+  await asyncTasksButton.click()
+
+  const dialog = page.getByRole('dialog', { name: 'Async Tasks' })
+  await dialog.waitFor({ state: 'visible', timeout: 10000 })
+
+  const runningPrompt = dialog.locator('text=cargo test --workspace')
+  await runningPrompt.waitFor({ state: 'visible', timeout: 5000 })
+  const runningRow = runningPrompt.locator('..')
+  const runningDeleteButton = runningRow.locator('button[title="Delete"], button[aria-label="Delete"]')
+  assert.strictEqual(
+    await runningDeleteButton.count(),
+    0,
+    'expected running task to not have a delete button',
+  )
+
+  const completedPrompt = dialog.locator('text=npm run check')
+  await completedPrompt.waitFor({ state: 'visible', timeout: 5000 })
+  await completedPrompt.click()
+
+  const reuseButton = dialog.getByRole('button', { name: 'Reuse prompt' })
+  await reuseButton.waitFor({ state: 'visible', timeout: 5000 })
+  await reuseButton.click()
+
+  const promptInput = dialog.locator('textarea').first()
+  const inputValue = await promptInput.inputValue()
+  assert.ok(
+    inputValue.includes('npm run check'),
+    `expected prompt input to contain reused prompt, got ${inputValue}`,
+  )
+
+  const customPrompt = 'browser task prompt'
+  await promptInput.fill(customPrompt)
+
+  const sendButton = dialog.locator('button:has-text("Send Task"), button:has-text("Run")').first()
+  await sendButton.click()
+
+  await dialog.locator('text=streamed standard output content').first().waitFor({ state: 'visible', timeout: 10000 })
+  await dialog.locator('text=streamed standard error content').first().waitFor({ state: 'visible', timeout: 10000 })
+
+  assert.ok(recordedRequests.post, 'expected POST /api/tasks request to be made')
+  assert.match(recordedRequests.post.authorization, /^Bearer\s+.+/, 'expected Bearer token in Authorization header')
+  assert.strictEqual(recordedRequests.post.body.prompt, customPrompt, 'expected custom prompt in request body')
+  assert.ok(recordedRequests.post.body.session_name, 'expected session_name in request body')
+  assert.ok(recordedRequests.post.body.tmux_session, 'expected tmux_session in request body')
+
+  const backButton = dialog.locator('button:has-text("Back to history"), button[title="Back to history"]').first()
+  await backButton.waitFor({ state: 'visible', timeout: 5000 })
+  await backButton.click()
+
+  const newCreatedPrompt = dialog.locator(`text=${customPrompt}`).first()
+  await newCreatedPrompt.waitFor({ state: 'visible', timeout: 5000 })
+
+  const completedRow = dialog.locator('text=npm run check').locator('..')
+  const completedDeleteButton = completedRow.locator('button[title="Delete"], button[aria-label="Delete"]').first()
+  await completedDeleteButton.waitFor({ state: 'visible', timeout: 5000 })
+  await completedDeleteButton.click()
+
+  await page.waitForFunction(() => !document.body.textContent.includes('npm run check'))
+
+  assert.deepEqual(recordedRequests.delete, ['task-completed-1'], 'expected completed task id in delete requests')
+  assert.ok(tasks.some((t) => t.id === 'task-running-1'), 'expected running task to remain in history')
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})

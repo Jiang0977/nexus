@@ -163,3 +163,61 @@ exit 0
     rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+test('profile Claude launcher starts fresh on first run and passes -c when user resumes with r', { skip: process.platform === 'win32' }, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'nexus-claude-profile-resume-'))
+  const fakeBinDir = join(tempDir, 'bin')
+  const homeDir = join(tempDir, 'home')
+  const pollutedHome = join(tempDir, 'runtime-home')
+  const dataDir = join(tempDir, 'data')
+  const projectDir = join(tempDir, 'project')
+  const runtimeDir = join(tempDir, 'claude-runtime')
+  const runLog = join(tempDir, 'claude-runs.log')
+
+  try {
+    mkdirSync(fakeBinDir, { recursive: true })
+    mkdirSync(join(homeDir, '.cargo', 'bin'), { recursive: true })
+    mkdirSync(join(homeDir, '.rustup'), { recursive: true })
+    mkdirSync(pollutedHome, { recursive: true })
+    mkdirSync(join(dataDir, 'configs'), { recursive: true })
+    mkdirSync(projectDir, { recursive: true })
+    writeFileSync(join(homeDir, '.cargo', 'bin', 'cargo'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    writeFileSync(join(dataDir, 'configs', 'test-profile.json'), JSON.stringify({
+      label: 'Test Claude Profile',
+    }, null, 2), 'utf8')
+    writeFileSync(join(fakeBinDir, 'claude'), `#!/bin/sh
+printf 'RUN:%s\n' "$*" >> "${runLog}"
+exit 0
+`, { mode: 0o755 })
+
+    const result = spawnSync('bash', [join(ROOT, 'nexus-run-claude.sh'), 'test-profile', projectDir], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        HOME: pollutedHome,
+        NEXUS_SOURCE_HOME: homeDir,
+        NEXUS_DATA_DIR: dataDir,
+        PATH: `${fakeBinDir}:/usr/bin:/bin`,
+        CARGO_HOME: '',
+        NEXUS_CLAUDE_RUNTIME_DIR: runtimeDir,
+        RUSTUP_HOME: '',
+      },
+      input: 'r\nq\nexit\n',
+      encoding: 'utf8',
+      timeout: 5000,
+    })
+
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.match(result.stdout, /r=resume last session/)
+    const runs = readFileSync(runLog, 'utf8').trim().split('\n')
+    assert.equal(runs.length, 2)
+    // Run 1: fresh start without -c
+    assert.match(runs[0], /^RUN:--dangerously-skip-permissions --settings /)
+    assert.doesNotMatch(runs[0], /(?:^|\s)-c(?:\s|$)/)
+    // Run 2: resume with -c
+    assert.match(runs[1], /^RUN:-c --dangerously-skip-permissions --settings /)
+    assert.match(runs[1], /^RUN:-c\b/)
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+})

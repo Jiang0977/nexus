@@ -29,11 +29,11 @@ Browser / PWA
 - Browser terminal built on xterm.js with mobile touch controls, scrollback, upload, and configurable toolbar.
 - Project and channel management: directory-based projects, each with multiple terminal channels.
 - Desktop split view: single / vertical / horizontal / 2x2 / 3x3 terminal panes.
-- Async task runner via `/api/tasks`, SSE streaming, and Telegram bridge.
-- File browser for workspace browsing, editing, upload, rename, move, copy, and delete.
+- Async task runner with web panel creation, SSE stdout/stderr streaming, history, view, reuse, and deletion; background tasks keep running when the panel is closed.
+- File browser for workspace browsing, editing, upload, rename, move, copy, and delete; file view and download use `Authorization: Bearer` fetch and Blob URLs without passing JWT in URL query strings.
 - Authenticated prompt library for saving, editing, searching, drag-sorting, copying, and inserting reusable prompts into the active terminal without auto-submit.
 - Codex and Claude profile launchers, including Codex history/resume flows.
-- PWA support with dark/light themes.
+- PWA support with dark/light themes, registering `/sw.js` on page load.
 - Rust-first runtime: `nexus-server` serves `frontend/dist/` directly.
 
 ## Terminal Backends
@@ -62,17 +62,16 @@ nexus-native-session attach <project> <channel-index>
 ```bash
 git clone https://github.com/Jiang0977/nexus.git
 cd nexus
-cp .env.example .env
 ./setup.sh
 ```
 
 Open:
 
 ```text
-http://localhost:59000
+http://127.0.0.1:59000
 ```
 
-`./setup.sh` provisions `.env`, installs `systemd --user` units, installs the native session CLI symlink, and starts:
+`./setup.sh` generates secure credentials (and displays a one-time random password), provisions `.env`, installs `systemd --user` units, installs the native session CLI symlink, and starts:
 
 - `nexus.service`
 - `nexus-tmux.service`
@@ -131,6 +130,8 @@ If native sessions can be interrupted and the native supervisor binary must be r
 ```bash
 npm run deploy:service -- --restart-native-pty
 ```
+
+The deploy script resolves the runtime install tree automatically — it prefers `NEXUS_INSTALL_ROOT`, then reads `systemctl show nexus.service -p WorkingDirectory`, then falls back to the checkout — and syncs the freshly built binaries and `frontend/dist` into that tree. Release binaries use same-directory rename cutovers, which are atomic at the file level. `frontend/dist` uses a staged two-rename cutover: there is a brief window where `dist/` does not exist, but readers never see a half-copied directory. On any build / sync / restart / healthcheck failure it restores both the checkout and the install tree to their pre-deploy snapshot before re-invoking the restart helper. The CLI symlink (`~/.local/bin/nexus-native-session`) points at the install-tree binary, not the checkout.
 
 Expose Nexus behind a trusted tunnel or private network such as Cloudflare Tunnel or Tailscale. Do not expose it directly to the public internet.
 

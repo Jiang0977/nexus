@@ -16,7 +16,7 @@ const LANGUAGES = [
   { code: 'zh-CN', label: '简体中文' },
 ]
 
-const UPDATE_CMD = 'git pull && cd frontend && npm run build && cd .. && pm2 restart nexus'
+const UPDATE_CMD = 'git pull && npm run deploy:service -- --frontend'
 
 type UpdateStatus = 'idle' | 'checking' | 'upToDate' | 'available' | 'dirty' | 'error'
 type SessionBackend = 'tmux' | 'native'

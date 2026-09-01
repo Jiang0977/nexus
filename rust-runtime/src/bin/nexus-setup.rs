@@ -1,7 +1,19 @@
+use bcrypt::{DEFAULT_COST, hash};
+use getrandom::getrandom;
 use std::env;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub const LEGACY_DEFAULT_JWT_SECRET: &str =
+    "fcea4c5c28bee4c9fa7adca25c947f87b2a7179202c824d185618d3b3bf2a333";
+pub const LEGACY_DEFAULT_PASSWORD_HASH: &str =
+    "$2b$12$5xRyI8a3yVhcCHqYP/Pdju/mKjxtxjWihXE1VpaXCdnuM6VUVNUsW";
+
+const PASSWORD_CHARSET: &[u8] =
+    b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*";
 
 fn main() {
     if let Err(error) = run() {
@@ -16,12 +28,12 @@ fn run() -> Result<(), String> {
 
     ensure_tmux(&root)?;
     ensure_systemd_user(&root)?;
-    ensure_env_file(&root)?;
+    let generated_password = ensure_env_file(&root)?;
     ensure_frontend_bundle(&root)?;
     install_native_session_cli(&root)?;
     install_user_units(&root)?;
     start_user_units(&root)?;
-    print_completion_banner();
+    print_completion_banner(generated_password.as_deref());
     Ok(())
 }
 
@@ -109,28 +121,245 @@ fn ensure_systemd_user(root: &Path) -> Result<(), String> {
     )
 }
 
-fn ensure_env_file(root: &Path) -> Result<(), String> {
+fn generate_random_bytes(buf: &mut [u8]) -> Result<(), String> {
+    getrandom(buf).map_err(|error| format!("failed to generate secure random bytes: {error}"))
+}
+
+fn generate_jwt_secret() -> Result<String, String> {
+    let mut bytes = [0u8; 32];
+    generate_random_bytes(&mut bytes)?;
+    let mut secret = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write;
+        write!(&mut secret, "{byte:02x}").map_err(|error| error.to_string())?;
+    }
+    Ok(secret)
+}
+
+fn sample_password_char() -> Result<char, String> {
+    let charset_len = PASSWORD_CHARSET.len();
+    let limit = 256 - (256 % charset_len);
+    let mut byte = [0u8; 1];
+    loop {
+        generate_random_bytes(&mut byte)?;
+        let val = byte[0] as usize;
+        if val < limit {
+            return Ok(PASSWORD_CHARSET[val % charset_len] as char);
+        }
+    }
+}
+
+fn generate_secure_password() -> Result<String, String> {
+    let length = 24;
+    let mut password = String::with_capacity(length);
+    for _ in 0..length {
+        password.push(sample_password_char()?);
+    }
+    Ok(password)
+}
+
+fn hash_password(password: &str) -> Result<String, String> {
+    hash(password, DEFAULT_COST)
+        .map_err(|error| format!("failed to bcrypt hash generated password: {error}"))
+}
+
+fn is_insecure_jwt_secret(secret: &str) -> bool {
+    let trimmed = secret.trim();
+    trimmed.is_empty() || trimmed == LEGACY_DEFAULT_JWT_SECRET
+}
+
+fn is_insecure_password_hash(hash_val: &str) -> bool {
+    let trimmed = hash_val.trim();
+    trimmed.is_empty() || trimmed == LEGACY_DEFAULT_PASSWORD_HASH
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct EnvProvisionOutcome {
+    pub content: String,
+    pub generated_password: Option<String>,
+    pub replaced_jwt: bool,
+    pub replaced_password: bool,
+}
+
+pub fn provision_env_content(
+    raw_content: &str,
+    is_new_file: bool,
+) -> Result<EnvProvisionOutcome, String> {
+    let mut lines: Vec<String> = raw_content.lines().map(|line| line.to_string()).collect();
+    let mut found_jwt_idx = None;
+    let mut current_jwt = String::new();
+    let mut found_password_idx = None;
+    let mut current_password_hash = String::new();
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+            if key == "JWT_SECRET" {
+                found_jwt_idx = Some(index);
+                current_jwt = value.to_string();
+            } else if key == "ACC_PASSWORD_HASH" {
+                found_password_idx = Some(index);
+                current_password_hash = value.to_string();
+            }
+        }
+    }
+
+    let needs_jwt = is_new_file || found_jwt_idx.is_none() || is_insecure_jwt_secret(&current_jwt);
+    let needs_password = is_new_file
+        || found_password_idx.is_none()
+        || is_insecure_password_hash(&current_password_hash);
+
+    let mut generated_password = None;
+    let replaced_jwt = needs_jwt;
+    let replaced_password = needs_password;
+
+    if needs_jwt {
+        let new_jwt = generate_jwt_secret()?;
+        if let Some(idx) = found_jwt_idx {
+            lines[idx] = format!("JWT_SECRET={new_jwt}");
+        } else {
+            lines.push(format!("JWT_SECRET={new_jwt}"));
+        }
+    }
+
+    if needs_password {
+        let password = generate_secure_password()?;
+        let password_hash = hash_password(&password)?;
+        if let Some(idx) = found_password_idx {
+            lines[idx] = format!("ACC_PASSWORD_HASH={password_hash}");
+        } else {
+            lines.push(format!("ACC_PASSWORD_HASH={password_hash}"));
+        }
+        generated_password = Some(password);
+    }
+
+    let mut result = lines.join("\n");
+    if raw_content.ends_with('\n') || raw_content.is_empty() {
+        result.push('\n');
+    }
+
+    Ok(EnvProvisionOutcome {
+        content: result,
+        generated_password,
+        replaced_jwt,
+        replaced_password,
+    })
+}
+
+#[cfg(unix)]
+fn open_atomic_temp_file(path: &Path) -> Result<File, std::io::Error> {
+    use std::os::unix::fs::OpenOptionsExt;
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_atomic_temp_file(path: &Path) -> Result<File, std::io::Error> {
+    OpenOptions::new().write(true).create_new(true).open(path)
+}
+
+#[cfg(unix)]
+fn set_file_mode_0600(file_path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let permissions = fs::Permissions::from_mode(0o600);
+    fs::set_permissions(file_path, permissions).map_err(|error| {
+        format!(
+            "failed to set permissions 0600 on {}: {error}",
+            file_path.display()
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn set_file_mode_0600(_file_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn atomic_write_env_file(target_file: &Path, content: &str) -> Result<(), String> {
+    let parent_dir = target_file.parent().unwrap_or_else(|| Path::new("."));
+    let pid = process::id();
+    let mut random_suffix = [0u8; 8];
+    let _ = generate_random_bytes(&mut random_suffix);
+    let hex_suffix: String = random_suffix.iter().map(|b| format!("{b:02x}")).collect();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp_file_name = format!(".env.tmp.{pid}.{now}.{hex_suffix}");
+    let temp_path = parent_dir.join(temp_file_name);
+
+    let write_result = (|| -> Result<(), std::io::Error> {
+        let mut file = open_atomic_temp_file(&temp_path)?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(format!(
+            "failed to write temporary env file {}: {error}",
+            temp_path.display()
+        ));
+    }
+
+    if let Err(error) = set_file_mode_0600(&temp_path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+
+    if let Err(error) = fs::rename(&temp_path, target_file) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(format!(
+            "failed to atomically replace {} with {}: {error}",
+            target_file.display(),
+            temp_path.display()
+        ));
+    }
+
+    set_file_mode_0600(target_file)?;
+    Ok(())
+}
+
+fn ensure_env_file(root: &Path) -> Result<Option<String>, String> {
     step("Setting up .env");
     let env_file = root.join(".env");
-    if env_file.exists() {
-        ok(".env already exists — skipping");
-        return Ok(());
-    }
-
     let env_example = root.join(".env.example");
-    if !env_example.exists() {
-        return Err(".env.example not found — repo may be incomplete".to_string());
+
+    let (content_to_parse, is_new) = if env_file.exists() {
+        let existing = fs::read_to_string(&env_file)
+            .map_err(|error| format!("failed to read existing {}: {error}", env_file.display()))?;
+        (existing, false)
+    } else {
+        if !env_example.exists() {
+            return Err(".env.example not found — repo may be incomplete".to_string());
+        }
+        let example_content = fs::read_to_string(&env_example)
+            .map_err(|error| format!("failed to read {}: {error}", env_example.display()))?;
+        (example_content, true)
+    };
+
+    let outcome = provision_env_content(&content_to_parse, is_new)?;
+
+    atomic_write_env_file(&env_file, &outcome.content)?;
+
+    if is_new {
+        ok(".env created with generated credentials (file permissions 0600)");
+    } else if outcome.replaced_jwt || outcome.replaced_password {
+        ok(".env updated: replaced insecure credentials (file permissions 0600)");
+    } else {
+        ok(".env already contains custom credentials (file permissions 0600)");
     }
 
-    fs::copy(&env_example, &env_file).map_err(|error| {
-        format!(
-            "failed to copy {} to {}: {error}",
-            env_example.display(),
-            env_file.display()
-        )
-    })?;
-    ok(".env created from .env.example (default password: nexus123)");
-    Ok(())
+    Ok(outcome.generated_password)
 }
 
 fn ensure_frontend_bundle(root: &Path) -> Result<(), String> {
@@ -361,8 +590,105 @@ fn start_user_units(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn print_completion_banner() {
+fn print_completion_banner(generated_password: Option<&str>) {
+    let password_line = match generated_password {
+        Some(password) => format!("Password: {password}  (one-time generated, save now)"),
+        None => "Password: (retained existing custom password)".to_string(),
+    };
+
     println!(
-        "\n\x1b[32m\n╔══════════════════════════════════════════╗\n║  Nexus setup complete!\n║\n║  URL:      http://localhost:59000\n║  Password: nexus123  (change in .env)\n║\n║  systemctl --user status nexus\n║  journalctl --user -u nexus -f\n╚══════════════════════════════════════════╝\n\x1b[0m"
+        "\n\x1b[32m\n╔══════════════════════════════════════════════════════════╗\n║  Nexus setup complete!\n║\n║  URL:      http://127.0.0.1:59000\n║  {:<56}║\n║\n║  systemctl --user status nexus\n║  journalctl --user -u nexus -f\n╚══════════════════════════════════════════════════════════╝\n\x1b[0m",
+        password_line
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn provisions_credentials_for_blank_env() {
+        let raw = "HOST=127.0.0.1\nJWT_SECRET=\nACC_PASSWORD_HASH=\n";
+        let outcome = provision_env_content(raw, false).expect("provision");
+        assert!(outcome.replaced_jwt);
+        assert!(outcome.replaced_password);
+        let pass = outcome.generated_password.expect("password");
+        assert!(!pass.is_empty());
+        assert!(!outcome.content.contains("JWT_SECRET=\n"));
+        assert!(!outcome.content.contains("ACC_PASSWORD_HASH=\n"));
+    }
+
+    #[test]
+    fn replaces_legacy_default_credentials() {
+        let raw = format!(
+            "JWT_SECRET={LEGACY_DEFAULT_JWT_SECRET}\nACC_PASSWORD_HASH={LEGACY_DEFAULT_PASSWORD_HASH}\n"
+        );
+        let outcome = provision_env_content(&raw, false).expect("provision");
+        assert!(outcome.replaced_jwt);
+        assert!(outcome.replaced_password);
+        assert!(!outcome.content.contains(LEGACY_DEFAULT_JWT_SECRET));
+        assert!(!outcome.content.contains(LEGACY_DEFAULT_PASSWORD_HASH));
+    }
+
+    #[test]
+    fn preserves_custom_credentials() {
+        let raw = "JWT_SECRET=custom-secret-key-1234567890\nACC_PASSWORD_HASH=$2b$12$customhashvaluehere\n";
+        let outcome = provision_env_content(raw, false).expect("provision");
+        assert!(!outcome.replaced_jwt);
+        assert!(!outcome.replaced_password);
+        assert_eq!(outcome.generated_password, None);
+        assert_eq!(outcome.content, raw);
+    }
+
+    #[test]
+    fn secure_password_generation_uses_valid_charset_and_rejection_sampling() {
+        for _ in 0..20 {
+            let pass = generate_secure_password().expect("generated password");
+            assert_eq!(pass.len(), 24);
+            for ch in pass.chars() {
+                assert!(
+                    PASSWORD_CHARSET.contains(&(ch as u8)),
+                    "invalid char in generated password: {ch}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn atomic_write_env_file_creates_0600_file_and_replaces_content() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let env_path = temp_dir.path().join(".env");
+        let initial_content = "KEY=old_value\n";
+        fs::write(&env_path, initial_content).expect("write initial");
+
+        let new_content = "KEY=new_atomic_value\n";
+        atomic_write_env_file(&env_path, new_content).expect("atomic write");
+
+        let read_back = fs::read_to_string(&env_path).expect("read back");
+        assert_eq!(read_back, new_content);
+
+        #[cfg(unix)]
+        {
+            let metadata = fs::metadata(&env_path).expect("metadata");
+            let mode = metadata.permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[test]
+    fn atomic_write_failure_preserves_old_env_file() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let env_path = temp_dir.path().join(".env");
+        let original_content = "HOST=127.0.0.1\nACC_PASSWORD_HASH=original_untouched\n";
+        fs::write(&env_path, original_content).expect("write initial");
+
+        let non_existent_dir = temp_dir.path().join("missing_dir").join(".env");
+        let res = atomic_write_env_file(&non_existent_dir, "NEW_CONTENT=failed");
+        assert!(res.is_err());
+
+        let read_back = fs::read_to_string(&env_path).expect("read back");
+        assert_eq!(read_back, original_content);
+    }
 }

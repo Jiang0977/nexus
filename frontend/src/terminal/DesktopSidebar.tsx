@@ -18,6 +18,7 @@ interface Props {
   onOpenNewWindow: () => void
   onOpenPromptLibrary: () => void
   onOpenSettings: () => void
+  onOpenTasks?: () => void
   onOpenUpload: () => void
   onOpenWorkspace: () => void
   onToggleTheme: () => void
@@ -42,6 +43,7 @@ export function DesktopSidebar({
   onOpenNewWindow,
   onOpenPromptLibrary,
   onOpenSettings,
+  onOpenTasks,
   onOpenUpload,
   onOpenWorkspace,
   onToggleTheme,
@@ -164,6 +166,20 @@ export function DesktopSidebar({
             >
               <Icon name="clipboard" size={18} />
             </button>
+
+            {onOpenTasks && (
+              <button
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpenTasks()
+                }}
+                className="w-12 h-10 bg-transparent border-none text-nexus-text-2 flex items-center justify-center cursor-pointer"
+                title={t('toolbar.tasks')}
+                aria-label={t('toolbar.tasks')}
+              >
+                <Icon name="clipboard" size={18} />
+              </button>
+            )}
 
             {codexHistoryEnabled && (
               <button

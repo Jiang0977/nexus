@@ -1,6 +1,6 @@
 # ROADMAP — Nexus
 
-最后更新：2026-07-25
+最后更新：2026-09-01
 
 锚点：[NORTH-STAR.md](NORTH-STAR.md)
 
@@ -26,7 +26,7 @@
 
 - native backend 生产化：真实 macOS / Windows / WSL2 验证、native browser smoke、registry migration/repair、灰度与回滚演练。
 - task history ANSI output。
-- 开源发布完善：rate limit、安全基线和发布流程。
+- 开源发布/生产演练：跨平台验证、真实部署演练、回滚演练和发布证据。
 
 native 当前仍是 opt-in/staging。默认生产路径保持 tmux，详见 [native-session-backend-cross-platform.md](designs/native-session-backend-cross-platform.md)。
 

@@ -340,11 +340,17 @@
     "output": "输出",
     "history": "历史任务",
     "noTasks": "暂无任务记录",
-    "cancel": "取消",
+    "backgroundNotice": "关闭面板不会停止后台任务，可稍后从历史查看。",
+    "reusePrompt": "复用提示词",
+    "copyOutput": "复制输出",
+    "backToHistory": "返回历史",
+    "fetchFailed": "获取任务列表失败: {{status}}{{details}}",
+    "deleteFailed": "删除任务失败: {{status}}{{details}}",
+    "networkError": "网络错误: {{message}}",
     "requestFailed": "请求失败: {{status}}",
     "waitingOutput": "等待输出...",
     "noOutput": "(无输出)",
-    "notificationTitle": "Nexus: 任务完成"
+    "streamInterrupted": "任务输出流在完成前意外中断。"
   },
   "files": {
     "title": "上传文件",

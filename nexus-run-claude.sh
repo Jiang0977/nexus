@@ -196,13 +196,19 @@ fi
 echo "╚══════════════════════════════════════════╝"
 echo ""
 
-# ── 主循环：退出后提示续接 ──
+# ── 主循环：首次全新启动，退出后 r 续接最近会话 ──
+RESUME_FLAG=""
 while true; do
-    claude "${CLAUDE_LAUNCH_ARGS[@]}" || true
+    if [ -n "$RESUME_FLAG" ]; then
+        claude "$RESUME_FLAG" "${CLAUDE_LAUNCH_ARGS[@]}" || true
+    else
+        claude "${CLAUDE_LAUNCH_ARGS[@]}" || true
+    fi
     echo ""
-    echo "[Nexus] Claude exited.  r=restart  b=bash shell  q=quit window"
+    echo "[Nexus] Claude exited.  r=resume last session  b=bash shell  q=quit window"
     read -r REPLY
     case "$REPLY" in
+        r) RESUME_FLAG="-c" ;;
         b) exec bash -i ;;
         q) break ;;
     esac

@@ -638,103 +638,6 @@ function parseSseTranscript(transcript) {
     })
 }
 
-async function createFakeTelegramApiServer() {
-  const webhookSetups = []
-  const sendMessages = []
-  const editedMessages = []
-  const fileLookups = []
-  const fileDownloads = []
-  let nextMessageId = 100
-
-  const server = createHttpServer(async (req, res) => {
-    const url = new URL(req.url, `http://${req.headers.host}`)
-    const chunks = []
-    for await (const chunk of req) chunks.push(chunk)
-    const rawBody = Buffer.concat(chunks).toString('utf8')
-    const jsonBody = rawBody ? JSON.parse(rawBody) : null
-
-    if (req.method === 'GET' && url.pathname === '/botbot-token/setWebhook') {
-      webhookSetups.push({
-        webhookUrl: url.searchParams.get('url'),
-        secretToken: url.searchParams.get('secret_token'),
-      })
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({
-        ok: true,
-        webhookUrl: url.searchParams.get('url'),
-        secretToken: url.searchParams.get('secret_token'),
-      }))
-      return
-    }
-
-    if (req.method === 'POST' && url.pathname === '/botbot-token/sendMessage') {
-      sendMessages.push(jsonBody)
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({
-        ok: true,
-        result: {
-          message_id: nextMessageId++,
-        },
-      }))
-      return
-    }
-
-    if (req.method === 'POST' && url.pathname === '/botbot-token/editMessageText') {
-      editedMessages.push(jsonBody)
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({
-        ok: true,
-        result: {
-          message_id: jsonBody?.message_id || 0,
-        },
-      }))
-      return
-    }
-
-    if (req.method === 'GET' && url.pathname === '/botbot-token/getFile') {
-      fileLookups.push({
-        fileId: url.searchParams.get('file_id'),
-      })
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({
-        ok: true,
-        result: {
-          file_path: 'docs/note.txt',
-        },
-      }))
-      return
-    }
-
-    if (req.method === 'GET' && url.pathname === '/file/botbot-token/docs/note.txt') {
-      fileDownloads.push({ path: url.pathname })
-      res.writeHead(200, { 'Content-Type': 'text/plain' })
-      res.end('telegram-file-body')
-      return
-    }
-
-    res.writeHead(404, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: 'not found' }))
-  })
-
-  server.listen(0, '127.0.0.1')
-  await once(server, 'listening')
-  const address = server.address()
-  const port = typeof address === 'object' && address ? address.port : 0
-
-  return {
-    baseUrl: `http://127.0.0.1:${port}`,
-    webhookSetups,
-    sendMessages,
-    editedMessages,
-    fileLookups,
-    fileDownloads,
-    async close() {
-      server.close()
-      await once(server, 'close')
-    },
-  }
-}
-
 test('rust nexus-server serves static assets and spa fallback', async (t) => {
   ensureRustServerBuilt()
 
@@ -879,15 +782,25 @@ test('rust nexus-server negotiates static compression and cache headers', async 
   assert.equal(headerValue(publicFile.headers, 'cache-control'), 'no-cache')
   assertNotImmutableCache(publicFile.headers, '/hello.txt')
 
-  const uploadFile = await requestRaw(port, '/uploads/2026-08-27/notes.txt')
+  const unauthUploadFile = await requestRaw(port, '/uploads/2026-08-27/notes.txt')
+  assert.equal(unauthUploadFile.status, 401)
+
+  const uploadFile = await requestRaw(port, '/uploads/2026-08-27/notes.txt', { Authorization: `Bearer ${token}` })
   assert.equal(uploadFile.status, 200)
   assert.equal(uploadFile.body.toString('utf8'), uploadBody)
   assert.equal(headerValue(uploadFile.headers, 'cache-control'), 'no-cache')
   assertNotImmutableCache(uploadFile.headers, '/uploads')
 
-  const workspaceDownload = await requestRaw(
+  const unauthWorkspaceDownload = await requestRaw(
     port,
     `/workspace?path=${encodeURIComponent(workspaceFile)}&token=${encodeURIComponent(token)}&dl=1`,
+  )
+  assert.equal(unauthWorkspaceDownload.status, 401)
+
+  const workspaceDownload = await requestRaw(
+    port,
+    `/workspace?path=${encodeURIComponent(workspaceFile)}&dl=1`,
+    { Authorization: `Bearer ${token}` },
   )
   assert.equal(workspaceDownload.status, 200)
   assert.equal(workspaceDownload.body.toString('utf8'), workspaceBody)
@@ -1544,7 +1457,10 @@ test('rust nexus-server serves version and upload routes', async (t) => {
   })
   assert.equal(readFileSync(managedUpload.fullPath, 'utf8'), 'managed-bytes')
 
-  const managedStaticResponse = await fetch(`http://127.0.0.1:${port}${managedUpload.url}`)
+  const unauthManagedStaticResponse = await fetch(`http://127.0.0.1:${port}${managedUpload.url}`)
+  assert.equal(unauthManagedStaticResponse.status, 401)
+
+  const managedStaticResponse = await fetch(`http://127.0.0.1:${port}${managedUpload.url}`, { headers })
   assert.equal(managedStaticResponse.status, 200)
   assert.equal(await managedStaticResponse.text(), 'managed-bytes')
 
@@ -1805,7 +1721,8 @@ test('rust nexus-server serves config and workspace routes', async (t) => {
   assert.equal(existsSync(movedTarget), false)
 
   const servedFileResponse = await fetch(
-    `http://127.0.0.1:${port}/workspace?path=${encodeURIComponent(movedFile)}&token=${encodeURIComponent(token)}&dl=1`,
+    `http://127.0.0.1:${port}/workspace?path=${encodeURIComponent(movedFile)}&dl=1`,
+    { headers: { Authorization: `Bearer ${token}` } },
   )
   assert.equal(servedFileResponse.status, 200)
   assert.equal(await servedFileResponse.text(), 'beta\n')
@@ -1815,7 +1732,8 @@ test('rust nexus-server serves config and workspace routes', async (t) => {
   )
 
   const servedMarkdownResponse = await fetch(
-    `http://127.0.0.1:${port}/workspace?path=${encodeURIComponent(binaryFile)}&token=${encodeURIComponent(token)}`,
+    `http://127.0.0.1:${port}/workspace?path=${encodeURIComponent(binaryFile)}`,
+    { headers: { Authorization: `Bearer ${token}` } },
   )
   assert.equal(servedMarkdownResponse.status, 200)
   assert.match(servedMarkdownResponse.headers.get('content-type') || '', /^text\/markdown(?:;|$)/)
@@ -2360,153 +2278,6 @@ test('rust nexus-server syncs codex history from cc-switch into the global codex
   })
 })
 
-test('rust nexus-server serves telegram setup and webhook routes', async (t) => {
-  ensureRustServerBuilt()
-
-  const projectRoot = createProjectFixture()
-  const workspaceRoot = join(projectRoot, 'workspace')
-  const reviewDir = join(workspaceRoot, 'demo')
-  const dataDir = mkdtempSync(join(tmpdir(), 'nexus-rust-server-telegram-data-'))
-  mkdirSync(reviewDir, { recursive: true })
-  const telegramApi = await createFakeTelegramApiServer()
-  const port = await getFreePort()
-  const password = 'telegram-route-password'
-  const passwordHash = bcrypt.hashSync(password, 8)
-  const { child } = spawnRustServer({
-    NEXUS_PROJECT_ROOT: projectRoot,
-    NEXUS_DATA_DIR: dataDir,
-    WORKSPACE_ROOT: workspaceRoot,
-    TMUX_SESSION: '~',
-    TELEGRAM_BOT_TOKEN: 'bot-token',
-    TELEGRAM_WEBHOOK_SECRET: 'secret-token',
-    TELEGRAM_DEFAULT_SESSION: 'review',
-    NEXUS_TELEGRAM_API_BASE_URL: telegramApi.baseUrl,
-    HOST: '127.0.0.1',
-    PORT: String(port),
-    JWT_SECRET: 'rust-server-secret',
-    ACC_PASSWORD_HASH: passwordHash,
-    NEXUS_TASK_RUNNER_RUST_EXECUTABLE: process.execPath,
-    NEXUS_TASK_RUNNER_RUST_ARGS: JSON.stringify([TASK_FIXTURE]),
-    NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
-    NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
-    FAKE_SESSION_MANAGEMENT_WORKSPACE_ROOT: workspaceRoot,
-  })
-
-  t.after(async () => {
-    await stopChild(child)
-    await telegramApi.close()
-    rmSync(projectRoot, { recursive: true, force: true })
-    rmSync(dataDir, { recursive: true, force: true })
-  })
-
-  await waitForHealthyHttp(port, child)
-
-  const { token } = await login(port, password)
-  const headers = { Authorization: `Bearer ${token}` }
-  const jsonHeaders = {
-    'Content-Type': 'application/json',
-  }
-
-  const setupResponse = await fetch(`http://127.0.0.1:${port}/api/telegram/setup`, {
-    headers: {
-      ...headers,
-      'x-forwarded-proto': 'https',
-      'x-forwarded-host': 'nexus.example.com',
-    },
-  })
-  assert.equal(setupResponse.status, 200)
-  assert.deepEqual(await setupResponse.json(), {
-    webhookUrl: 'https://nexus.example.com/api/webhooks/telegram',
-    telegramResponse: {
-      ok: true,
-      webhookUrl: 'https://nexus.example.com/api/webhooks/telegram',
-      secretToken: 'secret-token',
-    },
-  })
-  assert.deepEqual(telegramApi.webhookSetups, [{
-    webhookUrl: 'https://nexus.example.com/api/webhooks/telegram',
-    secretToken: 'secret-token',
-  }])
-
-  const invalidWebhookResponse = await fetch(`http://127.0.0.1:${port}/api/webhooks/telegram`, {
-    method: 'POST',
-    headers: {
-      ...jsonHeaders,
-      'x-telegram-bot-api-secret-token': 'wrong-secret',
-    },
-    body: JSON.stringify({ message: { chat: { id: 11 }, text: 'ignore me' } }),
-  })
-  assert.equal(invalidWebhookResponse.status, 403)
-  assert.deepEqual(await invalidWebhookResponse.json(), { error: 'forbidden' })
-
-  const textWebhookResponse = await fetch(`http://127.0.0.1:${port}/api/webhooks/telegram`, {
-    method: 'POST',
-    headers: {
-      ...jsonHeaders,
-      'x-telegram-bot-api-secret-token': 'secret-token',
-    },
-    body: JSON.stringify({ message: { chat: { id: 11 }, text: 'fix this' } }),
-  })
-  assert.equal(textWebhookResponse.status, 200)
-  assert.deepEqual(await textWebhookResponse.json(), { ok: true })
-
-  await waitFor(async () => {
-    const response = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })
-    const tasks = await response.json()
-    return tasks[0]?.source === 'telegram' && tasks[0]?.status === 'success' ? tasks : null
-  })
-
-  const historyAfterTextResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })
-  assert.equal(historyAfterTextResponse.status, 200)
-  const historyAfterText = await historyAfterTextResponse.json()
-  assert.equal(historyAfterText[0].prompt, 'fix this')
-  assert.equal(historyAfterText[0].source, 'telegram')
-  assert.equal(historyAfterText[0].session_name, 'review')
-  assert.equal(historyAfterText[0].tmux_session, '~')
-  assert.equal(historyAfterText[0].output, 'fake:fix this')
-
-  await waitFor(() => telegramApi.editedMessages.length >= 1)
-  assert.match(telegramApi.sendMessages[0].text, /执行中/)
-  assert.match(telegramApi.editedMessages[0].text, /执行完成/)
-
-  const uploadWebhookResponse = await fetch(`http://127.0.0.1:${port}/api/webhooks/telegram`, {
-    method: 'POST',
-    headers: {
-      ...jsonHeaders,
-      'x-telegram-bot-api-secret-token': 'secret-token',
-    },
-    body: JSON.stringify({
-      message: {
-        chat: { id: 21 },
-        document: { file_id: 'file-1', file_name: 'note.txt' },
-        caption: 'summarize it',
-      },
-    }),
-  })
-  assert.equal(uploadWebhookResponse.status, 200)
-  assert.deepEqual(await uploadWebhookResponse.json(), { ok: true })
-
-  await waitFor(() => existsSync(join(workspaceRoot, 'note.txt')))
-  await waitFor(async () => {
-    const response = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })
-    const tasks = await response.json()
-    return tasks[0]?.prompt === 'summarize it' && tasks[0]?.status === 'success' ? tasks : null
-  })
-
-  const historyAfterUploadResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })
-  assert.equal(historyAfterUploadResponse.status, 200)
-  const historyAfterUpload = await historyAfterUploadResponse.json()
-  assert.equal(historyAfterUpload[0].prompt, 'summarize it')
-  assert.equal(historyAfterUpload[0].source, 'telegram')
-  assert.equal(historyAfterUpload[0].session_name, 'telegram')
-  assert.equal(historyAfterUpload[0].output, 'fake:summarize it')
-  assert.equal(readFileSync(join(workspaceRoot, 'note.txt'), 'utf8'), 'telegram-file-body')
-  assert.deepEqual(telegramApi.fileLookups, [{ fileId: 'file-1' }])
-  assert.deepEqual(telegramApi.fileDownloads, [{ path: '/file/botbot-token/docs/note.txt' }])
-  assert.equal(telegramApi.sendMessages.some((message) => /正在下载文件/.test(message.text)), true)
-  assert.equal(telegramApi.sendMessages.some((message) => /文件已保存/.test(message.text)), true)
-})
-
 test('rust nexus-server serves task history, SSE task execution, and task deletion', async (t) => {
   ensureRustServerBuilt()
 
@@ -2623,6 +2394,14 @@ test('rust nexus-server serves task history, SSE task execution, and task deleti
 
   const persistedTasks = JSON.parse(readFileSync(join(dataDir, 'tasks.json'), 'utf8'))
   assert.equal(persistedTasks.some((task) => task.id === taskId), false)
+
+  // Deleting non-existent task is idempotent and returns 200
+  const deleteMissingResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/non-existent-task-id`, {
+    method: 'DELETE',
+    headers,
+  })
+  assert.equal(deleteMissingResponse.status, 200)
+  assert.deepEqual(await deleteMissingResponse.json(), { ok: true })
 })
 
 test('rust nexus-server keeps tasks running after the SSE client disconnects', async (t) => {
@@ -2678,6 +2457,7 @@ test('rust nexus-server keeps tasks running after the SSE client disconnects', a
   await delay(50)
 
   let sawRunning = false
+  let runningTaskId = null
   const completedTask = await waitFor(async () => {
     const historyResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })
     assert.equal(historyResponse.status, 200)
@@ -2686,6 +2466,15 @@ test('rust nexus-server keeps tasks running after the SSE client disconnects', a
     if (!task) return false
     if (task.status === 'running') {
       sawRunning = true
+      runningTaskId = task.id
+      // Assert DELETE on running task returns 409 Conflict and task remains in history
+      const deleteAttemptResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/${task.id}`, {
+        method: 'DELETE',
+        headers,
+      })
+      assert.equal(deleteAttemptResponse.status, 409)
+      const deleteAttemptBody = await deleteAttemptResponse.json()
+      assert.deepEqual(deleteAttemptBody, { error: 'task is running' })
       return false
     }
     if (task.status === 'success') {
@@ -2695,10 +2484,22 @@ test('rust nexus-server keeps tasks running after the SSE client disconnects', a
   }, 5000)
 
   assert.equal(sawRunning, true)
+  assert.ok(runningTaskId)
   assert.equal(completedTask.session_name, 'review')
   assert.equal(completedTask.status, 'success')
   assert.equal(completedTask.output, 'fake:keep running')
   assert.equal(completedTask.error, '')
+
+  // Deleting the completed task succeeds with 200
+  const deleteSuccessResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/${runningTaskId}`, {
+    method: 'DELETE',
+    headers,
+  })
+  assert.equal(deleteSuccessResponse.status, 200)
+  assert.deepEqual(await deleteSuccessResponse.json(), { ok: true })
+
+  const historyAfterDoneDelete = await (await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })).json()
+  assert.equal(historyAfterDoneDelete.some((t) => t.id === runningTaskId), false)
 })
 
 test('rust nexus-server proxies session and codex history routes', async (t) => {
@@ -3502,4 +3303,96 @@ test('rust nexus-server wires session delete routes through the real rust sessio
   assert.match(log, /kill-window\|-t solo-project:7/)
   assert.match(log, /list-windows\|-t demo-project -F #\{window_id\}/)
   assert.match(log, /kill-session\|-t demo-project/)
+})
+
+test('rust nexus-server enforces login rate limiting and Retry-After header', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const port = await getFreePort()
+  const password = 'rate-limit-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  // Empty or missing password does not consume failure budget (returns 400)
+  for (let i = 0; i < 3; i++) {
+    const emptyRes = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: '' }),
+    })
+    assert.equal(emptyRes.status, 400)
+
+    const missingRes = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    assert.equal(missingRes.status, 400)
+  }
+
+  // 5 wrong attempts across rotated X-Forwarded-For headers still accumulate under same TCP peer bucket
+  for (let i = 0; i < 5; i++) {
+    const wrongRes = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Forwarded-For': `198.51.100.${i + 1}`,
+      },
+      body: JSON.stringify({ password: 'wrong-password' }),
+    })
+    assert.equal(wrongRes.status, 401)
+  }
+
+  // 6th attempt is rate-limited (429) with Retry-After header even with another spoofed header
+  const blockedRes = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Forwarded-For': '203.0.113.199',
+    },
+    body: JSON.stringify({ password: 'wrong-password' }),
+  })
+  assert.equal(blockedRes.status, 429)
+  const retryAfter = blockedRes.headers.get('retry-after')
+  assert.ok(retryAfter)
+  assert.ok(Number(retryAfter) >= 1 && Number(retryAfter) <= 60)
+  const blockedBody = await blockedRes.json()
+  assert.deepEqual(blockedBody, { error: 'too many login attempts' })
+
+  // Even correct password returns 429 while locked
+  const blockedCorrectRes = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  })
+  assert.equal(blockedCorrectRes.status, 429)
+
+  // Empty or missing password still returns 400 even after threshold reached
+  const emptyAfterBlockedRes = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: '' }),
+  })
+  assert.equal(emptyAfterBlockedRes.status, 400)
+
+  const missingAfterBlockedRes = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  assert.equal(missingAfterBlockedRes.status, 400)
 })

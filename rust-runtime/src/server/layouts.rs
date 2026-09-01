@@ -310,12 +310,7 @@ mod tests {
             runtime_manager,
             task_manager: TaskManager::new(PathBuf::from("/tmp/nexus/tasks.json"), task_runtime)
                 .await,
-            telegram_bridge: Arc::new(TelegramBridge::new(
-                String::new(),
-                String::new(),
-                String::new(),
-                "https://api.telegram.org".to_string(),
-            )),
+            login_limiter: Arc::new(LoginRateLimiter::new()),
         })
     }
 

@@ -1,5 +1,3 @@
-use std::path::Path;
-
 pub fn sanitize_workspace_upload_filename(original_name: &str) -> String {
     original_name
         .chars()
@@ -26,39 +24,6 @@ pub fn sanitize_managed_upload_filename(original_name: &str) -> String {
             _ => character,
         })
         .collect()
-}
-
-pub fn sanitize_telegram_switch_target(text: &str) -> String {
-    text.trim()
-        .strip_prefix("/switch ")
-        .unwrap_or("")
-        .trim()
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '-')
-        .collect()
-}
-
-pub fn sanitize_telegram_filename(filename: &str, fallback: &str) -> String {
-    let candidate = Path::new(filename)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or(fallback)
-        .trim();
-    let sanitized = candidate
-        .chars()
-        .map(|ch| {
-            if ch == '/' || ch == '\\' || ch.is_control() {
-                '_'
-            } else {
-                ch
-            }
-        })
-        .collect::<String>();
-    if sanitized.is_empty() {
-        fallback.to_string()
-    } else {
-        sanitized
-    }
 }
 
 pub fn sanitize_project_name(raw: Option<String>) -> Option<String> {
@@ -161,9 +126,8 @@ mod tests {
     use super::{
         MAX_OUTPUT_SNAPSHOT_TAIL_CHARS, clamp_output_snapshot_tail_chars,
         parse_output_snapshot_tail_chars, sanitize_managed_upload_filename, sanitize_project_name,
-        sanitize_telegram_filename, sanitize_telegram_switch_target, sanitize_window_name,
-        sanitize_workspace_upload_filename, truncate_head, truncate_head_with_notice,
-        truncate_tail, truncate_websocket_close_reason,
+        sanitize_window_name, sanitize_workspace_upload_filename, truncate_head,
+        truncate_head_with_notice, truncate_tail, truncate_websocket_close_reason,
     };
 
     #[test]
@@ -175,15 +139,6 @@ mod tests {
         assert_eq!(
             sanitize_managed_upload_filename("capture?.png"),
             "capture_.png"
-        );
-    }
-
-    #[test]
-    fn sanitizes_telegram_values() {
-        assert_eq!(sanitize_telegram_switch_target("/switch demo-1"), "demo-1");
-        assert_eq!(
-            sanitize_telegram_filename("../unsafe/file.txt", "fallback.bin"),
-            "file.txt"
         );
     }
 

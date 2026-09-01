@@ -16,19 +16,36 @@ function findKey(id) {
 
 const t = (value) => `translated:${value}`
 
-test('terminal input shortcuts show their readable key and function label', () => {
+test('icon-only terminal input shortcuts show only their readable key label', () => {
   const esc = findKey('esc')
+  const up = findKey('up')
+  const slash = findKey('slash')
+  const backslash = findKey('backslash')
+  const tab = findKey('tab')
+  const enter = findKey('enter')
+
+  assert.equal(isToolbarTerminalInput(esc), true)
+  assert.equal(getToolbarButtonText(esc, t), 'Esc')
+  assert.equal(getToolbarButtonText(up, t), '↑')
+  assert.equal(getToolbarButtonText(slash, t), '/')
+  assert.equal(getToolbarButtonText(backslash, t), '\\')
+  assert.equal(getToolbarButtonText(tab, t), 'Tab')
+  assert.equal(getToolbarButtonText(enter, t), '↵')
+})
+
+test('non-icon-only terminal input shortcuts show their readable key and function label', () => {
   const ctrlO = findKey('ctrl-o')
   const altB = findKey('alt-b')
   const shiftTab = findKey('shift-tab')
   const bang = findKey('bang')
+  const ctrlA = findKey('ctrl-a')
 
-  assert.equal(isToolbarTerminalInput(esc), true)
-  assert.equal(getToolbarButtonText(esc, t), 'Esc · translated:toolbarKeys.escapeVim')
+  assert.equal(isToolbarTerminalInput(ctrlO), true)
   assert.equal(getToolbarButtonText(ctrlO, t), 'Ctrl+O · translated:toolbarKeys.toggleVerbose')
   assert.equal(getToolbarButtonText(altB, t), 'Alt+B · translated:toolbarKeys.wordBack')
   assert.equal(getToolbarButtonText(shiftTab, t), 'Shift+Tab · translated:toolbarKeys.togglePermission')
   assert.equal(getToolbarButtonText(bang, t), '! · translated:toolbarKeys.bashMode')
+  assert.equal(getToolbarButtonText(ctrlA, t), 'Ctrl+A · translated:toolbarKeys.lineStart')
 })
 
 test('local toolbar actions show translated function text', () => {

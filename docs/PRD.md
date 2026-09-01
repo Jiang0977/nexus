@@ -16,7 +16,7 @@
 
 **用户即开发者本人**（单用户/个人服务器）
 - 同时跑多个本地 coding agent，需要随时从任意设备查看进度、发送指令
-- 外出时通过手机/Telegram 给 AI 下任务，回家后在 PC 上接续
+- 外出时通过手机 Web 给 AI 下任务，回家后在 PC 上接续
 - 不想保持 SSH 连接，关掉浏览器后 Agent 继续运行
 
 ---
@@ -34,8 +34,8 @@
 | F-05 | 移动端滚动与缩放 | 单指滑动浏览历史；双指捏合调字号（8–32px） |
 | F-06 | Session 管理 API | `POST/GET/DELETE /api/sessions`；tmux 新建/切换/关闭 window |
 | F-07 | 工具栏服务端持久化 | 配置存 `data/toolbar-config.json`（volume），跨设备共享 |
-| F-08 | PWA 支持 | manifest.json + Service Worker，可添加主屏幕 |
-| F-12 | claude -c 会话续接 | 自动检测 `.claude-data/.claude`，`claude -c` 续接历史会话 |
+| F-08 | PWA 支持 | manifest + 页面启动注册 /sw.js Service Worker，可添加主屏幕 |
+| F-12 | claude -c 会话续接 | 首次启动新会话；退出后用户按 `r` 使用当前 workspace 的 `claude -c` 续接最近会话 |
 
 ### Should（v1 Complete）
 
@@ -56,8 +56,6 @@
 |---|---|---|
 | F-13 | `claude -p` 非交互派发 | 发一条 prompt，AI 在后台处理，前端显示结果卡片；不占用交互 PTY |
 | F-14 | 上下文附件同步 | 在移动端将图片/文件/文本片段发送给指定 Agent session |
-| F-16 | Telegram Bot 频道 | 外出时在 Telegram 给 AI 下任务，结果回传聊天；调用 `/api/tasks` |
-| F-17 | 多输入渠道统一路由 | 任意渠道（Web/IM/CLI）的 prompt 统一进入 task 队列，结果同步回发起方 |
 
 ### Nice（v4：直觉化项目管理）
 
@@ -71,23 +69,20 @@
 
 ---
 
-## Feature Detail: v3 非交互派发（F-13/F-16/F-17）
+## Feature Detail: Web 异步任务（F-13）
 
 ```
 POST /api/tasks
-  body: { session_name, prompt, attachments? }
-  → spawn claude -p "<prompt>" --cwd <session.cwd>
-  → 流式 SSE 返回结果
-  → 前端结果卡片（不占用交互 PTY）
-  → 同步回发起方渠道（Web / Telegram / ...）
-
-POST /api/webhooks/telegram
-  → 解析消息 + 附件（图片/文件）
-  → 调用 POST /api/tasks
-  → 结果回传 Telegram 对话
+  body: { session_name, prompt, tmux_session }
+  → SSE start/output/error/done 流式输出
+  → Web TaskPanel 交互（history/view/reuse/delete）
 ```
 
-**设计原则**：任务派发与交互终端解耦——交互 PTY 继续用于实时 claude 对话，tasks API 用于异步一次性任务，两者共存，各司其职。
+**设计原则与行为**：
+- 任务派发与交互终端解耦：交互 PTY 继续用于实时对话，tasks API 用于异步任务，两者共存。
+- Web TaskPanel 支持 history、view、reuse、delete。
+- 运行中任务不可删除。
+- 关闭面板或 SSE 断开不取消后台任务，可从历史查看。
 
 ---
 
@@ -334,7 +329,6 @@ interface Channel {
 | 移动端 Esc/Ctrl+C 发送成功率 | 100% |
 | 浏览器重连后终端恢复时间 | < 2s |
 | 工具栏配置跨设备同步 | 重连后自动加载 |
-| 从 Telegram 发出 prompt 到收到首个 token | < 5s |
 | PWA 添加主屏并可用 | iOS Safari / Android Chrome |
 
 ---

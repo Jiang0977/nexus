@@ -8,8 +8,7 @@ use crate::project_defaults::{get_project_default_payload, remember_project_defa
 use crate::runtime_config::{AppConfig, RuntimeConfigs, RuntimeServiceConfig};
 use crate::sanitize::{
     parse_output_snapshot_tail_chars, sanitize_managed_upload_filename, sanitize_project_name,
-    sanitize_telegram_filename, sanitize_telegram_switch_target, sanitize_window_name,
-    sanitize_workspace_upload_filename, truncate_head, truncate_head_with_notice, truncate_tail,
+    sanitize_window_name, sanitize_workspace_upload_filename, truncate_head, truncate_tail,
     truncate_websocket_close_reason,
 };
 use crate::shell::{
@@ -20,9 +19,9 @@ use crate::shell::{
 use axum::Router;
 use axum::body::Body;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Json, Multipart, Path as AxumPath, Query, State};
+use axum::extract::{ConnectInfo, Json, Multipart, Path as AxumPath, Query, State};
 use axum::http::header::{
-    AUTHORIZATION, CACHE_CONTROL, CONNECTION, CONTENT_DISPOSITION, CONTENT_TYPE,
+    AUTHORIZATION, CACHE_CONTROL, CONNECTION, CONTENT_DISPOSITION, CONTENT_TYPE, RETRY_AFTER,
 };
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::sse::{Event as SseEvent, Sse};
@@ -33,7 +32,6 @@ use chrono::Utc;
 use futures_core::Stream;
 use jsonwebtoken::{EncodingKey, Header, encode};
 use mime_guess::from_path;
-use reqwest::Client;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -42,13 +40,15 @@ use std::convert::Infallible;
 use std::env;
 use std::error::Error;
 use std::fs as stdfs;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -63,7 +63,6 @@ mod prompts;
 mod runtime;
 mod session_ws;
 mod tasks;
-mod telegram;
 mod version;
 mod workspace;
 
@@ -73,7 +72,6 @@ use self::prompts::*;
 use self::runtime::*;
 use self::session_ws::*;
 use self::tasks::*;
-use self::telegram::*;
 use self::version::*;
 use self::workspace::*;
 
@@ -104,12 +102,6 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     )
     .await;
     let prompt_store = PromptStore::new(config.prompts_file);
-    let telegram_bridge = Arc::new(TelegramBridge::new(
-        config.telegram_bot_token,
-        config.telegram_webhook_secret,
-        config.telegram_default_session,
-        config.telegram_api_base_url,
-    ));
     let bind_addr = format!("{}:{}", config.host, config.port);
     let state = Arc::new(AppState {
         jwt_secret: Arc::new(config.jwt_secret),
@@ -135,16 +127,19 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         frontend_dist_dir: Arc::new(config.project_root.join("frontend").join("dist")),
         runtime_manager: runtime_manager.clone(),
         task_manager,
-        telegram_bridge,
+        login_limiter: Arc::new(LoginRateLimiter::new()),
     });
     let app = build_router(state);
 
     let listener = TcpListener::bind(&bind_addr).await?;
     println!("nexus-server listening on {}", listener.local_addr()?);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     runtime_manager.shutdown_all().await;
     Ok(())
@@ -203,8 +198,6 @@ fn build_router(state: Arc<AppState>) -> Router {
             "/api/prompt-library/{id}",
             put(api_update_prompt).delete(api_delete_prompt),
         )
-        .route("/api/webhooks/telegram", post(api_telegram_webhook))
-        .route("/api/telegram/setup", get(api_telegram_setup))
         .route("/api/version", get(api_version))
         .route("/api/version/latest", get(api_latest_version))
         .route("/api/browse", get(api_browse))

@@ -32,7 +32,7 @@ function formatTime(ts: number): string {
 
 export default function WorkspaceBrowser({ token, onClose, initialPath = '', currentSession }: Props) {
   const { t } = useTranslation()
-  const [workspaceRoot, setWorkspaceRoot] = useState('')
+  const [, setWorkspaceRoot] = useState('')
 
   // 路径状态：null 表示正在初始化
   const [currentPath, setCurrentPath] = useState<string | null>(null)
@@ -331,38 +331,57 @@ export default function WorkspaceBrowser({ token, onClose, initialPath = '', cur
     }
   }
 
-  // 获取文件的完整 URL（带上 token 用于浏览器直接访问）
-  function getFileUrl(name: string): string {
-    if (!currentPath || !workspaceRoot) return ''
-
-    const filePath = currentPath.endsWith('/') ? `${currentPath}${name}` : `${currentPath}/${name}`
-    // 统一使用 /workspace?path=xxx 格式，避免不同路径格式问题
-    return `/workspace?path=${encodeURIComponent(filePath)}&token=${encodeURIComponent(token)}`
-  }
-
   // 打开文件（查看）
-  function openFile(name: string) {
-    const url = getFileUrl(name)
-    if (!url) return
-    const a = document.createElement('a')
-    a.href = url
-    a.target = '_blank'
-    a.rel = 'noopener noreferrer'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+  async function openFile(name: string) {
+    if (!currentPath) return
+    setError('')
+    const filePath = getEntryPath(name)
+    const url = `/workspace?path=${encodeURIComponent(filePath)}`
+    try {
+      const r = await fetch(url, { headers })
+      if (!r.ok) {
+        const errText = await r.text().catch(() => '')
+        throw new Error(errText || `Failed to open file (${r.status})`)
+      }
+      const blob = await r.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.target = '_blank'
+      a.rel = 'noopener noreferrer'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000)
+    } catch (e: any) {
+      setError(e.message || 'Failed to open file')
+    }
   }
 
   // 下载文件
-  function downloadFile(name: string) {
-    const url = getFileUrl(name)
-    if (!url) return
-    const dlUrl = url + '&dl=1'
-    const a = document.createElement('a')
-    a.href = dlUrl
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+  async function downloadFile(name: string) {
+    if (!currentPath) return
+    setError('')
+    const filePath = getEntryPath(name)
+    const url = `/workspace?path=${encodeURIComponent(filePath)}&dl=1`
+    try {
+      const r = await fetch(url, { headers })
+      if (!r.ok) {
+        const errText = await r.text().catch(() => '')
+        throw new Error(errText || `Failed to download file (${r.status})`)
+      }
+      const blob = await r.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000)
+    } catch (e: any) {
+      setError(e.message || 'Failed to download file')
+    }
   }
 
   // 新建文件夹

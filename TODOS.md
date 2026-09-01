@@ -1,6 +1,6 @@
 # TODOS
 
-最后更新：2026-07-25
+最后更新：2026-09-01
 
 ## Open
 
@@ -27,3 +27,10 @@
 - `/api/tasks` SSE 断连不再取消后台任务；已在 2026-05-02 通过 Rust server 任务回归验证闭环
 - 任务运行期 `stdout/stderr` 改为有界滚动缓冲；已在 2026-05-02 通过 Rust 单测与 server 任务回归验证闭环
 - session backend capability ports、Codex HOME 物化、child runtime JSON-line protocol 和浏览器 terminal connection policy 已在 2026-07-25 完成架构收口
+- 2026-09-01 阶段收口（注：以下为当前仓库实现与本地回归验证闭环，不代表已部署）：
+  - 旧外部 IM 接入从源码、配置、文档和测试中完整移除
+  - Web TaskPanel create/SSE/history/view/reuse/delete（关闭面板不取消后台任务）
+  - secure installer credentials+loopback+0600、upload/workspace Bearer、login per-peer rate limit
+  - tasks.json atomic 0600 + running delete 409
+  - PWA /sw.js registration
+  - checkout/install-tree deploy sync+rollback helper

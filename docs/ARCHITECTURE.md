@@ -80,7 +80,6 @@ bash start.sh
 | `rust-runtime/src/server/mod.rs` | server 入口、router 装配、服务启动与 graceful shutdown |
 | `rust-runtime/src/server/runtime.rs` | server 共享核心：`AppState`、managed runtimes、请求 DTO 与通用 helper |
 | `rust-runtime/src/server/tasks.rs` | task runtime 相关 HTTP / SSE 行为 |
-| `rust-runtime/src/server/telegram.rs` | Telegram setup 与桥接入口 |
 | `rust-runtime/src/server/config.rs` | 配置读取、profile / feature config 入口 |
 | `rust-runtime/src/server/layouts.rs` | PC split-view active layout API 与 `data/workspace-layouts.json` 持久化 |
 | `rust-runtime/src/server/prompts.rs` | 单用户提示词库的鉴权 CRUD/排序、校验、并发锁与 `data/prompts.json` 原子持久化 |
@@ -154,6 +153,9 @@ bash start.sh
 
 | 路径 | 作用 |
 |---|---|
+| `frontend/src/main.tsx` | 应用挂载入口，并在页面 load 事件触发时注册 `/sw.js` Service Worker |
+| `frontend/src/TaskPanel.tsx` | 异步任务 Web 面板：通过 Bearer 鉴权进行 create / history / delete，并通过 SSE 接收 stdout/stderr；断开连接只停止本地流式消费，不取消后台任务 |
+| `frontend/src/WorkspaceBrowser.tsx` | 工作区文件管理：文件树、编辑、上传与管理；文件查看/下载使用 Authorization Bearer fetch 与 Blob URL，JWT 不进入 URL query |
 | `frontend/src/Terminal.tsx` | 顶层编排：overlay、drawer、sidebar、toolbar、lazy 面板装配 |
 | `frontend/src/PromptLibrary.tsx` | 提示词库列表/编辑器、搜索、拖拽排序、复制、列表直插当前终端、脏状态与响应式交互 |
 | `frontend/src/promptLibrary/api.ts` | 提示词库鉴权 REST client、类型与前后端共享长度边界 |

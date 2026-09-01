@@ -29,11 +29,11 @@ Browser / PWA
 - 基于 xterm.js 的浏览器终端：移动端触控、scrollback、上传、可配置工具栏。
 - 项目与频道管理：项目对应目录，每个项目下有多个终端频道。
 - PC split view：single / vertical / horizontal / 2x2 / 3x3 多 pane 终端。
-- 异步任务执行：`/api/tasks`、SSE streaming、Telegram bridge。
-- 文件浏览器：浏览、编辑、上传、重命名、移动、复制、删除工作区文件。
+- 异步任务执行：Web 面板创建、SSE stdout/stderr 流式输出、历史记录查看/复用/删除；关闭面板后后台任务继续运行。
+- 文件浏览器：浏览、编辑、上传、重命名、移动、复制、删除工作区文件；文件查看与下载使用 `Authorization: Bearer` fetch 与 Blob URL，JWT 不放入 URL query。
 - 提示词库：保存、编辑、搜索、复制提示词，并可在不自动提交的前提下插入当前终端。
 - Codex / Claude profile 启动器，包含 Codex history / resume 流程。
-- PWA、深色/浅色主题。
+- PWA、深色/浅色主题，页面启动时注册 `/sw.js` Service Worker。
 - Rust 优先运行链：`nexus-server` 直接伺服 `frontend/dist/`。
 
 ## 终端后端
@@ -62,17 +62,16 @@ nexus-native-session attach <project> <channel-index>
 ```bash
 git clone https://github.com/Jiang0977/nexus.git
 cd nexus
-cp .env.example .env
 ./setup.sh
 ```
 
 打开：
 
 ```text
-http://localhost:59000
+http://127.0.0.1:59000
 ```
 
-`./setup.sh` 会处理 `.env`、安装 `systemd --user` unit、安装 native session CLI symlink，并启动：
+`./setup.sh` 会自动生成安全凭据（并在终端展示一次性随机密码）、写入 `.env`、安装 `systemd --user` unit、安装 native session CLI symlink，并启动：
 
 - `nexus.service`
 - `nexus-tmux.service`
@@ -131,6 +130,8 @@ npm run deploy:service -- --frontend
 ```bash
 npm run deploy:service -- --restart-native-pty
 ```
+
+部署脚本会自动解析运行时安装树：优先 `NEXUS_INSTALL_ROOT`，否则通过 `systemctl show nexus.service -p WorkingDirectory` 自动发现，最后才回退到当前 checkout——并在构建后把新 binaries 和 `frontend/dist` 同步进安装树。release binary 使用同目录 rename 切换，文件级别是 atomic。`frontend/dist` 使用 staged 两次 rename 切换：`dist/` 会有一个极短的不存在窗口，但读者不会看到半复制目录。任意 build / sync / restart / healthcheck 失败都会先回滚 checkout 与安装树到部署前快照，再调用 restart helper。CLI symlink（`~/.local/bin/nexus-native-session`）指向安装树里的 binary，不再指向 checkout。
 
 建议通过 Cloudflare Tunnel、Tailscale 或内网访问，不要直接暴露到公网。
 

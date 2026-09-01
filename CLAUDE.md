@@ -30,7 +30,7 @@ Anchor: `docs/NORTH-STAR.md` — 修改任何文档前先对照锚点三原则
 
 ```
 rust-runtime/src/bin/
-  nexus-server.rs          # 默认后端入口：HTTP + WS + runtimes + Telegram
+  nexus-server.rs          # 默认后端入口：HTTP + WS + runtimes
   nexus-pty-runtime.rs     # tmux/native PTY attach
   nexus-native-pty-supervisor.rs
   nexus-native-session.rs

@@ -297,10 +297,10 @@ fn resolve_provider_base_url(
     if !fallback_base_url.trim().is_empty() {
         return fallback_base_url.trim().to_string();
     }
-    if !configured_provider.is_empty() {
-        if let Some(base_url) = provider_section_base_url(parsed_toml, configured_provider) {
-            return base_url;
-        }
+    if !configured_provider.is_empty()
+        && let Some(base_url) = provider_section_base_url(parsed_toml, configured_provider)
+    {
+        return base_url;
     }
     parsed_toml
         .sections

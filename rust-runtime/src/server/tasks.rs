@@ -1,5 +1,13 @@
 use super::*;
 
+static TASK_TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Debug)]
+pub(super) enum TaskDeleteError {
+    Conflict(String),
+    Internal(String),
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct TaskRuntimeChunkEvent {
@@ -180,14 +188,30 @@ impl TaskManager {
         Ok(tasks.into_iter().rev().take(limit).collect())
     }
 
-    pub(super) async fn delete_task(&self, id: &str) -> Result<(), String> {
+    pub(super) async fn delete_task(&self, id: &str) -> Result<(), TaskDeleteError> {
         let _guard = self.store_lock.lock().await;
-        let tasks = self.load_tasks_locked().await?;
+        let tasks = self
+            .load_tasks_locked()
+            .await
+            .map_err(TaskDeleteError::Internal)?;
+        let target = tasks
+            .iter()
+            .find(|task| task.get("id").and_then(Value::as_str) == Some(id));
+        if let Some(task) = target {
+            if task.get("status").and_then(Value::as_str) == Some("running") {
+                return Err(TaskDeleteError::Conflict("task is running".to_string()));
+            }
+        } else {
+            return Ok(());
+        }
+
         let filtered = tasks
             .into_iter()
             .filter(|task| task.get("id").and_then(Value::as_str) != Some(id))
             .collect::<Vec<_>>();
-        self.save_tasks_locked(filtered).await
+        self.save_tasks_locked(filtered)
+            .await
+            .map_err(TaskDeleteError::Internal)
     }
 
     pub(super) async fn append_task(&self, task: Value) -> Result<(), String> {
@@ -375,16 +399,73 @@ impl TaskManager {
         if tasks.len() > DEFAULT_MAX_TASKS {
             tasks = tasks.split_off(tasks.len() - DEFAULT_MAX_TASKS);
         }
-        if let Some(parent) = self.tasks_file.parent() {
-            fs::create_dir_all(parent)
-                .await
-                .map_err(|error| format!("failed to create task store directory: {error}"))?;
-        }
+        let target_file = self.tasks_file.as_ref();
+        let parent_dir = target_file.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent_dir)
+            .await
+            .map_err(|error| format!("failed to create task store directory: {error}"))?;
+
+        let file_stem = target_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("tasks.json");
+
         let content = serde_json::to_string_pretty(&tasks)
             .map_err(|error| format!("failed to serialize task store: {error}"))?;
-        fs::write(self.tasks_file.as_ref(), format!("{content}\n"))
-            .await
-            .map_err(|error| format!("failed to write task store: {error}"))
+        let mut content_with_newline = content;
+        content_with_newline.push('\n');
+
+        let pid = std::process::id();
+        const MAX_TEMP_RETRIES: usize = 100;
+        let mut created: Option<(PathBuf, fs::File)> = None;
+
+        for _ in 0..MAX_TEMP_RETRIES {
+            let seq = TASK_TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let temp_name = format!("{file_stem}.tmp.{pid}.{nanos}.{seq}");
+            let temp_path = parent_dir.join(temp_name);
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            match options.open(&temp_path).await {
+                Ok(file) => {
+                    created = Some((temp_path, file));
+                    break;
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(err) => {
+                    return Err(format!("failed to create temporary task store file: {err}"));
+                }
+            }
+        }
+
+        let (temp_path, mut file) = created.ok_or_else(|| {
+            "exhausted retries trying to create unique temporary task store file".to_string()
+        })?;
+
+        if let Err(error) = async {
+            file.write_all(content_with_newline.as_bytes()).await?;
+            file.flush().await?;
+            file.sync_all().await?;
+            Ok::<(), std::io::Error>(())
+        }
+        .await
+        {
+            drop(file);
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(format!("failed to write temporary task store: {error}"));
+        }
+        drop(file);
+
+        if let Err(error) = fs::rename(&temp_path, target_file).await {
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(format!("failed to atomically replace task store: {error}"));
+        }
+        Ok(())
     }
 }
 
@@ -447,7 +528,10 @@ pub(super) async fn api_delete_task(
 
     match state.task_manager.delete_task(&id).await {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
-        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
+        Err(TaskDeleteError::Conflict(message)) => json_error(StatusCode::CONFLICT, &message),
+        Err(TaskDeleteError::Internal(error)) => {
+            json_error(StatusCode::INTERNAL_SERVER_ERROR, &error)
+        }
     }
 }
 
@@ -501,7 +585,8 @@ pub(super) async fn api_create_task(
 
 #[cfg(test)]
 mod tests {
-    use super::append_bounded_chunk;
+    use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn append_bounded_chunk_keeps_tail_within_limit() {
@@ -517,5 +602,124 @@ mod tests {
         append_bounded_chunk(&mut buffer, "abcdefghij", 4);
         assert_eq!(buffer, "ghij");
         assert!(buffer.chars().count() <= 4);
+    }
+
+    fn unconfigured_runtime(display_name: &'static str) -> Arc<ManagedRuntime> {
+        Arc::new(ManagedRuntime {
+            display_name,
+            extra_env: Vec::new(),
+            inner: Mutex::new(ManagedRuntimeState {
+                ready_timeout: std::time::Duration::from_millis(1),
+                process: None,
+                status: json!({ "ready": false, "source": "test" }),
+            }),
+        })
+    }
+
+    #[tokio::test]
+    async fn save_tasks_atomic_writes_and_keeps_max_tasks_and_0600_mode() {
+        let dir = tempdir().unwrap();
+        let tasks_file = dir.path().join("tasks.json");
+        let runtime = unconfigured_runtime("task runner");
+        let manager = TaskManager::new(tasks_file.clone(), runtime).await;
+
+        let total_tasks = DEFAULT_MAX_TASKS + 15;
+        let mut task_list = Vec::new();
+        for i in 0..total_tasks {
+            task_list.push(json!({
+                "id": format!("task_{i}"),
+                "status": "success",
+                "prompt": format!("prompt {i}"),
+            }));
+        }
+
+        let _guard = manager.store_lock.lock().await;
+        manager.save_tasks_locked(task_list).await.unwrap();
+
+        let raw = std::fs::read_to_string(&tasks_file).unwrap();
+        let parsed: Vec<Value> = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed.len(), DEFAULT_MAX_TASKS);
+        assert_eq!(parsed[0]["id"], "task_15");
+        assert_eq!(
+            parsed[DEFAULT_MAX_TASKS - 1]["id"],
+            format!("task_{}", total_tasks - 1)
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = std::fs::metadata(&tasks_file).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        }
+
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|r| r.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(entries, vec!["tasks.json"]);
+    }
+
+    #[tokio::test]
+    async fn save_tasks_atomic_failure_cleans_up_temp_on_rename_error() {
+        let dir = tempdir().unwrap();
+        let tasks_file = dir.path().join("tasks.json");
+        let initial_json = json!([{"id": "initial_task", "status": "success"}]);
+        std::fs::write(&tasks_file, serde_json::to_string(&initial_json).unwrap()).unwrap();
+
+        let runtime = unconfigured_runtime("task runner");
+        let manager = TaskManager::new(tasks_file.clone(), runtime).await;
+
+        std::fs::remove_file(&tasks_file).unwrap();
+        std::fs::create_dir(&tasks_file).unwrap();
+
+        let new_tasks = vec![json!([{"id": "new_task", "status": "running"}])];
+        let _guard = manager.store_lock.lock().await;
+        let result = manager.save_tasks_locked(new_tasks).await;
+        assert!(result.is_err());
+
+        let temp_files: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|r| r.unwrap().file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with("tasks.json.tmp."))
+            .collect();
+        assert!(
+            temp_files.is_empty(),
+            "expected no leftover temp files, found: {temp_files:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_task_running_returns_conflict() {
+        let dir = tempdir().unwrap();
+        let tasks_file = dir.path().join("tasks.json");
+        let runtime = unconfigured_runtime("task runner");
+        let manager = TaskManager::new(tasks_file.clone(), runtime).await;
+
+        {
+            let _guard = manager.store_lock.lock().await;
+            manager
+                .save_tasks_locked(vec![
+                    json!({ "id": "t1", "status": "running" }),
+                    json!({ "id": "t2", "status": "success" }),
+                ])
+                .await
+                .unwrap();
+        }
+
+        match manager.delete_task("t1").await {
+            Err(TaskDeleteError::Conflict(msg)) => assert_eq!(msg, "task is running"),
+            other => panic!("expected Conflict error, got {other:?}"),
+        }
+
+        let loaded = manager.load_tasks().await.unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0]["id"], "t1");
+
+        manager.delete_task("non_existent").await.unwrap();
+
+        manager.delete_task("t2").await.unwrap();
+        let loaded2 = manager.load_tasks().await.unwrap();
+        assert_eq!(loaded2.len(), 1);
+        assert_eq!(loaded2[0]["id"], "t1");
     }
 }

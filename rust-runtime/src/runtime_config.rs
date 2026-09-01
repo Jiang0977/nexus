@@ -8,14 +8,18 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const DEFAULT_HOST: &str = "0.0.0.0";
+pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 59000;
 pub const DEFAULT_RUNTIME_READY_TIMEOUT_MS: u64 = 5_000;
 pub const DEFAULT_TMUX_SESSION: &str = "~";
 pub const DEFAULT_SESSION_BACKEND: &str = "tmux";
 pub const DEFAULT_GITHUB_REPO: &str = "Jiang0977/nexus";
-pub const TELEGRAM_API_BASE_URL: &str = "https://api.telegram.org";
 pub const NATIVE_PTY_SUPERVISOR_SOCKET_ENV: &str = "NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET";
+
+pub const LEGACY_DEFAULT_JWT_SECRET: &str =
+    "fcea4c5c28bee4c9fa7adca25c947f87b2a7179202c824d185618d3b3bf2a333";
+pub const LEGACY_DEFAULT_PASSWORD_HASH: &str =
+    "$2b$12$5xRyI8a3yVhcCHqYP/Pdju/mKjxtxjWihXE1VpaXCdnuM6VUVNUsW";
 
 pub struct AppConfig {
     pub host: String,
@@ -30,10 +34,6 @@ pub struct AppConfig {
     pub codex_history_enabled: bool,
     pub github_repo: String,
     pub workspace_root: String,
-    pub telegram_bot_token: String,
-    pub telegram_webhook_secret: String,
-    pub telegram_default_session: String,
-    pub telegram_api_base_url: String,
     pub configs_dir: PathBuf,
     pub codex_configs_dir: PathBuf,
     pub codex_validate_dir: PathBuf,
@@ -47,6 +47,30 @@ pub struct AppConfig {
     pub runtime_configs: RuntimeConfigs,
 }
 
+pub fn validate_jwt_secret(secret: Option<String>) -> Result<String, String> {
+    let secret = secret.unwrap_or_default();
+    let trimmed = secret.trim();
+    if trimmed.is_empty() {
+        return Err("JWT_SECRET must be set and non-empty in environment or .env. Run ./setup.sh to generate secure credentials.".to_string());
+    }
+    if trimmed == LEGACY_DEFAULT_JWT_SECRET {
+        return Err("JWT_SECRET is using the insecure legacy default value. Run ./setup.sh or update .env with a newly generated secret (e.g. openssl rand -hex 32).".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+pub fn validate_password_hash(hash: Option<String>) -> Result<String, String> {
+    let hash = hash.unwrap_or_default();
+    let trimmed = hash.trim();
+    if trimmed.is_empty() {
+        return Err("ACC_PASSWORD_HASH must be set and non-empty in environment or .env. Run ./setup.sh to generate secure credentials.".to_string());
+    }
+    if trimmed == LEGACY_DEFAULT_PASSWORD_HASH {
+        return Err("ACC_PASSWORD_HASH is using the insecure legacy default value (nexus123). Run ./setup.sh or generate a new bcrypt password hash in .env.".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
 impl AppConfig {
     pub fn load() -> Result<Self, String> {
         let project_root = resolve_project_root()?;
@@ -58,10 +82,8 @@ impl AppConfig {
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(DEFAULT_PORT);
         let data_dir = resolve_data_dir(&project_root, &dotenv);
-        let jwt_secret = env_or_dotenv("JWT_SECRET", &dotenv)
-            .ok_or_else(|| "JWT_SECRET must be set in environment or .env".to_string())?;
-        let password_hash = env_or_dotenv("ACC_PASSWORD_HASH", &dotenv)
-            .ok_or_else(|| "ACC_PASSWORD_HASH must be set in environment or .env".to_string())?;
+        let jwt_secret = validate_jwt_secret(env_or_dotenv("JWT_SECRET", &dotenv))?;
+        let password_hash = validate_password_hash(env_or_dotenv("ACC_PASSWORD_HASH", &dotenv))?;
 
         let session_backend_config_file = data_dir.join("session-backend.json");
         let session_backend = env_or_dotenv("NEXUS_SESSION_BACKEND", &dotenv)
@@ -89,13 +111,6 @@ impl AppConfig {
                 .unwrap_or_else(|| DEFAULT_GITHUB_REPO.to_string()),
             workspace_root: env_or_dotenv("WORKSPACE_ROOT", &dotenv)
                 .unwrap_or_else(|| "/workspace".to_string()),
-            telegram_bot_token: env_or_dotenv("TELEGRAM_BOT_TOKEN", &dotenv).unwrap_or_default(),
-            telegram_webhook_secret: env_or_dotenv("TELEGRAM_WEBHOOK_SECRET", &dotenv)
-                .unwrap_or_default(),
-            telegram_default_session: env_or_dotenv("TELEGRAM_DEFAULT_SESSION", &dotenv)
-                .unwrap_or_default(),
-            telegram_api_base_url: env_or_dotenv("NEXUS_TELEGRAM_API_BASE_URL", &dotenv)
-                .unwrap_or_else(|| TELEGRAM_API_BASE_URL.to_string()),
             configs_dir: data_dir.join("configs"),
             codex_configs_dir: data_dir.join("codex-configs"),
             codex_validate_dir: data_dir.join("codex-validate"),
@@ -238,13 +253,40 @@ impl RuntimeServiceConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_GITHUB_REPO, DEFAULT_PORT, resolve_native_pty_supervisor_socket_path};
+    use super::{
+        DEFAULT_GITHUB_REPO, DEFAULT_HOST, DEFAULT_PORT, LEGACY_DEFAULT_JWT_SECRET,
+        LEGACY_DEFAULT_PASSWORD_HASH, resolve_native_pty_supervisor_socket_path,
+        validate_jwt_secret, validate_password_hash,
+    };
     use std::path::Path;
 
     #[test]
     fn runtime_defaults_match_repository_defaults() {
+        assert_eq!(DEFAULT_HOST, "127.0.0.1");
         assert_eq!(DEFAULT_PORT, 59000);
         assert_eq!(DEFAULT_GITHUB_REPO, "Jiang0977/nexus");
+    }
+
+    #[test]
+    fn validate_jwt_secret_rejects_none_empty_and_legacy_default() {
+        assert!(validate_jwt_secret(None).is_err());
+        assert!(validate_jwt_secret(Some("   ".to_string())).is_err());
+        assert!(validate_jwt_secret(Some(LEGACY_DEFAULT_JWT_SECRET.to_string())).is_err());
+        assert_eq!(
+            validate_jwt_secret(Some(" valid-secret-key ".to_string())).unwrap(),
+            "valid-secret-key"
+        );
+    }
+
+    #[test]
+    fn validate_password_hash_rejects_none_empty_and_legacy_default() {
+        assert!(validate_password_hash(None).is_err());
+        assert!(validate_password_hash(Some("   ".to_string())).is_err());
+        assert!(validate_password_hash(Some(LEGACY_DEFAULT_PASSWORD_HASH.to_string())).is_err());
+        assert_eq!(
+            validate_password_hash(Some(" valid-password-hash ".to_string())).unwrap(),
+            "valid-password-hash"
+        );
     }
 
     #[test]

@@ -13,8 +13,128 @@ pub(super) const TASK_INTERRUPT_MESSAGE: &str = "(服务重启，任务中断)";
 pub(super) const CODEX_LOGIN_STATUS_TIMEOUT_MS: u64 = 15_000;
 pub(super) const CODEX_EXEC_VALIDATE_TIMEOUT_MS: u64 = 120_000;
 pub(super) const CC_SWITCH_SYNC_SOURCE: &str = "cc-switch";
-pub(super) const TELEGRAM_RUNNING_INTERVAL_MS: u64 = 5_000;
-pub(super) const TELEGRAM_START_MESSAGE: &str = "👋 *Nexus Bot* 已就绪\n\n发送任意文字，我会用 `claude -p` 在你的服务器上执行并回复结果。\n\n发送图片或文件，我会保存到当前 session 目录。\n\n`/sessions` — 查看 tmux 窗口列表\n`/switch <编号>` — 切换目标窗口";
+pub(super) const LOGIN_RATE_LIMIT_WINDOW_SECS: u64 = 60;
+pub(super) const LOGIN_RATE_LIMIT_MAX_ATTEMPTS: usize = 5;
+
+#[derive(Debug, Clone)]
+pub(super) struct LoginAttemptRecord {
+    pub(super) count: usize,
+    pub(super) first_attempt: Instant,
+}
+
+#[derive(Debug)]
+pub(super) struct LoginRateLimiter {
+    attempts: StdMutex<HashMap<IpAddr, LoginAttemptRecord>>,
+    window: Duration,
+    max_attempts: usize,
+}
+
+impl Default for LoginRateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LoginRateLimiter {
+    pub(super) fn new() -> Self {
+        Self::with_config(
+            Duration::from_secs(LOGIN_RATE_LIMIT_WINDOW_SECS),
+            LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+        )
+    }
+
+    pub(super) fn with_config(window: Duration, max_attempts: usize) -> Self {
+        Self {
+            attempts: StdMutex::new(HashMap::new()),
+            window,
+            max_attempts,
+        }
+    }
+
+    pub(super) fn check(&self, ip: IpAddr) -> Result<(), Duration> {
+        self.check_at(ip, Instant::now())
+    }
+
+    pub(super) fn check_at(&self, ip: IpAddr, now: Instant) -> Result<(), Duration> {
+        let mut map = self
+            .attempts
+            .lock()
+            .unwrap_or_else(|poisoned: std::sync::PoisonError<_>| poisoned.into_inner());
+        Self::prune_expired(&mut map, now, self.window);
+        let Some(record) = map.get(&ip) else {
+            return Ok(());
+        };
+        if record.count < self.max_attempts {
+            return Ok(());
+        }
+        let Some(elapsed) = now.checked_duration_since(record.first_attempt) else {
+            return Ok(());
+        };
+        if elapsed < self.window {
+            return Err(self.window - elapsed);
+        }
+        Ok(())
+    }
+
+    pub(super) fn record_failure(&self, ip: IpAddr) {
+        self.record_failure_at(ip, Instant::now());
+    }
+
+    pub(super) fn record_failure_at(&self, ip: IpAddr, now: Instant) {
+        let mut map = self
+            .attempts
+            .lock()
+            .unwrap_or_else(|poisoned: std::sync::PoisonError<_>| poisoned.into_inner());
+        Self::prune_expired(&mut map, now, self.window);
+        let entry = map.entry(ip).or_insert(LoginAttemptRecord {
+            count: 0,
+            first_attempt: now,
+        });
+        let elapsed_opt = now.checked_duration_since(entry.first_attempt);
+        if elapsed_opt.is_some_and(|elapsed| elapsed >= self.window) {
+            entry.count = 0;
+            entry.first_attempt = now;
+        }
+        entry.count = entry.count.saturating_add(1);
+    }
+
+    pub(super) fn record_success(&self, ip: IpAddr) {
+        let mut map = self
+            .attempts
+            .lock()
+            .unwrap_or_else(|poisoned: std::sync::PoisonError<_>| poisoned.into_inner());
+        map.remove(&ip);
+    }
+
+    #[cfg(test)]
+    pub(super) fn prune_expired_entries(&self, now: Instant) {
+        let mut map = self
+            .attempts
+            .lock()
+            .unwrap_or_else(|poisoned: std::sync::PoisonError<_>| poisoned.into_inner());
+        Self::prune_expired(&mut map, now, self.window);
+    }
+
+    #[cfg(test)]
+    pub(super) fn entry_count(&self) -> usize {
+        let map = self
+            .attempts
+            .lock()
+            .unwrap_or_else(|poisoned: std::sync::PoisonError<_>| poisoned.into_inner());
+        map.len()
+    }
+
+    fn prune_expired(
+        map: &mut HashMap<IpAddr, LoginAttemptRecord>,
+        now: Instant,
+        window: Duration,
+    ) {
+        map.retain(|_, record| {
+            now.checked_duration_since(record.first_attempt)
+                .is_some_and(|elapsed| elapsed < window)
+        });
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct AppState {
@@ -41,7 +161,7 @@ pub(super) struct AppState {
     pub(super) frontend_dist_dir: Arc<PathBuf>,
     pub(super) runtime_manager: Arc<RuntimeManager>,
     pub(super) task_manager: Arc<TaskManager>,
-    pub(super) telegram_bridge: Arc<TelegramBridge>,
+    pub(super) login_limiter: Arc<LoginRateLimiter>,
 }
 
 impl AppState {
@@ -746,7 +866,6 @@ pub(super) struct PathQuery {
 #[derive(Deserialize, Default)]
 pub(super) struct WorkspaceServeQuery {
     pub(super) path: Option<String>,
-    pub(super) token: Option<String>,
     pub(super) dl: Option<String>,
 }
 
@@ -1495,89 +1614,6 @@ pub(super) async fn write_toolbar_config_file(
         .map_err(|error| error.to_string())
 }
 
-pub(super) fn header_string(headers: &HeaderMap, key: &str) -> Option<String> {
-    headers
-        .get(key)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-pub(super) fn forwarded_header_value(headers: &HeaderMap, key: &str) -> Option<String> {
-    header_string(headers, key)
-        .map(|value| value.split(',').next().unwrap_or("").trim().to_string())
-}
-
-pub(super) fn json_value_to_string(value: Option<&Value>) -> Option<String> {
-    match value {
-        Some(Value::String(text)) => Some(text.clone()),
-        Some(Value::Number(number)) => Some(number.to_string()),
-        _ => None,
-    }
-}
-
-pub(super) fn telegram_progress_message(session_name: &str, preview: Option<&str>) -> String {
-    match preview.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(preview) => format!("⏳ *执行中*（session: `{session_name}`）\n```\n{preview}\n```"),
-        None => format!("⏳ *执行中*（session: `{session_name}`）\n\n_等待输出..._"),
-    }
-}
-
-pub(super) fn telegram_done_message(
-    session_name: &str,
-    exit_code: Option<i32>,
-    result: &str,
-) -> String {
-    let status = if exit_code == Some(0) { "✅" } else { "❌" };
-    format!("{status} *执行完成*（session: `{session_name}`）\n```\n{result}\n```")
-}
-
-pub(super) fn telegram_file_target(message: &TelegramMessage) -> Result<(String, String), String> {
-    if let Some(photos) = message.photo.as_ref().filter(|photos| !photos.is_empty()) {
-        let Some(photo) = photos.last() else {
-            return Err("telegram photo missing".to_string());
-        };
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_millis())
-            .unwrap_or(0);
-        return Ok((photo.file_id.clone(), format!("tg_photo_{millis}.jpg")));
-    }
-
-    if let Some(document) = message.document.as_ref() {
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_millis())
-            .unwrap_or(0);
-        return Ok((
-            document.file_id.clone(),
-            document
-                .file_name
-                .clone()
-                .unwrap_or_else(|| format!("tg_file_{millis}")),
-        ));
-    }
-
-    Err("telegram file missing".to_string())
-}
-
-pub(super) fn require_workspace_auth(
-    headers: &HeaderMap,
-    query_token: Option<&str>,
-    state: &AppState,
-) -> Option<Response> {
-    if let Some(token) = query_token.filter(|value| !value.is_empty()) {
-        if validate_auth_token::<AuthClaims>(token, state.jwt_secret.as_ref()) {
-            return None;
-        }
-        return Some((StatusCode::UNAUTHORIZED, "unauthorized").into_response());
-    }
-
-    authorize(headers, state)
-        .err()
-        .map(|_| (StatusCode::UNAUTHORIZED, "unauthorized").into_response())
-}
-
 pub(super) fn resolve_workspace_input_path(
     workspace_root: &str,
     input_path: Option<&str>,
@@ -1727,5 +1763,137 @@ mod hashed_frontend_asset_tests {
         assert!(!has_vite_content_hash_suffix("configuration-defaults.js"));
         assert!(!has_vite_content_hash_suffix("vendor-configuration.js"));
         assert!(!has_vite_content_hash_suffix("app-defaults-bundle.js"));
+    }
+}
+
+#[cfg(test)]
+mod login_rate_limiter_tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn allows_attempts_under_threshold() {
+        let limiter = LoginRateLimiter::with_config(Duration::from_secs(60), 5);
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let base_time = Instant::now();
+
+        for i in 0..4 {
+            assert!(
+                limiter
+                    .check_at(ip, base_time + Duration::from_secs(i))
+                    .is_ok()
+            );
+            limiter.record_failure_at(ip, base_time + Duration::from_secs(i));
+        }
+        assert!(
+            limiter
+                .check_at(ip, base_time + Duration::from_secs(4))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn blocks_after_reaching_threshold_and_reports_remaining_time() {
+        let limiter = LoginRateLimiter::with_config(Duration::from_secs(60), 5);
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let base_time = Instant::now();
+
+        for i in 0..5 {
+            limiter.record_failure_at(ip, base_time + Duration::from_secs(i));
+        }
+
+        let check_time = base_time + Duration::from_secs(10);
+        let check_result = limiter.check_at(ip, check_time);
+        assert!(check_result.is_err());
+        assert_eq!(check_result.unwrap_err(), Duration::from_secs(50));
+    }
+
+    #[test]
+    fn resets_after_window_expires() {
+        let limiter = LoginRateLimiter::with_config(Duration::from_secs(60), 5);
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let base_time = Instant::now();
+
+        for i in 0..5 {
+            limiter.record_failure_at(ip, base_time + Duration::from_secs(i));
+        }
+
+        let check_time = base_time + Duration::from_secs(61);
+        assert!(limiter.check_at(ip, check_time).is_ok());
+
+        // New failure starts new window
+        limiter.record_failure_at(ip, check_time);
+        assert!(
+            limiter
+                .check_at(ip, check_time + Duration::from_secs(1))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn success_clears_failure_record() {
+        let limiter = LoginRateLimiter::with_config(Duration::from_secs(60), 5);
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let base_time = Instant::now();
+
+        for i in 0..5 {
+            limiter.record_failure_at(ip, base_time + Duration::from_secs(i));
+        }
+        assert!(
+            limiter
+                .check_at(ip, base_time + Duration::from_secs(10))
+                .is_err()
+        );
+
+        limiter.record_success(ip);
+        assert!(
+            limiter
+                .check_at(ip, base_time + Duration::from_secs(10))
+                .is_ok()
+        );
+        assert_eq!(limiter.entry_count(), 0);
+    }
+
+    #[test]
+    fn isolates_different_ips() {
+        let limiter = LoginRateLimiter::with_config(Duration::from_secs(60), 5);
+        let ip1 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        let ip2 = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2));
+        let base_time = Instant::now();
+
+        for i in 0..5 {
+            limiter.record_failure_at(ip1, base_time + Duration::from_secs(i));
+        }
+
+        assert!(
+            limiter
+                .check_at(ip1, base_time + Duration::from_secs(10))
+                .is_err()
+        );
+        assert!(
+            limiter
+                .check_at(ip2, base_time + Duration::from_secs(10))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn prune_removes_expired_entries() {
+        let limiter = LoginRateLimiter::with_config(Duration::from_secs(60), 5);
+        let ip1 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let ip2 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+        let base_time = Instant::now();
+
+        limiter.record_failure_at(ip1, base_time);
+        limiter.record_failure_at(ip2, base_time + Duration::from_secs(30));
+        assert_eq!(limiter.entry_count(), 2);
+
+        limiter.prune_expired_entries(base_time + Duration::from_secs(61));
+        assert_eq!(limiter.entry_count(), 1);
+        assert!(
+            limiter
+                .check_at(ip1, base_time + Duration::from_secs(61))
+                .is_ok()
+        );
     }
 }

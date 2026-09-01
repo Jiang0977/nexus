@@ -108,15 +108,22 @@ npm run deploy:service -- --frontend
 
 行为：
 
-- 先备份当前 Rust release binaries 到 `/tmp/nexus-deploy-backup.*`
+- 解析 `INSTALL_ROOT`，优先级：
+  1. `NEXUS_INSTALL_ROOT`（绝对路径；空、`/`、不存在或不带 `.env` / `start.sh` / `frontend` 等 Nexus 标记会被立即拒绝，cargo 不会启动）
+  2. 通过 `sudo -n systemctl show nexus.service -p WorkingDirectory --value` 只读发现
+  3. 回退到当前 checkout（`REPO_ROOT`），保持单树安装兼容
+- 先把当前 Rust release binaries、安装树 release binaries 和安装树 `frontend/dist` 整树快照到 `/tmp/nexus-deploy-backup.*`
 - 重新构建 `nexus-server`、runtime binaries、native PTY binaries 与 `nexus-codex-home`
-- 安装或更新 `~/.local/bin/nexus-native-session` symlink
-- 调用 `npm run restart:service`
-- 如果重启或探活失败，自动恢复旧 release binaries 并再次重启服务
+- 当 `INSTALL_ROOT != REPO_ROOT` 时，把每个新 release binary 通过同目录临时文件 + chmod + rename 写入安装树；这一步是文件级 atomic 切换。`frontend/dist` 则先写入 `INSTALL_ROOT/frontend/.dist-staging`，再把旧 `dist/` 改名为 `.dist-prev`、把 `.dist-staging` 改名为 `dist/`，最后删除 `.dist-prev`。期间会有一个极短的 `dist/` 不存在窗口，但不会暴露半复制目录；失败后会快速恢复快照
+- 把 `~/.local/bin/nexus-native-session` symlink 指向 `INSTALL_ROOT/rust-runtime/target/release/nexus-native-session`，不再指向 checkout 临时 binary
+- 调用 `npm run restart:service`（默认走 `./scripts/restart-nexus-service.sh`）
+- 任意 build / sync / restart / healthcheck 步骤失败都会触发同样的回滚：恢复 checkout 和安装树的 release binaries、安装树 `frontend/dist`，保留 backup，再调一次 restart helper；`set -e` / `ERR` trap 不会让安装树处于半更新态
+- `--frontend` 仅控制是否先跑 `npm --prefix frontend run build`，并不控制 frontend 同步本身；只要 `INSTALL_ROOT` 是独立安装树，frontend 都会通过 staged 两次 rename 精确切换
 
 注意：
 
-- 这个脚本只自动回滚 Rust release binaries，不会自动回滚工作树里的 shell 脚本或文档改动。
+- 自动回滚范围：checkout 原 release binaries、独立安装树 release binaries、安装树 `frontend/dist`。回滚不覆盖工作树里的 shell 脚本、文档、配置或 systemd unit 文件——这些仍由工作树备份或显式 `git revert` 负责。
+- `NEXUS_INSTALL_ROOT` 优先级最高，覆盖 systemd 自动发现；如果传错路径或目标不是 Nexus 安装树，脚本会在写盘前立即失败。
 - 这个脚本默认保留正在跑的 native supervisor；如果 native supervisor binary 必须随部署重启，并且你接受中断 native sessions，使用 `npm run deploy:service -- --restart-native-pty`。
 - 如果脚本最终失败但服务已被回滚拉起，修复问题后再重新部署。
 

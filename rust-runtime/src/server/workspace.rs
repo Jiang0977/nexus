@@ -303,8 +303,13 @@ pub(super) async fn api_delete_all_files(
 
 pub(super) async fn static_uploads(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     AxumPath(path): AxumPath<String>,
 ) -> Response {
+    if let Some(response) = require_auth(&headers, &state) {
+        return response;
+    }
+
     let Some(safe_path) = sanitize_request_path(&path) else {
         return json_error(StatusCode::NOT_FOUND, "not found");
     };
@@ -364,7 +369,7 @@ pub(super) async fn serve_workspace_file_response(
     query: WorkspaceServeQuery,
     request_path: &str,
 ) -> Response {
-    if let Some(response) = require_workspace_auth(&headers, query.token.as_deref(), &state) {
+    if let Some(response) = require_auth(&headers, &state) {
         return response;
     }
 
