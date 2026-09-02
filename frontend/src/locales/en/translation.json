@@ -44,7 +44,7 @@
     "profileLabelCodex": "Codex Profile (optional)",
     "profileDefault": "Default profile",
     "profileDefaultClaude": "Current system Claude config",
-    "profileDefaultCodex": "Current system Codex config",
+    "profileDefaultCodex": "Current Codex login",
     "profileHelp": "Uses the selected API key and model settings. Session data is stored in this workspace directory.",
     "profileHelpClaude": "Uses the selected API key and model settings. Session data is stored in this workspace directory.",
     "profileHelpCodex": "Uses an isolated Codex HOME with the selected API key and model settings instead of writing to the server user's ~/.codex.",
@@ -90,7 +90,7 @@
     "profileCodex": "Codex Profile",
     "profileDefault": "Default profile",
     "profileDefaultClaude": "Current system Claude config",
-    "profileDefaultCodex": "Current system Codex config"
+    "profileDefaultCodex": "Current Codex login"
   },
   "toolbar": {
     "pasteUpload": "Paste / Upload",
@@ -360,7 +360,13 @@
     "loadProjectsFailed": "Failed to load projects: {{status}}{{details}}",
     "loadChannelsFailed": "Failed to load channels: {{status}}{{details}}",
     "activeBadge": "Active",
-    "windowsCount": "{{count}} windows"
+    "windowsCount": "{{count}} windows",
+    "engine": "Engine:",
+    "engineClaude": "Claude",
+    "engineCodex": "Codex",
+    "profile": "Profile:",
+    "profileDefaultCodex": "Current Codex login",
+    "loadProfilesFailed": "Failed to load profiles: {{status}}{{details}}"
   },
   "files": {
     "title": "Uploaded Files",

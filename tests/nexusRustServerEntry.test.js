@@ -2283,6 +2283,12 @@ test('rust nexus-server serves task history, SSE task execution, and task deleti
 
   const projectRoot = createProjectFixture()
   const dataDir = mkdtempSync(join(tmpdir(), 'nexus-rust-server-task-data-'))
+  const captureFile = join(dataDir, 'task-runtime-calls.jsonl')
+  mkdirSync(join(dataDir, 'codex-configs'), { recursive: true })
+  writeFileSync(
+    join(dataDir, 'codex-configs', 'ops.json'),
+    JSON.stringify({ OPENAI_API_KEY: 'sk-ops-key', MODEL: 'o3' }) + '\n',
+  )
   writeFileSync(
     join(dataDir, 'tasks.json'),
     `${JSON.stringify([
@@ -2314,6 +2320,7 @@ test('rust nexus-server serves task history, SSE task execution, and task deleti
     ACC_PASSWORD_HASH: passwordHash,
     NEXUS_TASK_RUNNER_RUST_EXECUTABLE: process.execPath,
     NEXUS_TASK_RUNNER_RUST_ARGS: JSON.stringify([TASK_FIXTURE]),
+    FAKE_TASK_RUNTIME_CAPTURE_FILE: captureFile,
     NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
     NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
   })
@@ -2402,6 +2409,85 @@ test('rust nexus-server serves task history, SSE task execution, and task deleti
   })
   assert.equal(deleteMissingResponse.status, 200)
   assert.deepEqual(await deleteMissingResponse.json(), { ok: true })
+
+  // 1. Invalid engine returns 400
+  const invalidEngineResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      session_name: 'review',
+      prompt: 'test bad engine',
+      engine: 'invalid-engine',
+      tmux_session: 'demo-project',
+    }),
+  })
+  assert.equal(invalidEngineResponse.status, 400)
+  assert.deepEqual(await invalidEngineResponse.json(), { error: 'invalid engine' })
+
+  // 2. Unknown Codex profile returns 400
+  const unknownProfileResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      session_name: 'review',
+      prompt: 'test unknown profile',
+      engine: 'codex',
+      profile: 'missing-prof',
+      tmux_session: 'demo-project',
+    }),
+  })
+  assert.equal(unknownProfileResponse.status, 400)
+  assert.deepEqual(await unknownProfileResponse.json(), { error: "codex profile 'missing-prof' not found" })
+
+  // 3. Valid Codex task forwards codex engine, profile, codexTaskHome and codexConfigsDir to runtime
+  const createCodexResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      session_name: 'review',
+      prompt: 'codex task prompt',
+      engine: 'codex',
+      profile: 'ops',
+      tmux_session: 'demo-project',
+    }),
+  })
+  assert.equal(createCodexResponse.status, 200)
+  assert.match(createCodexResponse.headers.get('content-type') || '', /text\/event-stream/)
+  const codexEvents = parseSseTranscript(await createCodexResponse.text())
+  const codexTaskId = codexEvents[0].data.taskId
+
+  // Verify captured payloads sent from server to runtime
+  const capturedLines = readFileSync(captureFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.equal(capturedLines.length, 2)
+
+  // First call was claude default task (missing engine -> defaults to claude, profile: "ops", no codex internal paths)
+  const claudeCall = capturedLines[0]
+  assert.equal(claudeCall.method, 'startTask')
+  assert.equal(claudeCall.params.taskId, taskId)
+  assert.equal(claudeCall.params.engine, 'claude')
+  assert.equal(claudeCall.params.profile, 'ops')
+  assert.equal(claudeCall.params.prompt, 'ship it')
+  assert.equal(claudeCall.params.codexTaskHome, undefined)
+  assert.equal(claudeCall.params.codexConfigsDir, undefined)
+
+  // Second call was codex task
+  const codexCall = capturedLines[1]
+  assert.equal(codexCall.method, 'startTask')
+  assert.equal(codexCall.params.taskId, codexTaskId)
+  assert.equal(codexCall.params.engine, 'codex')
+  assert.equal(codexCall.params.profile, 'ops')
+  assert.equal(codexCall.params.prompt, 'codex task prompt')
+  assert.ok(codexCall.params.codexTaskHome.includes('codex-task-runtime'))
+  assert.ok(codexCall.params.codexConfigsDir.includes('codex-configs'))
+
+  // Check persistence of codex task
+  const historyWithCodex = await (await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })).json()
+  const savedCodexTask = historyWithCodex.find((t) => t.id === codexTaskId)
+  assert.ok(savedCodexTask)
+  assert.equal(savedCodexTask.engine, 'codex')
+  assert.equal(savedCodexTask.profile, 'ops')
+  assert.equal(savedCodexTask.prompt, 'codex task prompt')
+  assert.equal(savedCodexTask.status, 'success')
 })
 
 test('rust nexus-server keeps tasks running after the SSE client disconnects', async (t) => {

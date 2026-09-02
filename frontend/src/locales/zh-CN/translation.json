@@ -44,7 +44,7 @@
     "profileLabelCodex": "Codex 配置（可选）",
     "profileDefault": "默认配置",
     "profileDefaultClaude": "当前系统 Claude 配置",
-    "profileDefaultCodex": "当前系统 Codex 配置",
+    "profileDefaultCodex": "当前 Codex 登录",
     "profileHelp": "选择后会使用对应的 API Key 和模型设置，会话数据保存在当前工作区目录。",
     "profileHelpClaude": "选择后会使用对应的 API Key 和模型设置，会话数据保存在当前工作区目录。",
     "profileHelpCodex": "选择后会使用隔离的 Codex HOME、API Key 和模型设置，不会写入全局 ~/.codex。",
@@ -90,7 +90,7 @@
     "profileCodex": "Codex 配置",
     "profileDefault": "默认配置",
     "profileDefaultClaude": "当前系统 Claude 配置",
-    "profileDefaultCodex": "当前系统 Codex 配置"
+    "profileDefaultCodex": "当前 Codex 登录"
   },
   "toolbar": {
     "pasteUpload": "粘贴 / 上传",
@@ -360,7 +360,13 @@
     "loadProjectsFailed": "获取工作区列表失败: {{status}}{{details}}",
     "loadChannelsFailed": "获取窗口列表失败: {{status}}{{details}}",
     "activeBadge": "当前活跃",
-    "windowsCount": "{{count}} 个窗口"
+    "windowsCount": "{{count}} 个窗口",
+    "engine": "引擎:",
+    "engineClaude": "Claude",
+    "engineCodex": "Codex",
+    "profile": "配置文件:",
+    "profileDefaultCodex": "当前 Codex 登录",
+    "loadProfilesFailed": "获取配置文件失败: {{status}}{{details}}"
   },
   "files": {
     "title": "上传文件",

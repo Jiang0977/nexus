@@ -963,6 +963,7 @@ pub(super) struct WindowLaunchBody {
 pub(super) struct TaskBody {
     #[serde(default, alias = "sessionName")]
     pub(super) session_name: Option<String>,
+    pub(super) engine: Option<String>,
     pub(super) prompt: Option<String>,
     pub(super) profile: Option<String>,
     #[serde(default, alias = "tmuxSession")]

@@ -1,6 +1,8 @@
 import { createInterface } from 'node:readline'
+import { appendFileSync } from 'node:fs'
 
 const mode = process.env.FAKE_TASK_RUNTIME_MODE || 'normal'
+const captureFile = process.env.FAKE_TASK_RUNTIME_CAPTURE_FILE || null
 const defaultDelayMs = Number.parseInt(process.env.FAKE_TASK_RUNTIME_DELAY_MS || '10', 10)
 const readyPayload = {
   ready: true,
@@ -92,6 +94,11 @@ rl.on('line', (line) => {
         response(id, true, runtimeStatus())
         return
       case 'startTask': {
+        if (captureFile) {
+          try {
+            appendFileSync(captureFile, JSON.stringify({ method: "startTask", params }) + "\n", "utf8")
+          } catch {}
+        }
         if (mode === 'start-error') {
           response(id, false, { message: 'fake start failure' })
           return

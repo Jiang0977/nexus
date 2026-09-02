@@ -28,7 +28,9 @@ pub(super) struct TaskRunOptions {
     pub(super) session_name: String,
     pub(super) source: String,
     pub(super) tmux_session: String,
+    pub(super) engine: String,
     pub(super) profile: Option<String>,
+    pub(super) codex_configs_dir: Option<PathBuf>,
 }
 
 pub(super) struct TaskRunHandle {
@@ -126,13 +128,15 @@ impl TaskManager {
             session_name,
             source,
             tmux_session,
+            engine,
             profile,
+            codex_configs_dir,
         } = options;
         let task_id = self.next_task_id();
         let created_at = iso_timestamp_now();
         let (sender, receiver) = mpsc::unbounded_channel();
 
-        self.append_task(json!({
+        let mut task_record = json!({
             "id": task_id.clone(),
             "session_name": session_name,
             "prompt": truncate_head(&prompt, MAX_TASK_PROMPT_LENGTH),
@@ -142,8 +146,13 @@ impl TaskManager {
             "createdAt": created_at.clone(),
             "source": source,
             "tmux_session": tmux_session,
-        }))
-        .await?;
+            "engine": engine.clone(),
+        });
+        if let Some(profile_ref) = profile.as_ref() {
+            task_record["profile"] = json!(profile_ref);
+        }
+
+        self.append_task(task_record).await?;
 
         self.running_tasks.lock().await.insert(
             task_id.clone(),
@@ -156,19 +165,40 @@ impl TaskManager {
 
         let manager = Arc::clone(self);
         let task_id_for_runtime = task_id.clone();
+        let codex_configs_dir_str = if engine == "codex" {
+            codex_configs_dir
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string())
+        } else {
+            None
+        };
+        let codex_task_home_str = if engine == "codex" {
+            self.tasks_file
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("codex-task-runtime")
+                .join(&task_id_for_runtime)
+                .to_string_lossy()
+                .to_string()
+        } else {
+            String::new()
+        };
+
         tokio::spawn(async move {
-            let result = manager
-                .runtime
-                .request(
-                    "startTask",
-                    json!({
-                        "taskId": task_id_for_runtime.clone(),
-                        "prompt": prompt,
-                        "cwd": cwd,
-                        "profile": profile,
-                    }),
-                )
-                .await;
+            let mut start_params = json!({
+                "taskId": task_id_for_runtime.clone(),
+                "prompt": prompt,
+                "cwd": cwd,
+                "engine": engine,
+                "profile": profile,
+            });
+            if !codex_task_home_str.is_empty() {
+                start_params["codexTaskHome"] = json!(codex_task_home_str);
+            }
+            if let Some(cfg_dir) = codex_configs_dir_str {
+                start_params["codexConfigsDir"] = json!(cfg_dir);
+            }
+            let result = manager.runtime.request("startTask", start_params).await;
             if let Err(error) = result {
                 manager
                     .finalize_task(&task_id_for_runtime, None, Some(error))
@@ -548,6 +578,42 @@ pub(super) async fn api_create_task(
         return json_error(StatusCode::BAD_REQUEST, "prompt required");
     };
 
+    let engine_raw = body.engine.unwrap_or_default();
+    let engine = if engine_raw.trim().is_empty() {
+        "claude".to_string()
+    } else {
+        match engine_raw.as_str() {
+            "claude" | "codex" => engine_raw,
+            _ => return json_error(StatusCode::BAD_REQUEST, "invalid engine"),
+        }
+    };
+
+    let profile = if engine == "codex" {
+        if let Some(ref prof_raw) = body.profile {
+            let prof = prof_raw.trim();
+            if !prof.is_empty() {
+                let canonical = sanitize_profile_id(prof);
+                if prof != canonical
+                    || read_codex_config(state.codex_configs_dir.as_ref(), &canonical).is_none()
+                {
+                    return json_error(
+                        StatusCode::BAD_REQUEST,
+                        &format!("codex profile '{prof_raw}' not found"),
+                    );
+                }
+                Some(canonical)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        body.profile
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+    };
+
     let session_name = body.session_name.unwrap_or_default();
     let tmux_session = body
         .tmux_session
@@ -563,7 +629,9 @@ pub(super) async fn api_create_task(
                 session_name: session_name.clone(),
                 source: "web".to_string(),
                 tmux_session: tmux_session.clone(),
-                profile: body.profile.filter(|value| !value.is_empty()),
+                engine,
+                profile,
+                codex_configs_dir: Some(state.codex_configs_dir.as_ref().clone()),
             },
         )
         .await
@@ -721,5 +789,233 @@ mod tests {
         let loaded2 = manager.load_tasks().await.unwrap();
         assert_eq!(loaded2.len(), 1);
         assert_eq!(loaded2[0]["id"], "t1");
+    }
+
+    #[tokio::test]
+    async fn run_task_persists_engine_and_profile() {
+        let dir = tempdir().unwrap();
+        let tasks_file = dir.path().join("tasks.json");
+        let runtime = unconfigured_runtime("task runner");
+        let manager = TaskManager::new(tasks_file.clone(), runtime).await;
+
+        let handle = manager
+            .run_task(
+                "test prompt".to_string(),
+                dir.path().to_string_lossy().to_string(),
+                TaskRunOptions {
+                    session_name: "test_session".to_string(),
+                    source: "web".to_string(),
+                    tmux_session: "default".to_string(),
+                    engine: "codex".to_string(),
+                    profile: Some("custom-prof".to_string()),
+                    codex_configs_dir: Some(dir.path().join("codex-configs")),
+                },
+            )
+            .await
+            .unwrap();
+
+        let tasks = manager.load_tasks().await.unwrap();
+        let saved = tasks.iter().find(|t| t["id"] == handle.task_id).unwrap();
+        assert_eq!(saved["engine"], "codex");
+        assert_eq!(saved["profile"], "custom-prof");
+        assert_eq!(saved["prompt"], "test prompt");
+        assert_eq!(saved["status"], "running");
+    }
+
+    #[tokio::test]
+    async fn run_task_claude_omits_profile_when_none() {
+        let dir = tempdir().unwrap();
+        let tasks_file = dir.path().join("tasks.json");
+        let runtime = unconfigured_runtime("task runner");
+        let manager = TaskManager::new(tasks_file.clone(), runtime).await;
+
+        let handle = manager
+            .run_task(
+                "claude prompt".to_string(),
+                dir.path().to_string_lossy().to_string(),
+                TaskRunOptions {
+                    session_name: "sess".to_string(),
+                    source: "web".to_string(),
+                    tmux_session: "default".to_string(),
+                    engine: "claude".to_string(),
+                    profile: None,
+                    codex_configs_dir: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let tasks = manager.load_tasks().await.unwrap();
+        let saved = tasks.iter().find(|t| t["id"] == handle.task_id).unwrap();
+        assert_eq!(saved["engine"], "claude");
+        assert!(saved.get("profile").is_none());
+    }
+
+    #[tokio::test]
+    async fn api_create_task_validation_checks_engine_and_profile() {
+        let dir = tempdir().unwrap();
+        let tasks_file = dir.path().join("tasks.json");
+        let codex_configs_dir = dir.path().join("codex-configs");
+        std::fs::create_dir_all(&codex_configs_dir).unwrap();
+        let runtime = unconfigured_runtime("task runner");
+        let task_manager = TaskManager::new(tasks_file, runtime.clone()).await;
+
+        let state = Arc::new(AppState {
+            jwt_secret: Arc::new("secret".to_string()),
+            password_hash: Arc::new("hash".to_string()),
+            default_tmux_session: Arc::new("nexus".to_string()),
+            session_backend: Arc::new("tmux".to_string()),
+            session_backend_config_file: Arc::new(dir.path().join("session-backend.json")),
+            codex_history_enabled: false,
+            ws_connection_counter: Arc::new(AtomicUsize::new(0)),
+            github_repo: Arc::new("test/repo".to_string()),
+            project_root: Arc::new(dir.path().to_path_buf()),
+            workspace_root: Arc::new(dir.path().to_string_lossy().to_string()),
+            configs_dir: Arc::new(dir.path().join("configs")),
+            codex_configs_dir: Arc::new(codex_configs_dir.clone()),
+            codex_validate_dir: Arc::new(dir.path().join("validate")),
+            project_defaults_file: Arc::new(dir.path().join("project_defaults.json")),
+            toolbar_config_file: Arc::new(dir.path().join("toolbar-config.json")),
+            workspace_layouts_file: Arc::new(dir.path().join("workspace-layouts.json")),
+            uploads_dir: Arc::new(dir.path().join("uploads")),
+            public_dir: Arc::new(dir.path().join("public")),
+            frontend_dist_dir: Arc::new(dir.path().join("dist")),
+            runtime_manager: Arc::new(RuntimeManager {
+                task_runner: runtime.clone(),
+                pty_broker: unconfigured_runtime("pty broker"),
+                window_launch: unconfigured_runtime("window launch"),
+                session_management: unconfigured_runtime("session management"),
+            }),
+            task_manager,
+            prompt_store: PromptStore::new(dir.path().join("prompts.json")),
+            proxy_vars: Arc::new(Vec::new()),
+            login_limiter: Arc::new(LoginRateLimiter::new()),
+        });
+
+        let token = encode(
+            &Header::default(),
+            &AuthClaims { exp: u64::MAX },
+            &EncodingKey::from_secret("secret".as_bytes()),
+        )
+        .unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+
+        // 1. Missing prompt -> 400
+        let resp = api_create_task(
+            State(state.clone()),
+            headers.clone(),
+            Json(TaskBody {
+                prompt: None,
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // 2. Invalid engine -> 400
+        let resp = api_create_task(
+            State(state.clone()),
+            headers.clone(),
+            Json(TaskBody {
+                prompt: Some("do work".to_string()),
+                engine: Some("unsupported".to_string()),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // 3. Codex engine with missing profile -> 400
+        let resp = api_create_task(
+            State(state.clone()),
+            headers.clone(),
+            Json(TaskBody {
+                prompt: Some("do work".to_string()),
+                engine: Some("codex".to_string()),
+                profile: Some("nonexistent".to_string()),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // 4. Codex engine with valid profile -> 200 SSE
+        std::fs::write(
+            codex_configs_dir.join("valid-prof.json"),
+            serde_json::json!({
+                "OPENAI_API_KEY": "sk-test",
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let resp = api_create_task(
+            State(state.clone()),
+            headers.clone(),
+            Json(TaskBody {
+                prompt: Some("do work".to_string()),
+                engine: Some("codex".to_string()),
+                profile: Some("valid-prof".to_string()),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // 5. Codex engine rejects aliases / noncanonical profile IDs and accepts canonical
+        std::fs::write(
+            codex_configs_dir.join("valid--prof.json"),
+            serde_json::json!({
+                "OPENAI_API_KEY": "sk-test",
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let resp = api_create_task(
+            State(state.clone()),
+            headers.clone(),
+            Json(TaskBody {
+                prompt: Some("do work".to_string()),
+                engine: Some("codex".to_string()),
+                profile: Some("../valid..prof".to_string()),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let resp = api_create_task(
+            State(state.clone()),
+            headers.clone(),
+            Json(TaskBody {
+                prompt: Some("do work".to_string()),
+                engine: Some("codex".to_string()),
+                profile: Some("valid..prof".to_string()),
+                ..Default::default()
+            }),
+        )
+        .await;
+        // "valid..prof" is an alias (non-canonical) -> must return 400
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let resp = api_create_task(
+            State(state.clone()),
+            headers.clone(),
+            Json(TaskBody {
+                prompt: Some("do work".to_string()),
+                engine: Some("codex".to_string()),
+                profile: Some("  valid--prof  ".to_string()),
+                ..Default::default()
+            }),
+        )
+        .await;
+        // trimmed "valid--prof" equals canonical -> 200
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }

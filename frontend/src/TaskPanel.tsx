@@ -2,11 +2,15 @@ import { useState, useEffect, useRef, useId, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import GhostShield from './GhostShield'
 import { Icon } from './icons'
+import { fetchProfilesForShell, type ShellProfileOption } from './shellProfiles'
+import { CODEX_SHELL_TYPE } from './shellType'
 
 interface Task {
   id: string
   session_name: string
   tmux_session?: string
+  engine?: string
+  profile?: string
   prompt: string
   status: 'success' | 'error' | 'running'
   output?: string
@@ -54,6 +58,8 @@ interface CustomPickerProps {
   disabled?: boolean
   iconName?: "folder"
   isOpen: boolean
+  wrapPrimary?: boolean
+  menuPlacement?: "left" | "normal"
   onToggle: () => void
   onClose: () => void
   onSelect: (value: string) => void
@@ -67,6 +73,8 @@ function CustomPicker({
   disabled = false,
   iconName,
   isOpen,
+  wrapPrimary = false,
+  menuPlacement = "normal",
   onToggle,
   onClose,
   onSelect,
@@ -170,6 +178,11 @@ function CustomPicker({
       ? `${listboxId}-opt-${highlightedIndex}`
       : undefined
 
+  const menuPlacementClasses =
+    menuPlacement === "left"
+      ? "left-0 sm:left-auto sm:right-0 w-full sm:w-[520px] max-w-[calc(100vw-2rem)]"
+      : "left-0 w-full"
+
   return (
     <div ref={containerRef} className="relative flex-1 min-w-0">
       <button
@@ -186,16 +199,20 @@ function CustomPicker({
         onKeyDown={handleKeyDown}
         className="w-full flex items-center justify-between gap-2 bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text px-2 py-1 text-[13px] font-mono cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-left outline-none focus:border-nexus-accent"
       >
-        <span className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
+        <span className="flex items-center gap-1.5 min-w-0 flex-1">
           {iconName && <Icon name={iconName} size={14} className="shrink-0 text-nexus-muted" />}
           {selectedOption ? (
             <span
               className="flex flex-col min-w-0 flex-1 leading-tight"
               title={selectedOption.secondaryLabel ? `${selectedOption.primaryLabel} (${selectedOption.secondaryLabel})` : selectedOption.primaryLabel}
             >
-              <span className="truncate font-medium text-nexus-text text-[13px]">{selectedOption.primaryLabel}</span>
+              <span className={`font-medium text-nexus-text text-[13px] ${wrapPrimary ? "whitespace-normal break-words" : "truncate"}`}>
+                {selectedOption.primaryLabel}
+              </span>
               {selectedOption.secondaryLabel && (
-                <span className="truncate text-nexus-muted text-[11px]">{selectedOption.secondaryLabel}</span>
+                <span className={`text-nexus-muted text-[11px] ${wrapPrimary ? "whitespace-normal break-words" : "truncate"}`}>
+                  {selectedOption.secondaryLabel}
+                </span>
               )}
             </span>
           ) : (
@@ -215,7 +232,7 @@ function CustomPicker({
           ref={listboxRef}
           role="listbox"
           aria-label={label}
-          className="absolute left-0 top-[calc(100%+4px)] w-full max-h-[260px] z-50 overflow-y-auto bg-nexus-menu-bg border border-nexus-border rounded-md shadow-xl p-1 flex flex-col gap-0.5"
+          className={`absolute top-[calc(100%+4px)] max-h-[260px] z-50 overflow-y-auto bg-nexus-menu-bg border border-nexus-border rounded-md shadow-xl p-1 flex flex-col gap-0.5 ${menuPlacementClasses}`}
         >
           {options.map((opt, idx) => {
             const isSelected = opt.value === value
@@ -251,12 +268,16 @@ function CustomPicker({
                   triggerRef.current?.focus()
                 }}
               >
-                <span className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
+                <span className="flex items-center gap-1.5 min-w-0 flex-1">
                   {isSelected ? <Icon name="check" size={14} className="shrink-0 text-nexus-accent" /> : <span className="w-3.5 shrink-0" />}
                   <span className="flex flex-col min-w-0 flex-1 leading-tight">
-                    <span className="truncate font-medium text-nexus-text text-[12px]">{opt.primaryLabel}</span>
+                    <span className={`font-medium text-nexus-text text-[12px] ${wrapPrimary ? "whitespace-normal break-words" : "truncate"}`}>
+                      {opt.primaryLabel}
+                    </span>
                     {opt.secondaryLabel && (
-                      <span className="truncate text-nexus-muted text-[11px]">{opt.secondaryLabel}</span>
+                      <span className={`text-nexus-muted text-[11px] ${wrapPrimary ? "whitespace-normal break-words" : "truncate"}`}>
+                        {opt.secondaryLabel}
+                      </span>
                     )}
                   </span>
                 </span>
@@ -283,6 +304,12 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
   const [isRunning, setIsRunning] = useState(false)
   const [streamOutput, setStreamOutput] = useState('')
 
+  const [engine, setEngine] = useState<'claude' | 'codex'>('claude')
+  const [codexProfiles, setCodexProfiles] = useState<ShellProfileOption[]>([])
+  const [selectedProfile, setSelectedProfile] = useState<string>('')
+  const [loadingProfiles, setLoadingProfiles] = useState(false)
+  const [profilesError, setProfilesError] = useState<string | null>(null)
+
   const [projects, setProjects] = useState<ProjectOption[]>([])
   const [selectedProject, setSelectedProject] = useState(tmuxSession || '')
   const [channelsProject, setChannelsProject] = useState<string | null>(null)
@@ -296,7 +323,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
   const [projectsError, setProjectsError] = useState<string | null>(null)
   const [channelsError, setChannelsError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [openPicker, setOpenPicker] = useState<'project' | 'channel' | null>(null)
+  const [openPicker, setOpenPicker] = useState<'project' | 'channel' | 'profile' | null>(null)
 
   const isMountedRef = useRef(true)
   const outputRef = useRef<HTMLPreElement>(null)
@@ -319,6 +346,42 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
       }
     }
   }, [])
+
+  // Fetch Codex profiles when engine is codex
+  useEffect(() => {
+    if (engine !== 'codex') {
+      setProfilesError(null)
+      setCodexProfiles([])
+      setLoadingProfiles(false)
+      return
+    }
+
+    let active = true
+    setLoadingProfiles(true)
+    setProfilesError(null)
+    setCodexProfiles([])
+
+    fetchProfilesForShell(token, CODEX_SHELL_TYPE)
+      .then((profiles) => {
+        if (!active) return
+        setLoadingProfiles(false)
+        setCodexProfiles(profiles)
+        setSelectedProfile((current) => {
+          return profiles.some((p) => p.id === current) ? current : ''
+        })
+      })
+      .catch((e: any) => {
+        if (!active) return
+        setLoadingProfiles(false)
+        setSelectedProfile('')
+        setCodexProfiles([])
+        setProfilesError(t('tasks.loadProfilesFailed', { status: e.status || '', details: e.message || String(e) }))
+      })
+
+    return () => {
+      active = false
+    }
+  }, [engine, token, t])
 
   // Fetch projects on mount / token change
   useEffect(() => {
@@ -542,6 +605,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
     targetProject &&
     projects.some(p => p.name === targetProject) &&
     channelsProject === targetProject &&
+    !(engine === 'codex' && loadingProfiles) &&
     targetChannel &&
     channels.some(c => c.name === targetChannel)
   )
@@ -559,11 +623,27 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
     abortRef.current = controller
     let sawDone = false
 
+    const requestBody: {
+      session_name: string
+      prompt: string
+      tmux_session: string
+      engine: string
+      profile?: string
+    } = {
+      session_name: targetChannel,
+      prompt: prompt.trim(),
+      tmux_session: targetProject,
+      engine,
+    }
+    if (engine === 'codex' && selectedProfile && codexProfiles.some(p => p.id === selectedProfile)) {
+      requestBody.profile = selectedProfile
+    }
+
     try {
       const r = await fetch('/api/tasks', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_name: targetChannel, prompt: prompt.trim(), tmux_session: targetProject }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       })
 
@@ -651,7 +731,21 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
     return tasks.find(t => t.id === selectedTaskId) ?? null
   }, [selectedTaskId, tasks])
 
-  const displayedError = projectsError || channelsError || actionError
+  const displayedError = projectsError || channelsError || profilesError || actionError
+
+  const codexProfileOptions = useMemo<CustomPickerOption[]>(() => {
+    return [
+      {
+        value: '',
+        primaryLabel: t('tasks.profileDefaultCodex'),
+      },
+      ...codexProfiles.map((p) => ({
+        value: p.id,
+        primaryLabel: p.label && p.label.trim() ? p.label : p.id,
+        secondaryLabel: p.label && p.label !== p.id ? p.id : undefined,
+      })),
+    ]
+  }, [codexProfiles, t])
 
   return (
     <div
@@ -661,7 +755,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
       className="fixed inset-0 bg-black/40 z-[300] flex items-stretch justify-end"
     >
       <GhostShield />
-      <div className="w-[440px] max-w-[100vw] bg-nexus-bg border-l border-nexus-border flex flex-col overflow-hidden">
+      <div className="w-[440px] max-w-[100vw] bg-nexus-bg border-l border-nexus-border flex flex-col relative">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-nexus-border shrink-0">
           <span id={titleId} className="flex items-center gap-2 text-nexus-text text-[15px] font-semibold">
@@ -692,6 +786,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
               onClick={() => {
                 if (projectsError) setProjectsError(null)
                 if (channelsError) setChannelsError(null)
+                if (profilesError) setProfilesError(null)
                 if (actionError) setActionError(null)
               }}
             >
@@ -699,6 +794,74 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
             </button>
           </div>
         )}
+
+        {/* Engine selector & Profile (when Codex) */}
+        <div className="flex flex-col gap-2 px-5 py-2.5 border-b border-nexus-border shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-nexus-text-2 text-[13px] shrink-0 w-16">{t('tasks.engine')}</span>
+            <div
+              role="radiogroup"
+              aria-label={t('tasks.engine')}
+              className="flex items-center gap-1 bg-nexus-bg-2 border border-nexus-border p-0.5 rounded-md text-[12px] font-mono"
+            >
+              <button
+                type="button"
+                role="radio"
+                aria-checked={engine === 'claude'}
+                aria-label={t('tasks.engineClaude')}
+                disabled={isRunning}
+                onClick={() => {
+                  setEngine('claude')
+                  setSelectedProfile('')
+                  setOpenPicker((prev) => (prev === 'profile' ? null : prev))
+                }}
+                className={`px-3 py-1 rounded transition-colors border-none cursor-pointer ${
+                  engine === 'claude'
+                    ? 'bg-nexus-tab-active text-nexus-text font-medium'
+                    : 'bg-transparent text-nexus-muted hover:text-nexus-text'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {t('tasks.engineClaude')}
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={engine === 'codex'}
+                aria-label={t('tasks.engineCodex')}
+                disabled={isRunning}
+                onClick={() => {
+                  setEngine('codex')
+                  setOpenPicker((prev) => (prev === 'profile' ? null : prev))
+                }}
+                className={`px-3 py-1 rounded transition-colors border-none cursor-pointer ${
+                  engine === 'codex'
+                    ? 'bg-nexus-tab-active text-nexus-text font-medium'
+                    : 'bg-transparent text-nexus-muted hover:text-nexus-text'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {t('tasks.engineCodex')}
+              </button>
+            </div>
+          </div>
+
+          {/* Codex Profile picker */}
+          {engine === 'codex' && (
+            <div className="flex items-center gap-2">
+              <span className="text-nexus-text-2 text-[13px] shrink-0 w-16">{t('tasks.profile')}</span>
+              <CustomPicker
+                label={t('tasks.profile')}
+                value={selectedProfile}
+                disabled={isRunning || loadingProfiles}
+                placeholder={t('tasks.profileDefaultCodex')}
+                isOpen={openPicker === 'profile'}
+                onToggle={() => setOpenPicker((prev) => (prev === 'profile' ? null : 'profile'))}
+                onClose={() => setOpenPicker((prev) => (prev === 'profile' ? null : prev))}
+                options={codexProfileOptions}
+                onSelect={(val) => setSelectedProfile(val)}
+              />
+            </div>
+          )}
+        </div>
 
         {/* Target selectors: Project & Channel */}
         <div className="flex flex-col gap-2 px-5 py-2.5 border-b border-nexus-border shrink-0">
@@ -712,6 +875,8 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
               disabled={isRunning || loadingProjects || projects.length === 0}
               placeholder={loadingProjects ? t('tasks.loadingProjects') : t('tasks.noProjects')}
               isOpen={openPicker === 'project'}
+              wrapPrimary={true}
+              menuPlacement="left"
               onToggle={() => setOpenPicker((prev) => (prev === 'project' ? null : 'project'))}
               onClose={() => setOpenPicker((prev) => (prev === 'project' ? null : prev))}
               options={projects.map((p) => ({
@@ -824,6 +989,7 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
               <div className="overflow-y-auto flex-1">
                 {tasks.map(task => {
                   const isTaskRunning = task.status === 'running'
+                  const taskEngine = task.engine === 'codex' ? 'Codex' : 'Claude'
                   const targetLabel = task.tmux_session ? `${task.tmux_session} / ${task.session_name}` : task.session_name
                   return (
                     <div
@@ -833,6 +999,12 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
                     >
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${task.status === 'success' ? 'bg-nexus-success' : isTaskRunning ? 'bg-nexus-warning animate-pulse' : 'bg-nexus-error'}`} />
                       <span className="flex-1 text-nexus-text text-[13px] font-mono overflow-hidden text-ellipsis whitespace-nowrap" title={task.prompt}>{task.prompt.slice(0, 60)}{task.prompt.length > 60 ? '...' : ''}</span>
+                      <span
+                        className="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-nexus-border/60 bg-nexus-bg-2 text-nexus-muted font-mono leading-none"
+                        title={task.profile ? `${taskEngine} (${task.profile})` : taskEngine}
+                      >
+                        {taskEngine}
+                      </span>
                       <span className="text-nexus-muted text-[11px] max-w-[120px] truncate shrink-0" title={targetLabel}>{targetLabel}</span>
                       {!isTaskRunning && (
                         <button
@@ -859,9 +1031,9 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
               {activeTask.status === 'running' && <span className="w-2 h-2 rounded-full bg-nexus-success animate-spin shrink-0" />}
               <span
                 className="flex-1 min-w-0 truncate text-nexus-text-2 text-xs font-mono"
-                title={`${activeTask.tmux_session ? `${activeTask.tmux_session} / ${activeTask.session_name}` : activeTask.session_name} — ${activeTask.status === 'running' ? t('tasks.runningStatus') : activeTask.status}`}
+                title={`${activeTask.tmux_session ? `${activeTask.tmux_session} / ${activeTask.session_name}` : activeTask.session_name} [${activeTask.engine === 'codex' ? 'Codex' : 'Claude'}] — ${activeTask.status === 'running' ? t('tasks.runningStatus') : activeTask.status}`}
               >
-                {activeTask.tmux_session ? `${activeTask.tmux_session} / ${activeTask.session_name}` : activeTask.session_name} — {activeTask.status === 'running' ? t('tasks.runningStatus') : activeTask.status}
+                {activeTask.tmux_session ? `${activeTask.tmux_session} / ${activeTask.session_name}` : activeTask.session_name} [{activeTask.engine === 'codex' ? 'Codex' : 'Claude'}{activeTask.profile ? `:${activeTask.profile}` : ''}] — {activeTask.status === 'running' ? t('tasks.runningStatus') : activeTask.status}
               </span>
               <div className="flex gap-1 ml-auto shrink-0">
                 {activeTask.status !== 'running' && (
@@ -871,6 +1043,15 @@ export default function TaskPanel({ token, windows, activeWindowName, tmuxSessio
                     aria-label={t('tasks.reusePrompt')}
                     onClick={() => {
                       setPrompt(activeTask.prompt)
+                      if (activeTask.engine === 'codex') {
+                        setEngine('codex')
+                        const historicalProfile = activeTask.profile || ''
+                        const profileExists = !loadingProfiles && historicalProfile !== '' && codexProfiles.some(p => p.id === historicalProfile)
+                        setSelectedProfile(profileExists ? historicalProfile : '')
+                      } else {
+                        setEngine('claude')
+                        setSelectedProfile('')
+                      }
                       setSelectedTaskId(null)
                     }}
                   >

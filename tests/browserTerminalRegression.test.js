@@ -2861,12 +2861,56 @@ test('browser regression: web async task panel manages task runs and streams out
       output: 'all checks passed',
       error: '',
     },
+    {
+      id: 'task-completed-missing-profile',
+      prompt: 'cargo check --missing-profile',
+      engine: 'codex',
+      profile: 'deleted-or-renamed-profile',
+      status: 'success',
+      session_name: 'shell',
+      tmux_session: 'demo-project',
+      createdAt: '2026-09-01T00:01:00.000Z',
+      completedAt: '2026-09-01T00:01:10.000Z',
+      exitCode: 0,
+      output: 'cargo finished',
+      error: '',
+    },
   ]
 
+  let nextTaskId = 2
   const recordedRequests = {
     post: null,
     delete: [],
   }
+
+  await page.route('**/api/projects', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (request.method() === 'GET' && url.pathname === '/api/projects') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { name: 'demo-project', path: '/workspace/demo', active: false, channelCount: 2 },
+          { name: 'nexus-preview-rust', path: '/workspace', active: true, channelCount: 1 },
+          { name: 'very-long-project-name-shared-prefix-alpha-feature-workspace', path: '/workspace/very-long-alpha', active: false, channelCount: 1 },
+          { name: 'very-long-project-name-shared-prefix-beta-feature-workspace', path: '/workspace/very-long-beta', active: false, channelCount: 1 },
+        ]),
+      })
+      return
+    }
+    await route.continue()
+  })
+
+  await page.route('**/api/codex-configs**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 'openai-gpt4', label: 'OpenAI GPT-4' },
+      ]),
+    })
+  })
 
   await page.route('**/api/tasks**', async (route) => {
     const request = route.request()
@@ -2889,9 +2933,12 @@ test('browser regression: web async task panel manages task runs and streams out
         body: postData,
       }
 
+      const taskId = `task-created-${nextTaskId++}`
       const newTask = {
-        id: 'task-created-2',
+        id: taskId,
         prompt: postData.prompt || '',
+        engine: postData.engine,
+        profile: postData.profile,
         status: 'success',
         session_name: postData.session_name || 'default',
         tmux_session: postData.tmux_session || 'nexus-preview-rust',
@@ -2905,7 +2952,7 @@ test('browser regression: web async task panel manages task runs and streams out
 
       const sseBody = [
         'event: start',
-        `data: ${JSON.stringify({ id: 'task-created-2' })}`,
+        `data: ${JSON.stringify({ id: taskId })}`,
         '',
         'event: output',
         `data: ${JSON.stringify({ chunk: 'streamed standard output content\n' })}`,
@@ -3103,15 +3150,165 @@ test('browser regression: web async task panel manages task runs and streams out
   assert.strictEqual(recordedRequests.post.body.prompt, customPrompt, 'expected custom prompt in request body')
   assert.strictEqual(recordedRequests.post.body.session_name, 'review', 'expected session_name to be review')
   assert.strictEqual(recordedRequests.post.body.tmux_session, 'demo-project', 'expected tmux_session to be demo-project')
+  assert.strictEqual(recordedRequests.post.body.engine, 'claude', 'expected default engine to be claude')
 
   const backButton = dialog.locator('button:has-text("Back to history"), button[title="Back to history"]').first()
   await backButton.waitFor({ state: 'visible', timeout: 5000 })
   await backButton.click()
 
-  const newCreatedPrompt = dialog.locator(`text=${customPrompt}`).first()
-  await newCreatedPrompt.waitFor({ state: 'visible', timeout: 5000 })
-
+  // Verify historical tasks engine markers: completed without engine shows Claude badge, running shows Claude badge
   const completedRow = dialog.locator('text=npm run check').locator('..')
+  assert.ok(
+    (await completedRow.textContent() || '').includes('Claude'),
+    'expected old record without engine to render Claude engine badge',
+  )
+
+  // Test Long Project Names Wrapping & Popup geometry
+  await projectCombobox.click()
+  const longProjectAlphaOption = dialog.getByRole('option').filter({ hasText: 'very-long-project-name-shared-prefix-alpha-feature-workspace' }).first()
+  const longProjectBetaOption = dialog.getByRole('option').filter({ hasText: 'very-long-project-name-shared-prefix-beta-feature-workspace' }).first()
+  await longProjectAlphaOption.waitFor({ state: 'visible', timeout: 5000 })
+  await longProjectBetaOption.waitFor({ state: 'visible', timeout: 5000 })
+
+  // Verify full distinct text is rendered
+  const alphaText = await longProjectAlphaOption.textContent() || ''
+  const betaText = await longProjectBetaOption.textContent() || ''
+  assert.ok(alphaText.includes('alpha-feature-workspace'), 'expected full alpha name rendered')
+  assert.ok(betaText.includes('beta-feature-workspace'), 'expected full beta name rendered')
+
+  // Check that popup option primary label does not use white-space: nowrap (wrapPrimary)
+  const isLabelNowrap = await longProjectAlphaOption.locator('span.font-medium').first().evaluate((el) => {
+    return window.getComputedStyle(el).whiteSpace === 'nowrap'
+  })
+  assert.strictEqual(isLabelNowrap, false, 'expected long project option label to wrap, not nowrap')
+
+  // Verify popup width on desktop is wider than trigger and stays within viewport without causing horizontal overflow
+  const listbox = dialog.locator('[role="listbox"]').first()
+  const listboxBox = await listbox.boundingBox()
+  const triggerBox = await projectCombobox.boundingBox()
+  const viewportSize = page.viewportSize() || { width: 1280, height: 800 }
+
+  assert.ok(listboxBox && triggerBox, 'expected listbox and trigger bounding boxes')
+  assert.ok(listboxBox.width >= triggerBox.width, 'expected popup width to expand left beyond narrow trigger on desktop')
+  assert.ok(listboxBox.x >= 0 && listboxBox.x + listboxBox.width <= viewportSize.width, 'expected popup bounds to stay inside viewport')
+
+  // Assert point in popup portion that extends left of panel is not ancestor-clipped and elementFromPoint resolves to listbox or child
+  const panelBox = await dialog.locator('.w-\\[440px\\]').first().boundingBox()
+  assert.ok(panelBox, 'expected task panel bounding box')
+  assert.ok(listboxBox.x < panelBox.x, 'expected listbox left edge to extend left outside panel bounds')
+  const leftPointX = listboxBox.x + 10
+  const leftPointY = listboxBox.y + 10
+  const isElementUnclipped = await page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y)
+    const listboxEl = document.querySelector('[role="listbox"]')
+    return Boolean(el && listboxEl && (el === listboxEl || listboxEl.contains(el)))
+  }, { x: leftPointX, y: leftPointY })
+  assert.strictEqual(isElementUnclipped, true, 'expected elementFromPoint in left-extended popup portion to resolve to listbox or child')
+
+  const docScrollWidth = await page.evaluate(() => document.documentElement.scrollWidth)
+  const docClientWidth = await page.evaluate(() => document.documentElement.clientWidth)
+  assert.ok(docScrollWidth <= docClientWidth + 1, 'expected no document horizontal overflow introduced by picker')
+
+  // Select long project alpha
+  await longProjectAlphaOption.click()
+  await longProjectAlphaOption.waitFor({ state: 'hidden', timeout: 5000 })
+
+  const selectedTriggerText = await projectCombobox.textContent() || ''
+  assert.ok(selectedTriggerText.includes('very-long-project-name-shared-prefix-alpha-feature-workspace'), 'expected selected project trigger to display full name')
+
+  const selectedTriggerLabel = projectCombobox.locator('span.font-medium').first()
+  const isSelectedTriggerLabelNowrap = await selectedTriggerLabel.evaluate((el) => {
+    return window.getComputedStyle(el).whiteSpace === 'nowrap'
+  })
+  assert.strictEqual(isSelectedTriggerLabelNowrap, false, 'expected selected project trigger label to wrap, not nowrap')
+  const isSelectedTriggerLabelNotClipped = await selectedTriggerLabel.evaluate((el) => {
+    return el.scrollWidth <= el.clientWidth + 1
+  })
+  assert.strictEqual(isSelectedTriggerLabelNotClipped, true, 'expected selected project trigger label not to be horizontally clipped')
+
+  // Switch engine to Codex and select profile
+  const codexRadio = dialog.getByRole('radio', { name: 'Codex' })
+  await codexRadio.click()
+
+  // Profile picker appears
+  const profileCombobox = dialog.getByRole('combobox', { name: 'Profile:' })
+  await profileCombobox.waitFor({ state: 'visible', timeout: 5000 })
+  assert.ok(
+    (await profileCombobox.textContent() || '').includes('Current Codex login'),
+    'expected default profile to be current system Codex config',
+  )
+
+  await profileCombobox.click()
+  const customCodexProfileOption = dialog.getByRole('option').filter({ hasText: 'openai-gpt4' }).first()
+  await customCodexProfileOption.waitFor({ state: 'visible', timeout: 5000 })
+  await customCodexProfileOption.click()
+  await customCodexProfileOption.waitFor({ state: 'hidden', timeout: 5000 })
+
+  // Send a Codex task
+  await page.waitForFunction(() => {
+    const btn = document.querySelector('button[role="combobox"][aria-label="Channel:"]')
+    return btn && !btn.disabled
+  })
+  await promptInput.fill('codex async execution prompt')
+  assert.ok(!(await sendButton.isDisabled()), 'expected send button to be enabled for codex run')
+  await sendButton.click()
+
+  await dialog.locator('text=streamed standard output content').first().waitFor({ state: 'visible', timeout: 10000 })
+  assert.ok(recordedRequests.post, 'expected second POST /api/tasks request')
+  assert.strictEqual(recordedRequests.post.body.engine, 'codex', 'expected engine: "codex"')
+  assert.strictEqual(recordedRequests.post.body.profile, 'openai-gpt4', 'expected profile: "openai-gpt4"')
+
+  const backButton2 = dialog.locator('button:has-text("Back to history"), button[title="Back to history"]').first()
+  await backButton2.waitFor({ state: 'visible', timeout: 5000 })
+  await backButton2.click()
+
+  const codexTaskRow = dialog.locator('text=codex async execution prompt').locator('..')
+  await codexTaskRow.waitFor({ state: 'visible', timeout: 5000 })
+  const codexRowText = await codexTaskRow.textContent() || ''
+  assert.ok(codexRowText.includes('Codex'), 'expected codex task row to show Codex engine badge')
+  const codexBadge = codexTaskRow.locator('span[title*="Codex (openai-gpt4)"]')
+  assert.strictEqual(await codexBadge.count(), 1, 'expected Codex engine badge to include selected profile in title')
+
+  // Test Historical Codex task reuse with missing profile
+  const missingProfileTaskRow = dialog.locator('text=cargo check --missing-profile').locator('..')
+  await missingProfileTaskRow.waitFor({ state: 'visible', timeout: 5000 })
+  await missingProfileTaskRow.click()
+
+  const reusePromptButton = dialog.locator('button[title="Reuse prompt"], button[aria-label="Reuse prompt"]').first()
+  await reusePromptButton.waitFor({ state: 'visible', timeout: 5000 })
+  await reusePromptButton.click()
+
+  // Verify prompt and engine switched to Codex
+  assert.strictEqual(await promptInput.inputValue(), 'cargo check --missing-profile', 'expected prompt to be restored')
+  const codexRadioChecked = await dialog.getByRole('radio', { name: 'Codex' }).getAttribute('aria-checked')
+  assert.strictEqual(codexRadioChecked, 'true', 'expected Codex engine to be selected on reuse')
+
+  // Profile picker must show current login (missing profile cleared because openai-gpt4 is available but deleted-or-renamed-profile is not)
+  const reusedProfileCombobox = dialog.getByRole('combobox', { name: 'Profile:' })
+  await reusedProfileCombobox.waitFor({ state: 'visible', timeout: 5000 })
+  assert.ok(
+    (await reusedProfileCombobox.textContent() || '').includes('Current Codex login'),
+    'expected stale missing profile to be cleared and show current login',
+  )
+
+  // Send reused task and verify request payload omits profile
+  recordedRequests.post = null
+  await page.waitForFunction(() => {
+    const btn = document.querySelector('button[role="combobox"][aria-label="Channel:"]')
+    return btn && !btn.disabled
+  })
+  assert.ok(!(await sendButton.isDisabled()), 'expected send button to be enabled for reused task')
+  await sendButton.click()
+
+  await dialog.locator('text=streamed standard output content').first().waitFor({ state: 'visible', timeout: 10000 })
+  assert.ok(recordedRequests.post, 'expected POST /api/tasks request for reused task')
+  assert.strictEqual(recordedRequests.post.body.engine, 'codex', 'expected engine: "codex"')
+  assert.strictEqual(recordedRequests.post.body.profile, undefined, 'expected profile to be omitted for current login')
+
+  const backButton3 = dialog.locator('button:has-text("Back to history"), button[title="Back to history"]').first()
+  await backButton3.waitFor({ state: 'visible', timeout: 5000 })
+  await backButton3.click()
+
   const completedDeleteButton = completedRow.locator('button[title="Delete"], button[aria-label="Delete"]').first()
   await completedDeleteButton.waitFor({ state: 'visible', timeout: 5000 })
   await completedDeleteButton.click()
