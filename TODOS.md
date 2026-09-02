@@ -1,8 +1,16 @@
 # TODOS
 
-最后更新：2026-09-01
+最后更新：2026-09-03
 
 ## Open
+
+- 通用 TUI 终端滚动能力与模式快照（P1，L）
+  - What：把当前 `terminalApplicationScroll.ts` 的 Grok 标题识别升级为通用终端输入路由；在活跃浏览器中优先使用 xterm 公开的 mouse tracking / buffer 状态，并在 PTY broker 按会话增量跟踪 DEC 模式（至少 `47/1047/1049`、`1000/1002/1003`、`1006`、`1007`），为新连接和刷新提供版本化 `terminalState` 快照。
+  - Why：应用名称/标题关键词会误伤普通 scrollback，也无法自动覆盖 Claude Code、Pi 等后续 TUI；当前新连接只重放最近输出，可能遗失早先的模式启用序列。
+  - Pros：标准 mouse tracking 的 TUI 无需单独适配；非标准 TUI 只需声明通用 capability/profile，不再修改滚动代码；刷新、重连和 split pane 的状态一致。
+  - Cons：需要增量 VT 解析和 WebSocket 协议兼容层；不能简单以 alternate screen 判定应用内滚动，否则会再次破坏 Codex 等场景的终端历史。
+  - Context：输入路由优先级为标准终端模式 → Nexus 私有 capability/launch profile（`auto | scrollback | application-sgr`）→ 窗格级临时手动切换。`CSI ? 2026` 只是同步渲染状态，不得作为 TUI 身份或滚动能力证据；Grok 标题识别仅可作为可移除的 legacy fallback。
+  - Ready when：先固定普通 shell scrollback、Codex、Grok、标准 mouse-tracking TUI 的行为基线；实现后覆盖 Claude Code/Pi fixture、TUI 进出、页面刷新、WebSocket 重连、split pane、PC 滚轮、移动触摸及 `Ctrl+wheel` 缩放，且删除应用名称特判后 `npm run test:browser`、`npm run build:frontend`、Rust/Node 定向测试全部通过。
 
 - 统一 tmux command helper（P2，M）
   - What：把 `nexus_session_runtime/tmux_backend.rs`、`nexus-window-launch-runtime.rs` 和 `server/runtime.rs` 中剩余的 tmux command / capture helper 收口到共享实现。
