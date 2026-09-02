@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url'
 
 const RELEASE_BIN_NAMES = [
   "nexus-server",
-  "nexus-task-runtime",
   "nexus-pty-runtime",
   "nexus-native-pty-supervisor",
   "nexus-native-session",
@@ -29,7 +28,6 @@ set -eu
 {
   printf 'PORT=%s\\n' "\${PORT:-}"
   printf 'SERVER_EXECUTABLE=%s\\n' "$0"
-  printf 'NEXUS_TASK_RUNNER_RUST_EXECUTABLE=%s\\n' "\${NEXUS_TASK_RUNNER_RUST_EXECUTABLE:-}"
   printf 'NEXUS_PTY_BROKER_RUST_EXECUTABLE=%s\\n' "\${NEXUS_PTY_BROKER_RUST_EXECUTABLE:-}"
   printf 'NEXUS_WINDOW_LAUNCH_RUST_EXECUTABLE=%s\\n' "\${NEXUS_WINDOW_LAUNCH_RUST_EXECUTABLE:-}"
   printf 'NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE=%s\\n' "\${NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE:-}"
@@ -177,7 +175,6 @@ function createDeployScriptFixture({ separateInstallTree = false } = {}) {
 
   for (const binary of [
     'nexus-server',
-    'nexus-task-runtime',
     'nexus-pty-runtime',
     'nexus-native-pty-supervisor',
     'nexus-native-session',
@@ -331,12 +328,6 @@ test('legacy node backend source files are removed from the repo root', () => {
   for (const relativePath of [
     'server.js',
     'runtimePaths.js',
-    'taskRunner.js',
-    'taskRunnerController.js',
-    'taskRunnerLocalBackend.js',
-    'taskRunnerSidecarClient.js',
-    'taskRunnerSidecarProcess.js',
-    'taskRunnerSse.js',
     'ptyBrokerController.js',
     'ptyBrokerLocalBackend.js',
     'ptyBrokerSidecarClient.js',
@@ -344,7 +335,6 @@ test('legacy node backend source files are removed from the repo root', () => {
     'ptyTmuxBroker.js',
     'windowLaunchService.js',
     'sessionManagementService.js',
-    'taskRunnerRustClient.js',
     'ptyBrokerRustClient.js',
     'windowLaunchRustClient.js',
     'sessionManagementRustClient.js',
@@ -494,7 +484,6 @@ fi
 test('start.sh defaults to rust nexus-server and wires runtime executables without invoking npm when release binaries already exist', () => {
   const fixture = createStartScriptFixture()
   const defaultServer = join(fixture.releaseDir, 'nexus-server')
-  const defaultTaskRuntime = join(fixture.releaseDir, 'nexus-task-runtime')
   const defaultPtyRuntime = join(fixture.releaseDir, 'nexus-pty-runtime')
   const defaultNativePtySupervisor = join(fixture.releaseDir, 'nexus-native-pty-supervisor')
   const defaultNativeSessionCli = join(fixture.releaseDir, 'nexus-native-session')
@@ -503,7 +492,6 @@ test('start.sh defaults to rust nexus-server and wires runtime executables witho
   const defaultCodexHomeRuntime = join(fixture.releaseDir, 'nexus-codex-home')
 
   writeExecutable(defaultServer, createFakeRustServerScript(fixture.serverEnvFile))
-  writeExecutable(defaultTaskRuntime)
   writeExecutable(defaultPtyRuntime)
   writeExecutable(defaultNativePtySupervisor)
   writeExecutable(defaultNativeSessionCli)
@@ -519,7 +507,6 @@ test('start.sh defaults to rust nexus-server and wires runtime executables witho
     const serverEnv = parseEnvDump(fixture.serverEnvFile)
     assert.equal(serverEnv.PORT, '59001')
     assert.equal(serverEnv.SERVER_EXECUTABLE, defaultServer)
-    assert.equal(serverEnv.NEXUS_TASK_RUNNER_RUST_EXECUTABLE, defaultTaskRuntime)
     assert.equal(serverEnv.NEXUS_PTY_BROKER_RUST_EXECUTABLE, defaultPtyRuntime)
     assert.equal(serverEnv.NEXUS_WINDOW_LAUNCH_RUST_EXECUTABLE, defaultWindowLaunchRuntime)
     assert.equal(serverEnv.NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE, defaultSessionRuntime)
@@ -546,7 +533,7 @@ test('start.sh builds missing rust release binaries before launching the default
       .split('\n')
       .filter(Boolean)
     assert.equal(cargoCommands.length, 2)
-    assert.match(cargoCommands[0], /build --manifest-path rust-runtime\/Cargo\.toml --release --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home/)
+    assert.match(cargoCommands[0], /build --manifest-path rust-runtime\/Cargo\.toml --release --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home/)
     assert.match(cargoCommands[1], /build --manifest-path rust-runtime\/Cargo\.toml --release --bin nexus-server/)
 
     const serverEnv = parseEnvDump(fixture.serverEnvFile)
@@ -554,10 +541,6 @@ test('start.sh builds missing rust release binaries before launching the default
     assert.equal(
       serverEnv.SERVER_EXECUTABLE,
       join(fixture.releaseDir, 'nexus-server'),
-    )
-    assert.equal(
-      serverEnv.NEXUS_TASK_RUNNER_RUST_EXECUTABLE,
-      join(fixture.releaseDir, 'nexus-task-runtime'),
     )
     assert.equal(
       serverEnv.NEXUS_PTY_BROKER_RUST_EXECUTABLE,
@@ -627,7 +610,6 @@ test('deploy helper syncs binaries and frontend into a separate install tree, pr
     // All install-tree binaries must be executable.
     for (const binary of [
       'nexus-server',
-      'nexus-task-runtime',
       'nexus-pty-runtime',
       'nexus-native-pty-supervisor',
       'nexus-native-session',

@@ -11,7 +11,7 @@
 
 ## 这是什么
 
-Nexus 是单用户、自托管的本地 AI agent 控制台。它运行在你自己的机器上，通过 PWA / 浏览器 UI 暴露终端、项目、频道、任务和文件管理能力；浏览器关掉后，底层 agent session 仍然继续运行。
+Nexus 是单用户、自托管的本地 AI agent 控制台。它运行在你自己的机器上，通过 PWA / 浏览器 UI 暴露终端、项目、频道、会话和文件管理能力；浏览器关掉后，底层 agent session 仍然继续运行。
 
 当前运行形态：
 
@@ -29,7 +29,6 @@ Browser / PWA
 - 基于 xterm.js 的浏览器终端：移动端触控、scrollback、上传、可配置工具栏。
 - 项目与频道管理：项目对应目录，每个项目下有多个终端频道。
 - PC split view：single / vertical / horizontal / 2x2 / 3x3 多 pane 终端。
-- 异步任务执行：Web 面板创建、SSE stdout/stderr 流式输出、历史记录查看/复用/删除；关闭面板后后台任务继续运行。
 - 文件浏览器：浏览、编辑、上传、重命名、移动、复制、删除工作区文件；文件查看与下载使用 `Authorization: Bearer` fetch 与 Blob URL，JWT 不放入 URL query。
 - 提示词库：保存、编辑、搜索、复制提示词，并可在不自动提交的前提下插入当前终端。
 - Codex / Claude profile 启动器，包含 Codex history / resume 流程。

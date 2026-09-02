@@ -46,7 +46,6 @@
 - `nexus-tmux.service` 持有真正的 `tmux -D` server
 - `nexus.service` 持有：
   - `nexus-server`
-  - `nexus-task-runtime`
   - `nexus-pty-runtime`
   - `nexus-window-launch-runtime`
   - `nexus-session-runtime`

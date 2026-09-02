@@ -29,7 +29,6 @@ Browser / PWA
 - Browser terminal built on xterm.js with mobile touch controls, scrollback, upload, and configurable toolbar.
 - Project and channel management: directory-based projects, each with multiple terminal channels.
 - Desktop split view: single / vertical / horizontal / 2x2 / 3x3 terminal panes.
-- Async task runner with web panel creation, SSE stdout/stderr streaming, history, view, reuse, and deletion; background tasks keep running when the panel is closed.
 - File browser for workspace browsing, editing, upload, rename, move, copy, and delete; file view and download use `Authorization: Bearer` fetch and Blob URLs without passing JWT in URL query strings.
 - Authenticated prompt library for saving, editing, searching, drag-sorting, copying, and inserting reusable prompts into the active terminal without auto-submit.
 - Codex and Claude profile launchers, including Codex history/resume flows.

@@ -502,9 +502,7 @@ mod tests {
     }
 
     async fn test_state(prompts_file: PathBuf) -> Arc<AppState> {
-        let task_runtime = unconfigured_runtime("task runner");
         let runtime_manager = Arc::new(RuntimeManager {
-            task_runner: task_runtime.clone(),
             pty_broker: unconfigured_runtime("pty broker"),
             window_launch: unconfigured_runtime("window launch"),
             session_management: unconfigured_runtime("session management"),
@@ -533,8 +531,6 @@ mod tests {
             public_dir: Arc::new(PathBuf::from("/tmp/nexus/public")),
             frontend_dist_dir: Arc::new(PathBuf::from("/tmp/nexus/frontend/dist")),
             runtime_manager,
-            task_manager: TaskManager::new(PathBuf::from("/tmp/nexus/tasks.json"), task_runtime)
-                .await,
             login_limiter: Arc::new(LoginRateLimiter::new()),
         })
     }

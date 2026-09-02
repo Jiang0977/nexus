@@ -66,7 +66,6 @@ export default function Terminal({ token }: Props) {
   const [isWidePC, setIsWidePC] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768)
   const [showFiles, setShowFiles] = useState(false)
   const [showWorkspace, setShowWorkspace] = useState(false)
-  const [showTasks, setShowTasks] = useState(false)
   const [splitViewPanes, setSplitViewPanes] = useState<PaneState[]>([])
   const [splitViewFocusedPaneId, setSplitViewFocusedPaneId] = useState<string | null>(null)
   const [splitViewFocusRequest, setSplitViewFocusRequest] = useState<{ requestId: number; target: PaneTarget } | null>(null)
@@ -163,7 +162,7 @@ export default function Terminal({ token }: Props) {
     token,
   })
 
-  const runtimeOverlayOpen = showSessionDrawer || showSettings || showGeneralSettings || showNewSession || showNewWindow || showPromptLibrary || showScrollback || showSessionManagerV2 || showCodexSessions || showFiles || showWorkspace || showTasks
+  const runtimeOverlayOpen = showSessionDrawer || showSettings || showGeneralSettings || showNewSession || showNewWindow || showPromptLibrary || showScrollback || showSessionManagerV2 || showCodexSessions || showFiles || showWorkspace
   const {
     containerRef,
     fitTerminal,
@@ -368,7 +367,6 @@ export default function Terminal({ token }: Props) {
     onOpenSettings: () => setShowGeneralSettings(true),
     onOpenFiles: () => setShowFiles(true),
     onOpenPromptLibrary: () => setShowPromptLibrary(true),
-    onOpenTasks: () => setShowTasks(true),
     onOpenWorkspace: () => setShowWorkspace(true),
     onUpload: handleFileUpload,
     onUploadFile: uploadFile,
@@ -548,7 +546,6 @@ export default function Terminal({ token }: Props) {
               onOpenNewWindow={handleCreateWindow}
               onOpenPromptLibrary={() => setShowPromptLibrary(true)}
               onOpenSettings={() => setShowSessionManagerV2(true)}
-              onOpenTasks={() => setShowTasks(true)}
               onOpenUpload={handleFileUpload}
               onOpenWorkspace={() => setShowWorkspace(true)}
               onToggleTheme={toggleTheme}
@@ -629,7 +626,6 @@ export default function Terminal({ token }: Props) {
       <TerminalModalStack
         activeTmuxSession={activeTmuxSession}
         activeWindowIndex={activeWindowIndex}
-        activeWindowName={windows.find((w) => w.index === activeWindowIndex)?.name ?? ''}
         activeWindowProjectPath={activeProjectPath}
         codexHistoryEnabled={codexHistoryEnabled}
         codexHistoryFocusReturnTarget={codexHistoryTriggerRef.current}
@@ -642,7 +638,6 @@ export default function Terminal({ token }: Props) {
         onClosePromptLibrary={() => setShowPromptLibrary(false)}
         onCloseSessionManager={() => setShowSettings(false)}
         onCloseSessionManagerV2={() => setShowSessionManagerV2(false)}
-        onCloseTasks={() => setShowTasks(false)}
         onCloseWorkspace={() => setShowWorkspace(false)}
         onCodexDeleteSuccess={handleCodexSessionDelete}
         onCodexResumeSuccess={handleCodexResumeSuccess}
@@ -663,12 +658,10 @@ export default function Terminal({ token }: Props) {
         showPromptLibrary={showPromptLibrary}
         showSessionManager={showSettings}
         showSessionManagerV2={showSessionManagerV2}
-        showTasks={showTasks}
         showWorkspace={showWorkspace}
         themeMode={themeMode}
         token={token}
         toggleTheme={toggleTheme}
-        windows={windows}
       />
 
       <WelcomeGuideOverlay

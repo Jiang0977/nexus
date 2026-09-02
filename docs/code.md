@@ -23,10 +23,9 @@
 9. `rust-runtime/src/codex_home.rs`
 10. `rust-runtime/src/bin/nexus-window-launch-runtime.rs`
 11. `rust-runtime/src/bin/nexus-pty-runtime.rs`
-12. `rust-runtime/src/bin/nexus-task-runtime.rs`
-13. `rust-runtime/src/native_session_registry.rs`
-14. `rust-runtime/src/native_session_cli.rs`
-15. `rust-runtime/tests/*.rs`
+12. `rust-runtime/src/native_session_registry.rs`
+13. `rust-runtime/src/native_session_cli.rs`
+14. `rust-runtime/tests/*.rs`
 
 ## 根目录里最重要的文件
 
@@ -60,7 +59,6 @@
 |---|---|
 | `rust-runtime/src/server/mod.rs` | server 入口、router 装配、服务生命周期 |
 | `rust-runtime/src/server/runtime.rs` | server 共享核心：`AppState`、managed runtimes、DTO、通用 helper |
-| `rust-runtime/src/server/tasks.rs` | task / SSE 相关 handler |
 | `rust-runtime/src/server/config.rs` | 配置、profile、feature config |
 | `rust-runtime/src/server/layouts.rs` | PC split-view active layout API 与持久化 |
 | `rust-runtime/src/server/prompts.rs` | 提示词库鉴权 CRUD/排序、校验、锁与原子 JSON 持久化 |
@@ -92,7 +90,6 @@
 | `rust-runtime/src/bin/nexus_session_runtime/backend/*.rs` | tmux/native adapter、local fake contract tests 与进程清理内部实现 |
 | `rust-runtime/src/bin/nexus-window-launch-runtime.rs` | 新建窗口和 shell 领域 dispatch；复用共享 wire protocol |
 | `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / broker 薄入口；默认 tmux，native 模式走 Rust PTY/supervisor |
-| `rust-runtime/src/bin/nexus-task-runtime.rs` | task 领域 dispatch；复用共享 wire protocol |
 | `rust-runtime/src/bin/nexus-codex-home.rs` | Codex 隔离 HOME CLI；委托共享 `codex_home` module |
 | `rust-runtime/src/bin/nexus-setup.rs` | `.env` + systemd + tmux bootstrap |
 | `rust-runtime/src/bin/nexus-native-pty-supervisor.rs` | native backend 的持久 PTY supervisor |
@@ -124,23 +121,21 @@
 1. `frontend/src/main.tsx`
 2. `frontend/src/Terminal.tsx`
 3. `frontend/src/terminal/TerminalModalStack.tsx`
-4. `frontend/src/TaskPanel.tsx`
-5. `frontend/src/WorkspaceBrowser.tsx`
-6. `frontend/src/PromptLibrary.tsx`
-7. `frontend/src/promptLibrary/api.ts`
-8. `frontend/src/terminal/terminalConnection.ts`
-9. `frontend/src/terminal/terminalApplicationScroll.ts`
-10. `frontend/src/terminal/useTerminalRuntime.ts`
-11. `frontend/src/terminal/useTerminalPaneRuntime.ts`
-12. `frontend/src/terminal/useTerminalSessions.ts`
-13. `frontend/src/terminal/useTerminalArtifacts.ts`
-14. `frontend/src/terminal/DesktopSidebar.tsx`
-15. `frontend/src/terminal/MobileSessionDrawer.tsx`
+4. `frontend/src/WorkspaceBrowser.tsx`
+5. `frontend/src/PromptLibrary.tsx`
+6. `frontend/src/promptLibrary/api.ts`
+7. `frontend/src/terminal/terminalConnection.ts`
+8. `frontend/src/terminal/terminalApplicationScroll.ts`
+9. `frontend/src/terminal/useTerminalRuntime.ts`
+10. `frontend/src/terminal/useTerminalPaneRuntime.ts`
+11. `frontend/src/terminal/useTerminalSessions.ts`
+12. `frontend/src/terminal/useTerminalArtifacts.ts`
+13. `frontend/src/terminal/DesktopSidebar.tsx`
+14. `frontend/src/terminal/MobileSessionDrawer.tsx`
 
 这样读能更快看清：
 
 - `main.tsx` 在应用启动时挂载并在 load 事件注册 `/sw.js` Service Worker
-- `TaskPanel.tsx` 负责异步任务 Web 面板：通过 Bearer 鉴权进行 create / history / delete，并通过 SSE 接收 stdout/stderr；断开连接只停止本地流式消费，不取消后台任务
 - `WorkspaceBrowser.tsx` 负责工作区文件管理：文件查看/下载使用 Authorization Bearer fetch 与 Blob URL，JWT 不进入 URL query
 - `Terminal.tsx` 只负责顶层装配
 - WebSocket URL / resize / reconnect / close policy 集中在 `terminalConnection.ts`
@@ -194,7 +189,7 @@ npm run check
 如果改动启动链或安装器，再额外跑：
 
 ```bash
-cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home --bin nexus-setup
+cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home --bin nexus-setup
 ```
 
 ## 别再踩的坑

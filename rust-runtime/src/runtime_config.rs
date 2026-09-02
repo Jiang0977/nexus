@@ -41,7 +41,6 @@ pub struct AppConfig {
     pub toolbar_config_file: PathBuf,
     pub workspace_layouts_file: PathBuf,
     pub prompts_file: PathBuf,
-    pub tasks_file: PathBuf,
     pub uploads_dir: PathBuf,
     pub proxy_vars: Vec<(String, String)>,
     pub runtime_configs: RuntimeConfigs,
@@ -118,7 +117,6 @@ impl AppConfig {
             toolbar_config_file: data_dir.join("toolbar-config.json"),
             workspace_layouts_file: data_dir.join("workspace-layouts.json"),
             prompts_file: data_dir.join("prompts.json"),
-            tasks_file: data_dir.join("tasks.json"),
             uploads_dir: data_dir.join("uploads"),
             proxy_vars: collect_proxy_vars(&dotenv),
             runtime_configs: RuntimeConfigs::from_env(&dotenv, &runtime_root),
@@ -170,7 +168,6 @@ pub fn read_session_backend_config_file(path: &Path) -> String {
 }
 
 pub struct RuntimeConfigs {
-    pub task_runner: RuntimeServiceConfig,
     pub pty_broker: RuntimeServiceConfig,
     pub window_launch: RuntimeServiceConfig,
     pub session_management: RuntimeServiceConfig,
@@ -179,14 +176,6 @@ pub struct RuntimeConfigs {
 impl RuntimeConfigs {
     pub fn from_env(dotenv: &HashMap<String, String>, runtime_root: &Path) -> Self {
         Self {
-            task_runner: RuntimeServiceConfig::from_env(
-                "task runner",
-                "NEXUS_TASK_RUNNER_RUST_EXECUTABLE",
-                "NEXUS_TASK_RUNNER_RUST_ARGS",
-                "NEXUS_TASK_RUNNER_RUST_READY_TIMEOUT_MS",
-                dotenv,
-                runtime_root,
-            ),
             pty_broker: RuntimeServiceConfig::from_env(
                 "pty broker",
                 "NEXUS_PTY_BROKER_RUST_EXECUTABLE",

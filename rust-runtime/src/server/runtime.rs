@@ -2,14 +2,8 @@ use super::*;
 
 pub(super) const DEFAULT_INTERACTIVE_SHELL: &str = "unset HOST; exec zsh -i";
 pub(super) const TOKEN_TTL_SECONDS: u64 = 30 * 24 * 60 * 60;
-pub(super) const DEFAULT_TASK_HISTORY_LIMIT: usize = 50;
-pub(super) const DEFAULT_MAX_TASKS: usize = 200;
-pub(super) const MAX_TASK_OUTPUT_LENGTH: usize = 10_000;
-pub(super) const MAX_TASK_ERROR_LENGTH: usize = 1_000;
-pub(super) const MAX_TASK_PROMPT_LENGTH: usize = 1_000;
 pub(super) const OUTPUT_SNAPSHOT_FALLBACK_LINES: u32 = 200;
 pub(super) const OUTPUT_SNAPSHOT_FALLBACK_IDLE_MS: u64 = 4_000;
-pub(super) const TASK_INTERRUPT_MESSAGE: &str = "(服务重启，任务中断)";
 pub(super) const CODEX_LOGIN_STATUS_TIMEOUT_MS: u64 = 15_000;
 pub(super) const CODEX_EXEC_VALIDATE_TIMEOUT_MS: u64 = 120_000;
 pub(super) const CC_SWITCH_SYNC_SOURCE: &str = "cc-switch";
@@ -160,7 +154,6 @@ pub(super) struct AppState {
     pub(super) public_dir: Arc<PathBuf>,
     pub(super) frontend_dist_dir: Arc<PathBuf>,
     pub(super) runtime_manager: Arc<RuntimeManager>,
-    pub(super) task_manager: Arc<TaskManager>,
     pub(super) login_limiter: Arc<LoginRateLimiter>,
 }
 
@@ -191,7 +184,6 @@ impl AppState {
 }
 
 pub(super) struct RuntimeManager {
-    pub(super) task_runner: Arc<ManagedRuntime>,
     pub(super) pty_broker: Arc<ManagedRuntime>,
     pub(super) window_launch: Arc<ManagedRuntime>,
     pub(super) session_management: Arc<ManagedRuntime>,
@@ -213,7 +205,6 @@ impl RuntimeManager {
         }
 
         Self {
-            task_runner: ManagedRuntime::boot(configs.task_runner, Vec::new()).await,
             pty_broker: ManagedRuntime::boot(configs.pty_broker, pty_broker_env).await,
             window_launch: ManagedRuntime::boot(
                 configs.window_launch,
@@ -235,7 +226,6 @@ impl RuntimeManager {
                 "ready": true,
                 "source": "nexus-server",
             },
-            "taskRunner": self.task_runner.runtime_status().await,
             "ptyBroker": self.pty_broker.runtime_status().await,
             "windowLaunch": self.window_launch.runtime_status().await,
             "sessionManagement": self.session_management.runtime_status().await,
@@ -243,7 +233,6 @@ impl RuntimeManager {
     }
 
     pub(super) async fn shutdown_all(&self) {
-        self.task_runner.shutdown().await;
         self.pty_broker.shutdown().await;
         self.window_launch.shutdown().await;
         self.session_management.shutdown().await;
@@ -959,17 +948,6 @@ pub(super) struct WindowLaunchBody {
     pub(super) session: Option<String>,
 }
 
-#[derive(Deserialize, Default)]
-pub(super) struct TaskBody {
-    #[serde(default, alias = "sessionName")]
-    pub(super) session_name: Option<String>,
-    pub(super) engine: Option<String>,
-    pub(super) prompt: Option<String>,
-    pub(super) profile: Option<String>,
-    #[serde(default, alias = "tmuxSession")]
-    pub(super) tmux_session: Option<String>,
-}
-
 pub(super) async fn send_websocket_close(
     socket: &mut WebSocket,
     code: u16,
@@ -1355,44 +1333,6 @@ pub(super) async fn resolve_session_cwd_from_runtime(
     }
 }
 
-pub(super) async fn resolve_task_cwd_from_runtime(
-    state: &AppState,
-    tmux_session: &str,
-    session_name: &str,
-) -> String {
-    if session_name.trim().is_empty() {
-        return state.workspace_root.as_ref().clone();
-    }
-
-    match state
-        .runtime_manager
-        .session_management_request(
-            "listProjectChannels",
-            json!({ "projectName": tmux_session }),
-        )
-        .await
-    {
-        Ok(Value::Object(payload)) => payload
-            .get("channels")
-            .and_then(Value::as_array)
-            .and_then(|channels| {
-                channels.iter().find_map(|channel| {
-                    let name = channel.get("name").and_then(Value::as_str)?;
-                    if name != session_name {
-                        return None;
-                    }
-                    channel
-                        .get("cwd")
-                        .and_then(Value::as_str)
-                        .filter(|value| !value.is_empty())
-                        .map(ToString::to_string)
-                })
-            })
-            .unwrap_or_else(|| state.workspace_root.as_ref().clone()),
-        _ => state.workspace_root.as_ref().clone(),
-    }
-}
-
 pub(super) async fn capture_tmux_scrollback(
     session: &str,
     window_index: u32,
@@ -1694,11 +1634,6 @@ pub(super) fn spawn_stderr_logger(display_name: &'static str, stderr: ChildStder
             }
         }
     });
-}
-
-pub(super) fn to_sse_event(frame: TaskSseFrame) -> SseEvent {
-    let payload = serde_json::to_string(&frame.payload).unwrap_or_else(|_| "{}".to_string());
-    SseEvent::default().event(frame.event).data(payload)
 }
 
 pub(super) fn iso_timestamp_now() -> String {

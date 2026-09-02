@@ -8,8 +8,7 @@ use crate::project_defaults::{get_project_default_payload, remember_project_defa
 use crate::runtime_config::{AppConfig, RuntimeConfigs, RuntimeServiceConfig};
 use crate::sanitize::{
     parse_output_snapshot_tail_chars, sanitize_managed_upload_filename, sanitize_project_name,
-    sanitize_window_name, sanitize_workspace_upload_filename, truncate_head, truncate_tail,
-    truncate_websocket_close_reason,
+    sanitize_window_name, sanitize_workspace_upload_filename, truncate_websocket_close_reason,
 };
 use crate::shell::{
     build_interactive_shell_command, build_native_shell_launch_plan, build_window_name,
@@ -21,39 +20,34 @@ use axum::body::Body;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, Json, Multipart, Path as AxumPath, Query, State};
 use axum::http::header::{
-    AUTHORIZATION, CACHE_CONTROL, CONNECTION, CONTENT_DISPOSITION, CONTENT_TYPE, RETRY_AFTER,
+    AUTHORIZATION, CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_TYPE, RETRY_AFTER,
 };
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
-use axum::response::sse::{Event as SseEvent, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post, put};
 use bcrypt::verify;
 use chrono::Utc;
-use futures_core::Stream;
 use jsonwebtoken::{EncodingKey, Header, encode};
 use mime_guess::from_path;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::env;
 use std::error::Error;
 use std::fs as stdfs;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::task::{Context, Poll};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
-use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
+use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio::time::{Duration, timeout};
 use tower_http::compression::CompressionLayer;
 
@@ -62,7 +56,6 @@ mod layouts;
 mod prompts;
 mod runtime;
 mod session_ws;
-mod tasks;
 mod version;
 mod workspace;
 
@@ -71,7 +64,6 @@ use self::layouts::*;
 use self::prompts::*;
 use self::runtime::*;
 use self::session_ws::*;
-use self::tasks::*;
 use self::version::*;
 use self::workspace::*;
 
@@ -92,15 +84,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         )
         .await,
     );
-    if let Some(parent) = config.tasks_file.parent() {
-        fs::create_dir_all(parent).await?;
-    }
     fs::create_dir_all(&config.uploads_dir).await?;
-    let task_manager = TaskManager::new(
-        config.tasks_file.clone(),
-        runtime_manager.task_runner.clone(),
-    )
-    .await;
     let prompt_store = PromptStore::new(config.prompts_file);
     let bind_addr = format!("{}:{}", config.host, config.port);
     let state = Arc::new(AppState {
@@ -126,7 +110,6 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         public_dir: Arc::new(config.project_root.join("public")),
         frontend_dist_dir: Arc::new(config.project_root.join("frontend").join("dist")),
         runtime_manager: runtime_manager.clone(),
-        task_manager,
         login_limiter: Arc::new(LoginRateLimiter::new()),
     });
     let app = build_router(state);
@@ -211,9 +194,6 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/workspace/copy", post(api_workspace_copy_entry))
         .route("/api/workspace/move", post(api_workspace_move_entry))
         .route("/ws", get(api_ws))
-        .route("/api/tasks", get(api_tasks))
-        .route("/api/tasks", post(api_create_task))
-        .route("/api/tasks/{id}", delete(api_delete_task))
         .route("/api/upload", post(api_upload_workspace_file))
         .route("/api/files/upload", post(api_upload_managed_file))
         .route("/api/files", get(api_files))

@@ -15,7 +15,6 @@ import { fileURLToPath } from 'node:url'
 import WebSocket from 'ws'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const TASK_FIXTURE = join(ROOT, 'tests', 'fixtures', 'fakeTaskRustRuntime.js')
 const PTY_FIXTURE = join(ROOT, 'tests', 'fixtures', 'fakePtyRustRuntime.js')
 const WINDOW_LAUNCH_FIXTURE = join(ROOT, 'tests', 'fixtures', 'fakeWindowLaunchRustRuntime.js')
 const SESSION_MANAGEMENT_FIXTURE = join(ROOT, 'tests', 'fixtures', 'fakeSessionManagementRustRuntime.js')
@@ -619,25 +618,6 @@ function waitForWebSocketClose(ws) {
   })
 }
 
-function parseSseTranscript(transcript) {
-  return String(transcript)
-    .trim()
-    .split('\n\n')
-    .filter(Boolean)
-    .map((block) => {
-      let event = ''
-      let data = ''
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event: ')) event = line.slice(7)
-        if (line.startsWith('data: ')) data += line.slice(6)
-      }
-      return {
-        event,
-        data: data ? JSON.parse(data) : null,
-      }
-    })
-}
-
 test('rust nexus-server serves static assets and spa fallback', async (t) => {
   ensureRustServerBuilt()
 
@@ -852,12 +832,6 @@ test('rust nexus-server logs in and reports runtime status', async (t) => {
       ready: true,
       source: 'nexus-server',
     },
-    taskRunner: {
-      mode: 'unconfigured',
-      ready: false,
-      source: 'nexus-server',
-      error: 'runtime executable not configured',
-    },
     ptyBroker: {
       mode: 'unconfigured',
       ready: false,
@@ -892,8 +866,6 @@ test('rust nexus-server reports configured child runtime status', async (t) => {
     PORT: String(port),
     JWT_SECRET: 'rust-server-secret',
     ACC_PASSWORD_HASH: passwordHash,
-    NEXUS_TASK_RUNNER_RUST_EXECUTABLE: process.execPath,
-    NEXUS_TASK_RUNNER_RUST_ARGS: JSON.stringify([TASK_FIXTURE]),
     NEXUS_PTY_BROKER_RUST_EXECUTABLE: process.execPath,
     NEXUS_PTY_BROKER_RUST_ARGS: JSON.stringify([PTY_FIXTURE]),
     NEXUS_WINDOW_LAUNCH_RUST_EXECUTABLE: process.execPath,
@@ -920,17 +892,6 @@ test('rust nexus-server reports configured child runtime status', async (t) => {
       mode: 'rust',
       ready: true,
       source: 'nexus-server',
-    },
-    taskRunner: {
-      mode: 'rust',
-      ready: true,
-      source: 'fake-task-rust-runtime',
-      version: '0.0-test',
-      capabilities: {
-        tasks: true,
-        admin: true,
-      },
-      runningTasks: 0,
     },
     ptyBroker: {
       mode: 'rust',
@@ -967,7 +928,6 @@ test('rust nexus-server reports configured child runtime status', async (t) => {
       windowsCreated: 0,
     },
   })
-  assert.match(getLogs(), /task runner runtime ready: fake-task-rust-runtime@0\.0-test/)
   assert.match(getLogs(), /pty broker runtime ready: fake-pty-rust-runtime@0\.0-test/)
   assert.match(getLogs(), /window launch runtime ready: fake-window-launch-rust-runtime@0\.0-test/)
   assert.match(getLogs(), /session management runtime ready: fake-session-management-rust-runtime@0\.0-test/)
@@ -2276,316 +2236,6 @@ test('rust nexus-server syncs codex history from cc-switch into the global codex
     name: 'shell_exec',
     description: 'execute shell command',
   })
-})
-
-test('rust nexus-server serves task history, SSE task execution, and task deletion', async (t) => {
-  ensureRustServerBuilt()
-
-  const projectRoot = createProjectFixture()
-  const dataDir = mkdtempSync(join(tmpdir(), 'nexus-rust-server-task-data-'))
-  const captureFile = join(dataDir, 'task-runtime-calls.jsonl')
-  mkdirSync(join(dataDir, 'codex-configs'), { recursive: true })
-  writeFileSync(
-    join(dataDir, 'codex-configs', 'ops.json'),
-    JSON.stringify({ OPENAI_API_KEY: 'sk-ops-key', MODEL: 'o3' }) + '\n',
-  )
-  writeFileSync(
-    join(dataDir, 'tasks.json'),
-    `${JSON.stringify([
-      {
-        id: 'finished-1',
-        status: 'success',
-        output: 'done',
-        error: '',
-        createdAt: '2026-04-01T00:00:00.000Z',
-      },
-      {
-        id: 'running-1',
-        status: 'running',
-        output: '',
-        error: '',
-        createdAt: '2026-04-01T00:05:00.000Z',
-      },
-    ], null, 2)}\n`,
-  )
-  const port = await getFreePort()
-  const password = 'task-route-password'
-  const passwordHash = bcrypt.hashSync(password, 8)
-  const { child } = spawnRustServer({
-    NEXUS_PROJECT_ROOT: projectRoot,
-    NEXUS_DATA_DIR: dataDir,
-    HOST: '127.0.0.1',
-    PORT: String(port),
-    JWT_SECRET: 'rust-server-secret',
-    ACC_PASSWORD_HASH: passwordHash,
-    NEXUS_TASK_RUNNER_RUST_EXECUTABLE: process.execPath,
-    NEXUS_TASK_RUNNER_RUST_ARGS: JSON.stringify([TASK_FIXTURE]),
-    FAKE_TASK_RUNTIME_CAPTURE_FILE: captureFile,
-    NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
-    NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
-  })
-
-  t.after(async () => {
-    await stopChild(child)
-    rmSync(projectRoot, { recursive: true, force: true })
-    rmSync(dataDir, { recursive: true, force: true })
-  })
-
-  await waitForHealthyHttp(port, child)
-
-  const { token } = await login(port, password)
-  const headers = { Authorization: `Bearer ${token}` }
-  const jsonHeaders = {
-    ...headers,
-    'Content-Type': 'application/json',
-  }
-
-  const historyBeforeResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })
-  assert.equal(historyBeforeResponse.status, 200)
-  const historyBefore = await historyBeforeResponse.json()
-  assert.equal(historyBefore[0].id, 'running-1')
-  assert.equal(historyBefore[0].status, 'error')
-  assert.equal(historyBefore[0].error, '(服务重启，任务中断)')
-  assert.ok(historyBefore[0].completedAt)
-  assert.equal(historyBefore[1].id, 'finished-1')
-
-  const createTaskResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
-    method: 'POST',
-    headers: jsonHeaders,
-    body: JSON.stringify({
-      session_name: 'review',
-      prompt: 'ship it',
-      profile: 'ops',
-      tmux_session: 'demo-project',
-    }),
-  })
-
-  assert.equal(createTaskResponse.status, 200)
-  assert.match(createTaskResponse.headers.get('content-type') || '', /text\/event-stream/)
-
-  const taskEvents = parseSseTranscript(await createTaskResponse.text())
-  assert.deepEqual(taskEvents.map((event) => event.event), ['start', 'output', 'done'])
-  const taskId = taskEvents[0].data.taskId
-  assert.equal(taskEvents[0].data.session_name, 'review')
-  assert.equal(taskEvents[0].data.prompt, 'ship it')
-  assert.ok(taskEvents[0].data.createdAt)
-  assert.deepEqual(taskEvents[1].data, { chunk: 'fake:ship it' })
-  assert.deepEqual(taskEvents[2].data, {
-    taskId,
-    status: 'success',
-    exitCode: 0,
-  })
-
-  const historyAfterResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })
-  assert.equal(historyAfterResponse.status, 200)
-  const historyAfter = await historyAfterResponse.json()
-  assert.equal(historyAfter[0].id, taskId)
-  assert.equal(historyAfter[0].session_name, 'review')
-  assert.equal(historyAfter[0].tmux_session, 'demo-project')
-  assert.equal(historyAfter[0].status, 'success')
-  assert.equal(historyAfter[0].output, 'fake:ship it')
-  assert.equal(historyAfter[0].error, '')
-  assert.equal(historyAfter[0].source, 'web')
-  assert.ok(historyAfter[0].completedAt)
-
-  const deleteTaskResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}`, {
-    method: 'DELETE',
-    headers,
-  })
-  assert.equal(deleteTaskResponse.status, 200)
-  assert.deepEqual(await deleteTaskResponse.json(), { ok: true })
-
-  const historyAfterDeleteResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })
-  const historyAfterDelete = await historyAfterDeleteResponse.json()
-  assert.equal(historyAfterDelete.some((task) => task.id === taskId), false)
-
-  const persistedTasks = JSON.parse(readFileSync(join(dataDir, 'tasks.json'), 'utf8'))
-  assert.equal(persistedTasks.some((task) => task.id === taskId), false)
-
-  // Deleting non-existent task is idempotent and returns 200
-  const deleteMissingResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/non-existent-task-id`, {
-    method: 'DELETE',
-    headers,
-  })
-  assert.equal(deleteMissingResponse.status, 200)
-  assert.deepEqual(await deleteMissingResponse.json(), { ok: true })
-
-  // 1. Invalid engine returns 400
-  const invalidEngineResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
-    method: 'POST',
-    headers: jsonHeaders,
-    body: JSON.stringify({
-      session_name: 'review',
-      prompt: 'test bad engine',
-      engine: 'invalid-engine',
-      tmux_session: 'demo-project',
-    }),
-  })
-  assert.equal(invalidEngineResponse.status, 400)
-  assert.deepEqual(await invalidEngineResponse.json(), { error: 'invalid engine' })
-
-  // 2. Unknown Codex profile returns 400
-  const unknownProfileResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
-    method: 'POST',
-    headers: jsonHeaders,
-    body: JSON.stringify({
-      session_name: 'review',
-      prompt: 'test unknown profile',
-      engine: 'codex',
-      profile: 'missing-prof',
-      tmux_session: 'demo-project',
-    }),
-  })
-  assert.equal(unknownProfileResponse.status, 400)
-  assert.deepEqual(await unknownProfileResponse.json(), { error: "codex profile 'missing-prof' not found" })
-
-  // 3. Valid Codex task forwards codex engine, profile, codexTaskHome and codexConfigsDir to runtime
-  const createCodexResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
-    method: 'POST',
-    headers: jsonHeaders,
-    body: JSON.stringify({
-      session_name: 'review',
-      prompt: 'codex task prompt',
-      engine: 'codex',
-      profile: 'ops',
-      tmux_session: 'demo-project',
-    }),
-  })
-  assert.equal(createCodexResponse.status, 200)
-  assert.match(createCodexResponse.headers.get('content-type') || '', /text\/event-stream/)
-  const codexEvents = parseSseTranscript(await createCodexResponse.text())
-  const codexTaskId = codexEvents[0].data.taskId
-
-  // Verify captured payloads sent from server to runtime
-  const capturedLines = readFileSync(captureFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
-  assert.equal(capturedLines.length, 2)
-
-  // First call was claude default task (missing engine -> defaults to claude, profile: "ops", no codex internal paths)
-  const claudeCall = capturedLines[0]
-  assert.equal(claudeCall.method, 'startTask')
-  assert.equal(claudeCall.params.taskId, taskId)
-  assert.equal(claudeCall.params.engine, 'claude')
-  assert.equal(claudeCall.params.profile, 'ops')
-  assert.equal(claudeCall.params.prompt, 'ship it')
-  assert.equal(claudeCall.params.codexTaskHome, undefined)
-  assert.equal(claudeCall.params.codexConfigsDir, undefined)
-
-  // Second call was codex task
-  const codexCall = capturedLines[1]
-  assert.equal(codexCall.method, 'startTask')
-  assert.equal(codexCall.params.taskId, codexTaskId)
-  assert.equal(codexCall.params.engine, 'codex')
-  assert.equal(codexCall.params.profile, 'ops')
-  assert.equal(codexCall.params.prompt, 'codex task prompt')
-  assert.ok(codexCall.params.codexTaskHome.includes('codex-task-runtime'))
-  assert.ok(codexCall.params.codexConfigsDir.includes('codex-configs'))
-
-  // Check persistence of codex task
-  const historyWithCodex = await (await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })).json()
-  const savedCodexTask = historyWithCodex.find((t) => t.id === codexTaskId)
-  assert.ok(savedCodexTask)
-  assert.equal(savedCodexTask.engine, 'codex')
-  assert.equal(savedCodexTask.profile, 'ops')
-  assert.equal(savedCodexTask.prompt, 'codex task prompt')
-  assert.equal(savedCodexTask.status, 'success')
-})
-
-test('rust nexus-server keeps tasks running after the SSE client disconnects', async (t) => {
-  ensureRustServerBuilt()
-
-  const projectRoot = createProjectFixture()
-  const dataDir = mkdtempSync(join(tmpdir(), 'nexus-rust-server-task-disconnect-data-'))
-  const port = await getFreePort()
-  const password = 'task-disconnect-password'
-  const passwordHash = bcrypt.hashSync(password, 8)
-  const { child } = spawnRustServer({
-    NEXUS_PROJECT_ROOT: projectRoot,
-    NEXUS_DATA_DIR: dataDir,
-    HOST: '127.0.0.1',
-    PORT: String(port),
-    JWT_SECRET: 'rust-server-secret',
-    ACC_PASSWORD_HASH: passwordHash,
-    NEXUS_TASK_RUNNER_RUST_EXECUTABLE: process.execPath,
-    NEXUS_TASK_RUNNER_RUST_ARGS: JSON.stringify([TASK_FIXTURE]),
-    NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
-    NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
-    FAKE_TASK_RUNTIME_DELAY_MS: '200',
-  })
-
-  t.after(async () => {
-    await stopChild(child)
-    rmSync(projectRoot, { recursive: true, force: true })
-    rmSync(dataDir, { recursive: true, force: true })
-  })
-
-  await waitForHealthyHttp(port, child)
-
-  const { token } = await login(port, password)
-  const headers = { Authorization: `Bearer ${token}` }
-  const jsonHeaders = {
-    ...headers,
-    'Content-Type': 'application/json',
-  }
-
-  const createTaskResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
-    method: 'POST',
-    headers: jsonHeaders,
-    body: JSON.stringify({
-      session_name: 'review',
-      prompt: 'keep running',
-      tmux_session: 'demo-project',
-    }),
-  })
-
-  assert.equal(createTaskResponse.status, 200)
-  assert.match(createTaskResponse.headers.get('content-type') || '', /text\/event-stream/)
-  await createTaskResponse.body?.cancel()
-  await delay(50)
-
-  let sawRunning = false
-  let runningTaskId = null
-  const completedTask = await waitFor(async () => {
-    const historyResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })
-    assert.equal(historyResponse.status, 200)
-    const history = await historyResponse.json()
-    const task = history.find((item) => item.prompt === 'keep running')
-    if (!task) return false
-    if (task.status === 'running') {
-      sawRunning = true
-      runningTaskId = task.id
-      // Assert DELETE on running task returns 409 Conflict and task remains in history
-      const deleteAttemptResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/${task.id}`, {
-        method: 'DELETE',
-        headers,
-      })
-      assert.equal(deleteAttemptResponse.status, 409)
-      const deleteAttemptBody = await deleteAttemptResponse.json()
-      assert.deepEqual(deleteAttemptBody, { error: 'task is running' })
-      return false
-    }
-    if (task.status === 'success') {
-      return task
-    }
-    throw new Error(`task ended unexpectedly: ${JSON.stringify(task)}`)
-  }, 5000)
-
-  assert.equal(sawRunning, true)
-  assert.ok(runningTaskId)
-  assert.equal(completedTask.session_name, 'review')
-  assert.equal(completedTask.status, 'success')
-  assert.equal(completedTask.output, 'fake:keep running')
-  assert.equal(completedTask.error, '')
-
-  // Deleting the completed task succeeds with 200
-  const deleteSuccessResponse = await fetch(`http://127.0.0.1:${port}/api/tasks/${runningTaskId}`, {
-    method: 'DELETE',
-    headers,
-  })
-  assert.equal(deleteSuccessResponse.status, 200)
-  assert.deepEqual(await deleteSuccessResponse.json(), { ok: true })
-
-  const historyAfterDoneDelete = await (await fetch(`http://127.0.0.1:${port}/api/tasks`, { headers })).json()
-  assert.equal(historyAfterDoneDelete.some((t) => t.id === runningTaskId), false)
 })
 
 test('rust nexus-server proxies session and codex history routes', async (t) => {

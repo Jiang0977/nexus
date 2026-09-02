@@ -2,11 +2,6 @@
 name = "nexus-rust-runtime"
 version = "0.1.0"
 edition = "2024"
-
-[[bin]]
-name = "nexus-task-runtime"
-path = "src/bin/nexus-task-runtime.rs"
-
 [[bin]]
 name = "nexus-pty-runtime"
 path = "src/bin/nexus-pty-runtime.rs"
@@ -45,7 +40,6 @@ anyhow = "1"
 axum = { version = "0.8", features = ["json", "http1", "multipart", "ws"] }
 bcrypt = "0.16"
 chrono = { version = "0.4", default-features = true, features = ["clock", "serde"] }
-futures-core = "0.3"
 jsonwebtoken = "9"
 mime_guess = "2"
 portable-pty = "0.9"

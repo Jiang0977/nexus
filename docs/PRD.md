@@ -54,7 +54,6 @@
 
 | ID | Feature | 场景 |
 |---|---|---|
-| F-13 | `claude -p` 非交互派发 | 发一条 prompt，AI 在后台处理，前端显示结果卡片；不占用交互 PTY |
 | F-14 | 上下文附件同步 | 在移动端将图片/文件/文本片段发送给指定 Agent session |
 
 ### Nice（v4：直觉化项目管理）
@@ -66,23 +65,6 @@
 | **F-19** | **项目-窗口两级结构** | **项目 = 目录，窗口 = 同目录标签**。新建项目时选目录；新窗口自动继承当前目录；消灭「每次新建都要选目录」的重复操作 |
 | **F-20** | **统一会话管理界面** | **借鉴 Slack Workspace/Channel 模式**：项目列表（下部）+ 窗口列表（上部），新建按钮分区放置，视觉层次清晰 |
 | **F-21** | **PC split-view 工作区** | **右侧主工作区支持 single / vertical / horizontal / 2x2 / 3x3 多 pane terminal**；从左侧现有「窗口」channel 行拖入 pane，布局保存到 `data/workspace-layouts.json`；移动端保持单 pane |
-
----
-
-## Feature Detail: Web 异步任务（F-13）
-
-```
-POST /api/tasks
-  body: { session_name, prompt, tmux_session }
-  → SSE start/output/error/done 流式输出
-  → Web TaskPanel 交互（history/view/reuse/delete）
-```
-
-**设计原则与行为**：
-- 任务派发与交互终端解耦：交互 PTY 继续用于实时对话，tasks API 用于异步任务，两者共存。
-- Web TaskPanel 支持 history、view、reuse、delete。
-- 运行中任务不可删除。
-- 关闭面板或 SSE 断开不取消后台任务，可从历史查看。
 
 ---
 

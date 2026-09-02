@@ -25,7 +25,6 @@
 以下只是候选，不是已承诺 backlog；进入开发前必须重新写目标、边界和验证计划：
 
 - native backend 生产化：真实 macOS / Windows / WSL2 验证、native browser smoke、registry migration/repair、灰度与回滚演练。
-- task history ANSI output。
 - 开源发布/生产演练：跨平台验证、真实部署演练、回滚演练和发布证据。
 
 native 当前仍是 opt-in/staging。默认生产路径保持 tmux，详见 [native-session-backend-cross-platform.md](designs/native-session-backend-cross-platform.md)。

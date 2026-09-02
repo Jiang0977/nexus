@@ -2,7 +2,6 @@ import { lazy, Suspense, type RefObject } from 'react'
 import type { SessionManagerV2Handle } from '../SessionManagerV2'
 import type { ShellType } from '../shellType'
 import type { ThemeMode } from './theme'
-import type { TmuxWindow } from './useTerminalSessions'
 
 const loadSessionManager = () => import('../SessionManager')
 export const preloadSessionManagerV2 = () => import('../SessionManagerV2')
@@ -12,7 +11,6 @@ const loadFilePanel = () => import('../FilePanel')
 const loadWorkspaceBrowser = () => import('../WorkspaceBrowser')
 const loadGeneralSettings = () => import('../GeneralSettings')
 const loadPromptLibrary = () => import('../PromptLibrary')
-const loadTaskPanel = () => import('../TaskPanel')
 export const preloadCodexSessionsPanel = () => import('../CodexSessionsPanel')
 
 const SessionManager = lazy(loadSessionManager)
@@ -23,13 +21,11 @@ const FilePanel = lazy(loadFilePanel)
 const WorkspaceBrowser = lazy(loadWorkspaceBrowser)
 const GeneralSettings = lazy(loadGeneralSettings)
 const PromptLibrary = lazy(loadPromptLibrary)
-const TaskPanel = lazy(loadTaskPanel)
 const CodexSessionsPanel = lazy(preloadCodexSessionsPanel)
 
 interface Props {
   activeTmuxSession: string
   activeWindowIndex: number
-  activeWindowName: string
   activeWindowProjectPath?: string
   codexHistoryEnabled: boolean
   codexHistoryFocusReturnTarget: HTMLElement | null
@@ -42,7 +38,6 @@ interface Props {
   onClosePromptLibrary: () => void
   onCloseSessionManager: () => void
   onCloseSessionManagerV2: () => void
-  onCloseTasks: () => void
   onCloseWorkspace: () => void
   onCodexDeleteSuccess: (closedWindowIndexes: number[]) => void | Promise<void>
   onCodexResumeSuccess: (index: number) => void
@@ -63,18 +58,15 @@ interface Props {
   showPromptLibrary: boolean
   showSessionManager: boolean
   showSessionManagerV2: boolean
-  showTasks: boolean
   showWorkspace: boolean
   themeMode: ThemeMode
   token: string
   toggleTheme: () => void
-  windows: TmuxWindow[]
 }
 
 export function TerminalModalStack({
   activeTmuxSession,
   activeWindowIndex,
-  activeWindowName,
   activeWindowProjectPath,
   codexHistoryEnabled,
   codexHistoryFocusReturnTarget,
@@ -87,7 +79,6 @@ export function TerminalModalStack({
   onClosePromptLibrary,
   onCloseSessionManager,
   onCloseSessionManagerV2,
-  onCloseTasks,
   onCloseWorkspace,
   onCodexDeleteSuccess,
   onCodexResumeSuccess,
@@ -108,12 +99,10 @@ export function TerminalModalStack({
   showPromptLibrary,
   showSessionManager,
   showSessionManagerV2,
-  showTasks,
   showWorkspace,
   themeMode,
   token,
   toggleTheme,
-  windows,
 }: Props) {
   return (
     <>
@@ -131,17 +120,6 @@ export function TerminalModalStack({
             token={token}
             onClose={onClosePromptLibrary}
             onInsertToTerminal={onInsertPromptToTerminal}
-          />
-        </Suspense>
-      )}
-      {showTasks && (
-        <Suspense fallback={null}>
-          <TaskPanel
-            token={token}
-            windows={windows}
-            activeWindowName={activeWindowName}
-            tmuxSession={activeTmuxSession}
-            onClose={onCloseTasks}
           />
         </Suspense>
       )}

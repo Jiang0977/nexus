@@ -767,7 +767,6 @@ dependencies = [
  "axum",
  "bcrypt",
  "chrono",
- "futures-core",
  "getrandom 0.2.17",
  "jsonwebtoken",
  "mime_guess",

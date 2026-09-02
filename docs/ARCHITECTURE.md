@@ -79,7 +79,6 @@ bash start.sh
 |---|---|
 | `rust-runtime/src/server/mod.rs` | server 入口、router 装配、服务启动与 graceful shutdown |
 | `rust-runtime/src/server/runtime.rs` | server 共享核心：`AppState`、managed runtimes、请求 DTO 与通用 helper |
-| `rust-runtime/src/server/tasks.rs` | task runtime 相关 HTTP / SSE 行为 |
 | `rust-runtime/src/server/config.rs` | 配置读取、profile / feature config 入口 |
 | `rust-runtime/src/server/layouts.rs` | PC split-view active layout API 与 `data/workspace-layouts.json` 持久化 |
 | `rust-runtime/src/server/prompts.rs` | 单用户提示词库的鉴权 CRUD/排序、校验、并发锁与 `data/prompts.json` 原子持久化 |
@@ -110,7 +109,6 @@ bash start.sh
 | `rust-runtime/src/bin/nexus_session_runtime/backend/support.rs` | native process/runtime cleanup 等 adapter 内部 helper |
 | `rust-runtime/src/bin/nexus-window-launch-runtime.rs` | 新建窗口和 shell 的领域 dispatch；wire contract 复用共享 protocol |
 | `rust-runtime/src/bin/nexus-pty-runtime.rs` | PTY attach / output / broker 的薄入口 |
-| `rust-runtime/src/bin/nexus-task-runtime.rs` | task 领域 dispatch；wire contract 复用共享 protocol |
 | `rust-runtime/src/bin/nexus-codex-home.rs` | Codex 隔离 HOME CLI；实际物化委托给共享 `codex_home` module |
 | `rust-runtime/src/bin/nexus-setup.rs` | `.env` + systemd user units + tmux bootstrap |
 | `rust-runtime/src/bin/nexus-native-pty-supervisor.rs` | native backend 的持久 PTY supervisor |
@@ -154,7 +152,6 @@ bash start.sh
 | 路径 | 作用 |
 |---|---|
 | `frontend/src/main.tsx` | 应用挂载入口，并在页面 load 事件触发时注册 `/sw.js` Service Worker |
-| `frontend/src/TaskPanel.tsx` | 异步任务 Web 面板：通过 Bearer 鉴权进行 create / history / delete，并通过 SSE 接收 stdout/stderr；断开连接只停止本地流式消费，不取消后台任务 |
 | `frontend/src/WorkspaceBrowser.tsx` | 工作区文件管理：文件树、编辑、上传与管理；文件查看/下载使用 Authorization Bearer fetch 与 Blob URL，JWT 不进入 URL query |
 | `frontend/src/Terminal.tsx` | 顶层编排：overlay、drawer、sidebar、toolbar、lazy 面板装配 |
 | `frontend/src/PromptLibrary.tsx` | 提示词库列表/编辑器、搜索、拖拽排序、复制、列表直插当前终端、脏状态与响应式交互 |
@@ -184,7 +181,6 @@ bash start.sh
 
 | 路径 | 内容 |
 |---|---|
-| `data/tasks.json` | 异步任务历史 |
 | `data/toolbar-config.json` | 工具栏配置 |
 | `data/project-shell-defaults.json` | 项目默认 shell / profile |
 | `data/workspace-layouts.json` | PC split-view active layout；坏文件/非法内容 fail-open 到默认 single |
@@ -204,8 +200,8 @@ bash start.sh
 - native 模式下 `data/native-sessions/session.db` 是 native project/channel/process metadata 事实源
 - `~/.codex` 是共享 Codex 历史与 skills 事实源
 - `nexus-codex-home` 负责物化 Codex 隔离 HOME；部署链必须构建它，否则 profile channel 可能拿到旧的 `.codex` 物化逻辑
-- `data/` 主要保存配置和任务历史；只有 native backend 引入了受限的 SQLite registry，不要把它扩张成通用业务数据库
-- `data/prompts.json` 是供交互式终端复用的提示词库，不是 `/api/tasks` 的执行历史；正文插入当前终端时不会额外发送回车
+- `data/` 主要保存配置与本地状态；只有 native backend 引入了受限的 SQLite registry，不要把它扩张成通用业务数据库
+- `data/prompts.json` 是供交互式终端复用的提示词库；正文插入当前终端时不会额外发送回车
 
 ## 运维现实
 

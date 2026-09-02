@@ -43,7 +43,7 @@ git status --short
 test -f frontend/dist/index.html
 npm run check
 cargo fmt --manifest-path rust-runtime/Cargo.toml --check
-cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-task-runtime --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
+cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime --bin nexus-codex-home
 ```
 
 如果本次改了前端源码，再额外执行：
@@ -347,7 +347,7 @@ test -x rust-runtime/target/release/nexus-codex-home
 ```bash
 sudo systemctl stop nexus
 ss -ltnp '( sport = :59000 )'
-ps -eo pid,ppid,unit,args | rg 'nexus-server|nexus-(task|pty|window|session)'
+ps -eo pid,ppid,unit,args | rg 'nexus-server|nexus-(pty|window|session)'
 kill <stale-nexus-server-pid>
 sudo systemctl start nexus
 ```

@@ -53,7 +53,6 @@ done
 
 declare -a RELEASE_BINS=(
     "rust-runtime/target/release/nexus-server"
-    "rust-runtime/target/release/nexus-task-runtime"
     "rust-runtime/target/release/nexus-pty-runtime"
     "rust-runtime/target/release/nexus-native-pty-supervisor"
     "rust-runtime/target/release/nexus-native-session"
@@ -447,7 +446,6 @@ CARGO_BIN="$(resolve_cargo_bin)"
 echo "[Nexus] Building release binaries..."
 "$CARGO_BIN" build --manifest-path rust-runtime/Cargo.toml --release \
     --bin nexus-server \
-    --bin nexus-task-runtime \
     --bin nexus-pty-runtime \
     --bin nexus-native-pty-supervisor \
     --bin nexus-native-session \

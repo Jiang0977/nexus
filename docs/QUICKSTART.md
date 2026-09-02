@@ -143,7 +143,6 @@ bash start.sh
 ```bash
 cargo build --manifest-path rust-runtime/Cargo.toml --release \
   --bin nexus-server \
-  --bin nexus-task-runtime \
   --bin nexus-pty-runtime \
   --bin nexus-native-pty-supervisor \
   --bin nexus-native-session \

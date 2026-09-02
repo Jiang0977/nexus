@@ -80,7 +80,6 @@ fn scrub_runtime_env(command: &mut Command) -> &mut Command {
     command
         .env_remove("CARGO_HOME")
         .env_remove("NEXUS_SERVER_EXECUTABLE")
-        .env_remove("NEXUS_TASK_RUNNER_RUST_EXECUTABLE")
         .env_remove("NEXUS_PTY_BROKER_RUST_EXECUTABLE")
         .env_remove("NEXUS_NATIVE_PTY_SUPERVISOR_EXECUTABLE")
         .env_remove("NEXUS_SESSION_BACKEND")
@@ -137,7 +136,6 @@ fn start_script_rebuilds_only_binaries_whose_depfile_inputs_are_newer() {
     .unwrap();
     fs::write(root.join("rust-runtime/Cargo.lock"), "version = 3\n").unwrap();
     fs::write(shared_src.join("lib.rs"), "// shared lib\n").unwrap();
-    fs::write(source_dir.join("nexus-task-runtime.rs"), "// task\n").unwrap();
     fs::write(source_dir.join("nexus-pty-runtime.rs"), "// pty\n").unwrap();
     fs::write(
         source_dir.join("nexus-native-pty-supervisor.rs"),
@@ -159,7 +157,6 @@ fn start_script_rebuilds_only_binaries_whose_depfile_inputs_are_newer() {
     fs::write(source_dir.join("nexus-setup.rs"), "// setup only\n").unwrap();
 
     for binary in [
-        "nexus-task-runtime",
         "nexus-pty-runtime",
         "nexus-native-pty-supervisor",
         "nexus-native-session",
@@ -213,7 +210,6 @@ fn start_script_rebuilds_only_binaries_whose_depfile_inputs_are_newer() {
     let cargo_log = fs::read_to_string(&cargo_log).unwrap();
     assert!(cargo_log.contains("--manifest-path rust-runtime/Cargo.toml --release"));
     assert!(cargo_log.contains("--bin nexus-server"));
-    assert!(!cargo_log.contains("--bin nexus-task-runtime"));
     assert!(!cargo_log.contains("--bin nexus-pty-runtime"));
     assert!(!cargo_log.contains("--bin nexus-native-pty-supervisor"));
     assert!(!cargo_log.contains("--bin nexus-native-session"));
@@ -245,7 +241,6 @@ fn start_script_ignores_unrelated_rust_sources_when_depfiles_are_present() {
     .unwrap();
     fs::write(root.join("rust-runtime/Cargo.lock"), "version = 3\n").unwrap();
     fs::write(shared_src.join("lib.rs"), "// shared lib\n").unwrap();
-    fs::write(source_dir.join("nexus-task-runtime.rs"), "// task\n").unwrap();
     fs::write(source_dir.join("nexus-pty-runtime.rs"), "// pty\n").unwrap();
     fs::write(
         source_dir.join("nexus-native-pty-supervisor.rs"),
@@ -267,7 +262,6 @@ fn start_script_ignores_unrelated_rust_sources_when_depfiles_are_present() {
     fs::write(source_dir.join("nexus-setup.rs"), "// setup only\n").unwrap();
 
     for binary in [
-        "nexus-task-runtime",
         "nexus-pty-runtime",
         "nexus-native-pty-supervisor",
         "nexus-native-session",
@@ -377,7 +371,6 @@ fn start_script_falls_back_to_home_cargo_bin_when_path_lacks_cargo() {
 
     let cargo_log = fs::read_to_string(&cargo_log).unwrap();
     assert!(cargo_log.contains("--manifest-path rust-runtime/Cargo.toml --release"));
-    assert!(cargo_log.contains("--bin nexus-task-runtime"));
     assert!(cargo_log.contains("--bin nexus-pty-runtime"));
     assert!(cargo_log.contains("--bin nexus-native-pty-supervisor"));
     assert!(cargo_log.contains("--bin nexus-native-session"));
@@ -442,7 +435,6 @@ fn start_script_keeps_codex_wrapper_ahead_of_real_cli() {
     );
 
     for name in [
-        "nexus-task-runtime",
         "nexus-pty-runtime",
         "nexus-native-pty-supervisor",
         "nexus-native-session",
@@ -468,10 +460,6 @@ fn start_script_keeps_codex_wrapper_ahead_of_real_cli() {
         .env("PATH", format!("{}:/usr/bin:/bin", local_bin.display()))
         .env("NEXUS_SESSION_BACKEND", "tmux")
         .env("NEXUS_SERVER_EXECUTABLE", bin_dir.join("nexus-server"))
-        .env(
-            "NEXUS_TASK_RUNNER_RUST_EXECUTABLE",
-            bin_dir.join("nexus-task-runtime"),
-        )
         .env(
             "NEXUS_PTY_BROKER_RUST_EXECUTABLE",
             bin_dir.join("nexus-pty-runtime"),
@@ -555,7 +543,6 @@ fn start_script_keeps_working_wrapper_first_and_includes_real_cli_candidate() {
     );
 
     for name in [
-        "nexus-task-runtime",
         "nexus-pty-runtime",
         "nexus-native-pty-supervisor",
         "nexus-native-session",
@@ -581,10 +568,6 @@ fn start_script_keeps_working_wrapper_first_and_includes_real_cli_candidate() {
         .env("PATH", format!("{}:/usr/bin:/bin", local_bin.display()))
         .env("NEXUS_SESSION_BACKEND", "tmux")
         .env("NEXUS_SERVER_EXECUTABLE", bin_dir.join("nexus-server"))
-        .env(
-            "NEXUS_TASK_RUNNER_RUST_EXECUTABLE",
-            bin_dir.join("nexus-task-runtime"),
-        )
         .env(
             "NEXUS_PTY_BROKER_RUST_EXECUTABLE",
             bin_dir.join("nexus-pty-runtime"),

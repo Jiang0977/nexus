@@ -28,7 +28,6 @@ interface Props {
   onUploadFile?: (file: File) => void
   onOpenFiles?: () => void
   onOpenPromptLibrary?: () => void
-  onOpenTasks?: () => void
   onOpenWorkspace?: () => void
   onFitTerminal?: () => void
   /** When true: renders as a compact sidebar section (no theme/settings, flex-wrap key grid) */
@@ -79,7 +78,7 @@ interface DragState {
 
 const ITEM_HEIGHT = 48 // px，每行编辑项高度
 
-export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _termRef, themeMode, onToggleTheme, onOpenSettings, onUploadFile, onOpenFiles, onOpenPromptLibrary, onOpenTasks, onOpenWorkspace, onFitTerminal, embedded, collapsed: controlledCollapsed, onCollapsedChange }: Props) {
+export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _termRef, themeMode, onToggleTheme, onOpenSettings, onUploadFile, onOpenFiles, onOpenPromptLibrary, onOpenWorkspace, onFitTerminal, embedded, collapsed: controlledCollapsed, onCollapsedChange }: Props) {
   const { t } = useTranslation()
   const [config, setConfig]           = useState<ToolbarConfig>(loadConfig)
   const isControlled = controlledCollapsed !== undefined
@@ -587,14 +586,6 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
             ><Icon name="paperclip" size={18} /></button>
           </div>
           <div className="flex items-center gap-0.5">
-            {onOpenTasks && (
-              <button
-                className={iconBtnPCClass}
-                onPointerDown={(e) => { e.preventDefault(); onOpenTasks() }}
-                title={t('toolbar.tasks')}
-                aria-label={t('toolbar.tasks')}
-              ><Icon name="play" size={18} /></button>
-            )}
             {onOpenPromptLibrary && (
               <button
                 className={iconBtnPCClass}
@@ -656,11 +647,6 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
           {onOpenWorkspace && (
             <button className={iconBtnPCClass} onPointerDown={(e) => { e.preventDefault(); onOpenWorkspace() }} title={t('toolbar.workspace')}>
               <Icon name="folder" size={18} />
-            </button>
-          )}
-          {onOpenTasks && (
-            <button className={iconBtnPCClass} onPointerDown={(e) => { e.preventDefault(); onOpenTasks() }} title={t('toolbar.tasks')} aria-label={t('toolbar.tasks')}>
-              <Icon name="play" size={18} />
             </button>
           )}
           {onOpenPromptLibrary && (
@@ -810,12 +796,6 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
                 <button className={quickMenuItemClass} onPointerDown={(e) => { e.preventDefault(); setEditing(true); setShowQuickMenu(false) }}>
                   <Icon name="pencil" size={16} /><span>{t('toolbar.editShortcuts')}</span>
                 </button>
-                {onOpenTasks && (
-                  <button className={quickMenuItemClass} onPointerDown={(e) => { e.preventDefault(); onOpenTasks(); setShowQuickMenu(false) }} title={t('toolbar.tasks')} aria-label={t('toolbar.tasks')}>
-                    <Icon name="play" size={16} />
-                    <span>{t('toolbar.tasks')}</span>
-                  </button>
-                )}
                 {onOpenPromptLibrary && (
                   <button className={quickMenuItemClass} onPointerDown={(e) => { e.preventDefault(); onOpenPromptLibrary(); setShowQuickMenu(false) }}>
                     <Icon name="clipboard" size={16} />
