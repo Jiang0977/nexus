@@ -9,7 +9,7 @@ interface Props {
   activeWindowIndex: number
   codexHistoryEnabled: boolean
   expandedContent: ReactNode
-  onAttachWindow: (index: number) => void
+  onWindowClick: (index: number) => void
   onCollapse: () => void
   onExpand: () => void
   onOpenCodexHistory: (trigger?: HTMLElement | null) => void
@@ -33,7 +33,7 @@ export function DesktopSidebar({
   activeWindowIndex,
   codexHistoryEnabled,
   expandedContent,
-  onAttachWindow,
+  onWindowClick,
   onCollapse,
   onExpand,
   onOpenCodexHistory,
@@ -80,8 +80,9 @@ export function DesktopSidebar({
                   key={window.index}
                   onClick={(event) => {
                     event.stopPropagation()
-                    onAttachWindow(window.index)
+                    onWindowClick(window.index)
                   }}
+                  data-testid={`collapsed-window-${window.index}`}
                   className="w-12 h-10 bg-transparent border-none flex items-center justify-center cursor-pointer relative"
                   style={{
                     background: isActive ? 'var(--nexus-tab-active)' : 'transparent',

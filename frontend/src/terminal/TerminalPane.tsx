@@ -3,7 +3,7 @@ import type { Terminal as XTerm } from '@xterm/xterm'
 import { Icon } from '../icons'
 import { PaneDropTarget } from './PaneDropTarget'
 import { PaneHeader } from './PaneHeader'
-import type { LayoutMode, PaneState, PaneTarget } from './splitLayoutTypes'
+import { paneTargetKey, type LayoutMode, type PaneState, type PaneTarget } from './splitLayoutTypes'
 import { useTerminalPaneRuntime, type PaneConnectionState } from './useTerminalPaneRuntime'
 import type { ThemeMode } from './theme'
 
@@ -35,6 +35,7 @@ interface Props {
 
 interface TargetCheck {
   status: 'empty' | 'checking' | 'valid' | 'stale'
+  targetKey: string | null
   windowName?: string
 }
 
@@ -53,41 +54,47 @@ export function TerminalPane({
   themeMode,
   token,
 }: Props) {
-  const [targetCheck, setTargetCheck] = useState<TargetCheck>(() => ({ status: pane.target ? 'checking' : 'empty' }))
+  const [targetCheck, setTargetCheck] = useState<TargetCheck>(() => ({
+    status: pane.target ? 'checking' : 'empty',
+    targetKey: paneTargetKey(pane.target),
+  }))
 
   useEffect(() => {
     if (!pane.target) {
-      setTargetCheck({ status: 'empty' })
+      setTargetCheck({ status: 'empty', targetKey: null })
       return
     }
 
     let cancelled = false
-    setTargetCheck({ status: 'checking' })
-    fetch(`/api/sessions?session=${encodeURIComponent(pane.target.session)}`, {
+    const target = pane.target
+    const targetKey = paneTargetKey(target)
+    setTargetCheck({ status: 'checking', targetKey })
+    fetch(`/api/sessions?session=${encodeURIComponent(target.session)}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (response) => {
         if (cancelled) return
         if (!response.ok) {
-          setTargetCheck({ status: 'valid' })
+          setTargetCheck({ status: 'valid', targetKey })
           return
         }
         const data = await response.json() as { windows?: Array<{ index: number; name: string }> }
-        const windowInfo = (data.windows || []).find((window) => window.index === pane.target?.windowIndex)
+        if (cancelled) return
+        const windowInfo = (data.windows || []).find((window) => window.index === target.windowIndex)
         if (!windowInfo) {
-          setTargetCheck({ status: 'stale' })
+          setTargetCheck({ status: 'stale', targetKey })
           return
         }
-        setTargetCheck({ status: 'valid', windowName: windowInfo.name })
+        setTargetCheck({ status: 'valid', targetKey, windowName: windowInfo.name })
       })
       .catch((error: unknown) => {
         if (cancelled) return
         console.error('[TerminalPane] Failed to validate pane target', {
           error,
           paneId: pane.id,
-          target: pane.target,
+          target,
         })
-        setTargetCheck({ status: 'valid' })
+        setTargetCheck({ status: 'valid', targetKey })
       })
 
     return () => {
@@ -95,7 +102,13 @@ export function TerminalPane({
     }
   }, [pane.id, pane.target?.session, pane.target?.windowIndex, token])
 
-  const runtimeEnabled = Boolean(pane.target && targetCheck.status === 'valid')
+  const currentTargetKey = paneTargetKey(pane.target)
+  const targetCheckMatchesCurrentTarget = targetCheck.targetKey === currentTargetKey
+  const runtimeEnabled = Boolean(
+    pane.target
+    && targetCheckMatchesCurrentTarget
+    && targetCheck.status === 'valid',
+  )
   const runtime = useTerminalPaneRuntime({
     compact,
     enabled: runtimeEnabled,
@@ -104,13 +117,15 @@ export function TerminalPane({
     token,
   })
 
+  const currentTargetStatus = targetCheckMatchesCurrentTarget ? targetCheck.status : 'checking'
   const paneStatus: PaneStatus = !pane.target
     ? 'empty'
-    : targetCheck.status === 'checking'
+    : currentTargetStatus === 'checking'
       ? 'checking'
-      : targetCheck.status === 'stale'
+      : currentTargetStatus === 'stale'
         ? 'stale'
         : runtime.connectionState
+  const currentWindowName = targetCheckMatchesCurrentTarget ? targetCheck.windowName : undefined
 
   const runtimeHandle = useMemo<FocusedPaneRuntime>(() => ({
     fitTerminal: runtime.fitNow,
@@ -130,14 +145,14 @@ export function TerminalPane({
   }, [focused, onFocusedRuntimeReady, pane.id, runtime.connectionState, runtimeHandle])
 
   useEffect(() => {
-    if (!pane.target || targetCheck.status !== 'valid') return
+    if (!pane.target || !targetCheckMatchesCurrentTarget || targetCheck.status !== 'valid') return
     const rafId = requestAnimationFrame(() => runtime.fitNow())
     const timerId = window.setTimeout(() => runtime.fitNow(), 120)
     return () => {
       cancelAnimationFrame(rafId)
       window.clearTimeout(timerId)
     }
-  }, [layoutMode, pane.target, runtime.fitNow, targetCheck.status])
+  }, [layoutMode, pane.target, runtime.fitNow, targetCheckMatchesCurrentTarget, targetCheck.status])
 
   const focusPane = () => {
     runtime.termRef.current?.focus()
@@ -150,7 +165,7 @@ export function TerminalPane({
 
   const openScrollback = () => {
     if (!pane.target) return
-    onOpenScrollback(pane.target, targetCheck.windowName)
+    onOpenScrollback(pane.target, currentWindowName)
   }
 
   return (
@@ -170,7 +185,7 @@ export function TerminalPane({
         onFit={runtime.fitNow}
         onOpenScrollback={openScrollback}
         target={pane.target}
-        windowName={targetCheck.windowName}
+        windowName={currentWindowName}
       />
 
       <PaneDropTarget
@@ -179,7 +194,7 @@ export function TerminalPane({
           onSetTarget(pane.id, target)
         }}
       >
-        {pane.target && targetCheck.status === 'stale' ? (
+        {pane.target && targetCheckMatchesCurrentTarget && targetCheck.status === 'stale' ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-red-950/10 px-4 text-center">
             <Icon name="alert" size={28} className="text-nexus-error" />
             <div className="text-base font-medium text-nexus-error">窗口不存在</div>

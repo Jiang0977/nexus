@@ -22,7 +22,7 @@ interface Props {
     requestId: number
     target: PaneTarget
   } | null
-  focusRequest?: {
+  selectRequest?: {
     requestId: number
     target: PaneTarget
   } | null
@@ -67,7 +67,7 @@ export function SplitWorkspaceView({
   activePaneTermRef,
   activeTargetRef,
   clearRequest = null,
-  focusRequest = null,
+  selectRequest = null,
   onFocusedPaneTargetChange,
   onFocusedRuntimeChange,
   onVisiblePanesChange,
@@ -85,7 +85,7 @@ export function SplitWorkspaceView({
   const focusedRuntimeRef = useRef<FocusedPaneRuntime | null>(null)
   const focusedPaneIdRef = useRef(layout.focusedPaneId)
   const handledClearRequestIdRef = useRef(0)
-  const handledFocusRequestIdRef = useRef(0)
+  const handledSelectRequestIdRef = useRef(0)
   const paneScrollbackOverlayRef = useRef<HTMLDivElement>(null)
   const scrollbackRequestIdRef = useRef(0)
   focusedPaneIdRef.current = layout.focusedPaneId
@@ -212,16 +212,26 @@ export function SplitWorkspaceView({
   }, [clearRequest, layout.focusedPaneId, setPaneTarget, visiblePanes])
 
   useEffect(() => {
-    if (!focusRequest) return
-    if (focusRequest.requestId === handledFocusRequestIdRef.current) return
-    const matchedPane = visiblePanes.find((pane) => (
-      pane.target?.session === focusRequest.target.session
-      && pane.target?.windowIndex === focusRequest.target.windowIndex
-    ))
-    if (!matchedPane) return
-    handledFocusRequestIdRef.current = focusRequest.requestId
-    focusPane(matchedPane.id)
-  }, [focusPane, focusRequest, visiblePanes])
+    if (!selectRequest) return
+    if (selectRequest.requestId === handledSelectRequestIdRef.current) return
+    handledSelectRequestIdRef.current = selectRequest.requestId
+
+    const target = selectRequest.target
+    const targetMatches = (candidate: PaneTarget | null | undefined) => Boolean(
+      candidate
+      && candidate.session === target.session
+      && candidate.windowIndex === target.windowIndex
+    )
+    const matchedPane = visiblePanes.find((pane) => targetMatches(pane.target))
+    if (matchedPane) {
+      focusPane(matchedPane.id)
+      return
+    }
+
+    const focusedPane = visiblePanes.find((pane) => pane.id === layout.focusedPaneId)
+    if (!focusedPane || targetMatches(focusedPane.target)) return
+    setPaneTarget(focusedPane.id, target)
+  }, [focusPane, layout.focusedPaneId, selectRequest, setPaneTarget, visiblePanes])
 
   const liveCount = useMemo(() => visiblePanes.filter((pane) => paneStatuses[pane.id] === 'live').length, [paneStatuses, visiblePanes])
   const wsCount = liveCount

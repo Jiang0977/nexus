@@ -68,7 +68,7 @@ export default function Terminal({ token }: Props) {
   const [showWorkspace, setShowWorkspace] = useState(false)
   const [splitViewPanes, setSplitViewPanes] = useState<PaneState[]>([])
   const [splitViewFocusedPaneId, setSplitViewFocusedPaneId] = useState<string | null>(null)
-  const [splitViewFocusRequest, setSplitViewFocusRequest] = useState<{ requestId: number; target: PaneTarget } | null>(null)
+  const [splitViewSelectRequest, setSplitViewSelectRequest] = useState<{ requestId: number; target: PaneTarget } | null>(null)
   const [splitViewClearRequest, setSplitViewClearRequest] = useState<{ requestId: number; target: PaneTarget } | null>(null)
   const pausePollingRef = useRef(false)
   const activeWindowIndexRef = useRef(0)
@@ -449,16 +449,19 @@ export default function Terminal({ token }: Props) {
   }, [splitViewPanes])
 
   const handleSidebarChannelClick = useCallback((channel: { index: number }, projectName: string) => {
-    const key = channelTargetKey(projectName, channel.index)
-    if (!splitPaneAssignmentsByChannelKey[key]?.length) return
-    setSplitViewFocusRequest((current) => ({
+    setSplitViewSelectRequest((current) => ({
       requestId: (current?.requestId ?? 0) + 1,
       target: {
         session: projectName,
         windowIndex: channel.index,
       },
     }))
-  }, [splitPaneAssignmentsByChannelKey])
+  }, [])
+
+  const handleCollapsedWindowClick = useCallback((index: number) => {
+    if (!activeTmuxSession) return
+    handleSidebarChannelClick({ index }, activeTmuxSession)
+  }, [activeTmuxSession, handleSidebarChannelClick])
 
   const handleSidebarChannelClosed = useCallback((channel: { index: number }, projectName: string) => {
     setSplitViewClearRequest((current) => ({
@@ -531,7 +534,7 @@ export default function Terminal({ token }: Props) {
                   paneAssignmentsByChannelKey={splitPaneAssignmentsByChannelKey}
                 />
               )}
-              onAttachWindow={attachToWindow}
+              onWindowClick={handleCollapsedWindowClick}
               onCollapse={() => {
                 setSidebarCollapsed(true)
                 localStorage.setItem('nexus_sidebar_collapsed', 'true')
@@ -561,7 +564,7 @@ export default function Terminal({ token }: Props) {
                 activePaneTermRef={termRef}
                 activeTargetRef={focusedPaneTargetRef}
                 clearRequest={splitViewClearRequest}
-                focusRequest={splitViewFocusRequest}
+                selectRequest={splitViewSelectRequest}
                 onFocusedPaneTargetChange={handleFocusedPaneTargetChange}
                 onFocusedRuntimeChange={handleFocusedPaneRuntimeChange}
                 onVisiblePanesChange={handleSplitViewPanesChange}

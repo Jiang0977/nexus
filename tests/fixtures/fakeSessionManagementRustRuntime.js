@@ -36,6 +36,17 @@ function extraProjectChannels() {
   }
 }
 
+function sessionWindowsOverride() {
+  const raw = process.env.FAKE_SESSION_MANAGEMENT_WINDOWS_JSON || ''
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 if (mode === 'exit-immediately') {
   process.exit(7)
 }
@@ -115,7 +126,7 @@ rl.on('line', (line) => {
     case 'listSessionWindows':
       response(id, true, {
         session: params.sessionName || 'nexus-preview-rust',
-        windows: [
+        windows: sessionWindowsOverride() || [
           { index: 0, name: 'shell', active: true },
           { index: 1, name: 'notes', active: false },
         ],

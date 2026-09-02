@@ -179,7 +179,7 @@ function createBrowserProjectFixture() {
   return { dataDir, projectRoot }
 }
 
-async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnapshots = {} } = {}) {
+async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnapshots = {}, sessionWindows = [] } = {}) {
   ensureRustServerBuilt()
 
   const { dataDir, projectRoot } = createBrowserProjectFixture()
@@ -200,6 +200,7 @@ async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnap
     NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
     NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
     FAKE_SESSION_MANAGEMENT_EXTRA_CHANNELS_JSON: JSON.stringify(extraChannels),
+    FAKE_SESSION_MANAGEMENT_WINDOWS_JSON: sessionWindows.length > 0 ? JSON.stringify(sessionWindows) : '',
     FAKE_PTY_RUNTIME_SNAPSHOT_JSON: JSON.stringify({
       'nexus-preview-rust:0': {
         output: 'preview shell ready\n',
@@ -558,6 +559,30 @@ async function dispatchCapturedWebSocketMessages(page, urlPart, chunks) {
     await dispatchCapturedWebSocketMessage(page, urlPart, chunk)
     await delay(10)
   }
+}
+
+function workspaceLayoutPutBody(response) {
+  if (!response.url().includes('/api/workspace-layouts/active')) return null
+  if (response.request().method() !== 'PUT' || !response.ok()) return null
+  try {
+    const body = response.request().postDataJSON()
+    return body && Array.isArray(body.panes) ? body : null
+  } catch {
+    return null
+  }
+}
+
+function workspaceLayoutPaneTarget(body, paneId) {
+  return body.panes.find((pane) => pane.id === paneId)?.target ?? null
+}
+
+function workspaceLayoutHasPaneTarget(body, paneId, session, windowIndex) {
+  const target = workspaceLayoutPaneTarget(body, paneId)
+  return Boolean(target && target.session === session && target.windowIndex === windowIndex)
+}
+
+function workspaceLayoutFocusedOn(body, paneId) {
+  return body.focusedPaneId === paneId
 }
 
 test('browser regression: desktop login opens the terminal shell and session manager modal', { timeout: 120000 }, async (t) => {
@@ -1333,17 +1358,6 @@ test('browser regression: desktop sidebar channel clicks focus the matching spli
   await shellSource.dragTo(page.getByTestId('terminal-pane-pane-1'))
   await page.waitForFunction(() => document.body.textContent?.includes('nexus-preview-rust / notes'))
 
-  const attachRequests = []
-  page.on('request', (request) => {
-    if (request.method() === 'POST' && request.url().includes('/api/sessions/0/attach?session=nexus-preview-rust')) {
-      attachRequests.push(request.url())
-    }
-  })
-  await page.locator('[draggable="true"]').filter({ hasText: 'preview' }).first().click()
-  await page.waitForTimeout(200)
-  assert.equal(attachRequests.length, 0, 'clicking a draggable sidebar channel should not attach the global terminal')
-  await page.waitForFunction(() => document.body.textContent?.includes('nexus-preview-rust / notes'))
-
   await page.getByRole('button', { name: '2x2' }).click()
   await page.waitForFunction(() => document.body.textContent?.includes('mode grid-2x2'))
   await page.locator('[draggable="true"]').filter({ hasText: 'preview' }).first().dragTo(page.getByTestId('terminal-pane-pane-2'))
@@ -1358,6 +1372,12 @@ test('browser regression: desktop sidebar channel clicks focus the matching spli
     return badgeText.includes('2')
   })
 
+  const attachRequests = []
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/api/sessions/0/attach?session=nexus-preview-rust')) {
+      attachRequests.push(request.url())
+    }
+  })
   await page.locator('[draggable="true"]').filter({ hasText: 'preview' }).first().click()
   await page.waitForFunction(() => {
     const pane2 = document.querySelector('[data-testid="terminal-pane-pane-2"]')
@@ -1365,13 +1385,291 @@ test('browser regression: desktop sidebar channel clicks focus the matching spli
     return pane2?.className.includes('border-nexus-accent')
       && !pane1?.className.includes('border-nexus-accent')
   })
+  const focusPane1Save = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null && workspaceLayoutFocusedOn(body, 'pane-1')
+  })
   await page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first().click()
+  await focusPane1Save
   await page.waitForFunction(() => {
     const pane2 = document.querySelector('[data-testid="terminal-pane-pane-2"]')
     const pane1 = document.querySelector('[data-testid="terminal-pane-pane-1"]')
     return pane1?.className.includes('border-nexus-accent')
       && !pane2?.className.includes('border-nexus-accent')
   })
+  assert.equal(attachRequests.length, 0, 'clicking a draggable sidebar channel should not attach the global terminal')
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: desktop sidebar clicks replace the focused split pane when unassigned and focus the existing pane when assigned', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    extraChannels: [{ index: 0, name: 'preview', active: false, cwd: '/workspace' }],
+    sessionWindows: [
+      { index: 0, name: 'preview', active: false },
+      { index: 1, name: 'shell', active: true },
+      { index: 2, name: 'review', active: false },
+    ],
+    ptySnapshots: {
+      'nexus-preview-rust:1': { output: 'shell ready\n', clients: 1 },
+      'nexus-preview-rust:2': { output: 'review ready\n', clients: 0 },
+    },
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'false')
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  const shellRow = page.getByTestId('sidebar-channel-nexus-preview-rust-1')
+  const previewRow = page.getByTestId('sidebar-channel-nexus-preview-rust-0')
+  const reviewRow = page.getByTestId('sidebar-channel-nexus-preview-rust-2')
+  await shellRow.waitFor()
+  await previewRow.waitFor()
+  await reviewRow.waitFor()
+
+  const modeSave = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body?.mode === 'grid-2x2'
+  })
+  await page.getByRole('button', { name: '2x2' }).click()
+  await modeSave
+  await page.waitForFunction(() => document.body.textContent?.includes('mode grid-2x2'))
+
+  const shellSave = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null
+      && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 1)
+      && workspaceLayoutFocusedOn(body, 'pane-1')
+  })
+  await shellRow.dragTo(page.getByTestId('terminal-pane-pane-1'))
+  await shellSave
+  await page.waitForFunction(() => document.body.textContent?.includes('nexus-preview-rust / shell'))
+
+  const previewDragSave = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null
+      && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 1)
+      && workspaceLayoutHasPaneTarget(body, 'pane-2', 'nexus-preview-rust', 0)
+      && workspaceLayoutFocusedOn(body, 'pane-2')
+  })
+  await previewRow.dragTo(page.getByTestId('terminal-pane-pane-2'))
+  await previewDragSave
+  await page.waitForFunction(() => {
+    const text = document.body.textContent || ''
+    return text.includes('nexus-preview-rust / preview')
+      && text.includes('nexus-preview-rust / shell')
+      && text.includes('已占用 2')
+  })
+
+  const focusPane1Save = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null
+      && workspaceLayoutFocusedOn(body, 'pane-1')
+      && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 1)
+      && workspaceLayoutHasPaneTarget(body, 'pane-2', 'nexus-preview-rust', 0)
+  })
+  await page.getByTestId('terminal-pane-pane-1').click({ position: { x: 24, y: 18 } })
+  await focusPane1Save
+  await page.waitForFunction(() => {
+    const pane1 = document.querySelector('[data-testid="terminal-pane-pane-1"]')
+    const pane2 = document.querySelector('[data-testid="terminal-pane-pane-2"]')
+    return pane1?.className.includes('border-nexus-accent')
+      && !pane2?.className.includes('border-nexus-accent')
+  })
+
+  const attachRequests = []
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/api/sessions/2/attach?session=nexus-preview-rust')) {
+      attachRequests.push(request.url())
+    }
+  })
+
+  const replaceSave = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null
+      && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 2)
+      && workspaceLayoutHasPaneTarget(body, 'pane-2', 'nexus-preview-rust', 0)
+      && workspaceLayoutFocusedOn(body, 'pane-1')
+  })
+  await reviewRow.click()
+  const replaceResponse = await replaceSave
+  const replacedLayout = await replaceResponse.json()
+  const replacedPane1 = replacedLayout.panes.find((pane) => pane.id === 'pane-1')
+  const replacedPane2 = replacedLayout.panes.find((pane) => pane.id === 'pane-2')
+  assert.deepEqual(replacedPane1.target, { session: 'nexus-preview-rust', windowIndex: 2 })
+  assert.deepEqual(replacedPane2.target, { session: 'nexus-preview-rust', windowIndex: 0 })
+  assert.equal(replacedLayout.focusedPaneId, 'pane-1')
+  assert.equal(attachRequests.length, 0, 'replacing the focused pane from a sidebar click should not attach the global terminal')
+  await page.waitForFunction(() => document.body.textContent?.includes('review ready'))
+
+  let layoutPutCount = 0
+  page.on('response', (response) => {
+    if (response.url().includes('/api/workspace-layouts/active') && response.request().method() === 'PUT') {
+      layoutPutCount += 1
+    }
+  })
+
+  const focusPane2Save = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null
+      && workspaceLayoutFocusedOn(body, 'pane-2')
+      && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 2)
+      && workspaceLayoutHasPaneTarget(body, 'pane-2', 'nexus-preview-rust', 0)
+  })
+  await previewRow.click()
+  await focusPane2Save
+  await page.waitForFunction(() => {
+    const pane1 = document.querySelector('[data-testid="terminal-pane-pane-1"]')
+    const pane2 = document.querySelector('[data-testid="terminal-pane-pane-2"]')
+    return pane2?.className.includes('border-nexus-accent')
+      && !pane1?.className.includes('border-nexus-accent')
+  })
+
+  await previewRow.click()
+
+  const focusPane1AgainSave = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null
+      && workspaceLayoutFocusedOn(body, 'pane-1')
+      && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 2)
+      && workspaceLayoutHasPaneTarget(body, 'pane-2', 'nexus-preview-rust', 0)
+  })
+  await reviewRow.click()
+  await focusPane1AgainSave
+  await page.waitForFunction(() => {
+    const pane1 = document.querySelector('[data-testid="terminal-pane-pane-1"]')
+    const pane2 = document.querySelector('[data-testid="terminal-pane-pane-2"]')
+    return pane1?.className.includes('border-nexus-accent')
+      && !pane2?.className.includes('border-nexus-accent')
+  })
+  assert.equal(layoutPutCount, 2, 'focusing displayed panes should save twice, with no extra save from the already-focused click')
+  assert.equal(attachRequests.length, 0, 'focusing a displayed pane from a sidebar click should not attach the global terminal')
+
+  await page.reload()
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => {
+    const text = document.body.textContent || ''
+    return text.includes('mode grid-2x2')
+      && text.includes('nexus-preview-rust / review')
+      && text.includes('nexus-preview-rust / preview')
+      && text.includes('已占用 2')
+  })
+
+  assert.deepEqual(
+    pageErrors.map((error) => String(error?.message || error)),
+    [],
+    `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
+  )
+})
+
+test('browser regression: collapsed desktop window shortcuts replace the focused split pane without global attach', { timeout: 120000 }, async (t) => {
+  const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
+    sessionWindows: [
+      { index: 0, name: 'preview', active: false },
+      { index: 1, name: 'shell', active: true },
+      { index: 2, name: 'review', active: false },
+    ],
+  })
+
+  await loginAndWaitForTerminal(page, port, password)
+
+  await page.getByTestId('collapsed-window-0').waitFor()
+  await page.getByTestId('collapsed-window-1').waitFor()
+  await page.getByTestId('collapsed-window-2').waitFor()
+
+  const attachRequests = []
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/api/sessions/')) {
+      const url = new URL(request.url())
+      if (url.pathname.endsWith('/attach')) attachRequests.push(request.url())
+    }
+  })
+
+  const modeSave = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body?.mode === 'grid-2x2'
+  })
+  await page.getByRole('button', { name: '2x2' }).click()
+  await modeSave
+  await page.waitForFunction(() => document.body.textContent?.includes('mode grid-2x2'))
+
+  const previewSave = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null
+      && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 0)
+      && !workspaceLayoutPaneTarget(body, 'pane-2')
+  })
+  await page.getByTestId('collapsed-window-0').click()
+  const previewResponse = await previewSave
+  const previewLayout = await previewResponse.json()
+  assert.deepEqual(
+    previewLayout.panes.find((pane) => pane.id === 'pane-1').target,
+    { session: 'nexus-preview-rust', windowIndex: 0 },
+  )
+
+  const focusPane2Save = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null
+      && workspaceLayoutFocusedOn(body, 'pane-2')
+      && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 0)
+  })
+  await page.getByTestId('terminal-pane-pane-2').click({ position: { x: 24, y: 18 } })
+  await focusPane2Save
+
+  const shellSave = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null
+      && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 0)
+      && workspaceLayoutHasPaneTarget(body, 'pane-2', 'nexus-preview-rust', 1)
+      && workspaceLayoutFocusedOn(body, 'pane-2')
+  })
+  await page.getByTestId('collapsed-window-1').click()
+  const shellResponse = await shellSave
+  const shellLayout = await shellResponse.json()
+  assert.deepEqual(
+    shellLayout.panes.find((pane) => pane.id === 'pane-2').target,
+    { session: 'nexus-preview-rust', windowIndex: 1 },
+  )
+  assert.deepEqual(
+    shellLayout.panes.find((pane) => pane.id === 'pane-1').target,
+    { session: 'nexus-preview-rust', windowIndex: 0 },
+  )
+
+  const focusPane1Save = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null
+      && workspaceLayoutFocusedOn(body, 'pane-1')
+      && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 0)
+      && workspaceLayoutHasPaneTarget(body, 'pane-2', 'nexus-preview-rust', 1)
+  })
+  await page.getByTestId('terminal-pane-pane-1').click({ position: { x: 24, y: 18 } })
+  await focusPane1Save
+
+  const reviewSave = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body !== null
+      && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 2)
+      && workspaceLayoutHasPaneTarget(body, 'pane-2', 'nexus-preview-rust', 1)
+      && workspaceLayoutFocusedOn(body, 'pane-1')
+  })
+  await page.getByTestId('collapsed-window-2').click()
+  const reviewResponse = await reviewSave
+  const reviewLayout = await reviewResponse.json()
+  assert.deepEqual(
+    reviewLayout.panes.find((pane) => pane.id === 'pane-1').target,
+    { session: 'nexus-preview-rust', windowIndex: 2 },
+  )
+  assert.deepEqual(
+    reviewLayout.panes.find((pane) => pane.id === 'pane-2').target,
+    { session: 'nexus-preview-rust', windowIndex: 1 },
+  )
+  assert.equal(reviewLayout.focusedPaneId, 'pane-1')
+  assert.equal(attachRequests.length, 0, 'collapsed shortcut clicks should not attach the global terminal')
 
   assert.deepEqual(
     pageErrors.map((error) => String(error?.message || error)),
