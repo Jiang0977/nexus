@@ -2857,7 +2857,7 @@ test('browser regression: delayed native viewport movement prevents mobile termi
 })
 
 test('browser regression: reconnected Grok TUI forwards mouse wheel and touch scroll to the application', { timeout: 120000 }, async (t) => {
-  const grokTuiReplay = 'Grok 4.6 reconnect frame without retained mouse mode'
+  const grokTuiReplay = '\x1b]0;Grok mobile reconnect\x07Grok 4.6 reconnect frame without retained mouse mode'
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
     mobile: true,
     ptySnapshots: {
@@ -2987,6 +2987,7 @@ test('browser regression: desktop Codex synchronized updates keep native xterm s
   const codexReplay = [
     '\x1b[?2026hCodex synchronized frame one\x1b[?2026l\r\n',
     '\x1b[?2026hCodex synchronized frame two\x1b[?2026l\r\n',
+    'Codex plain-text discussion: Grok 4.6 is a model name, not the active terminal application.\r\n',
     codexHistory,
   ].join('')
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {

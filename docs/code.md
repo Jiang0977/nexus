@@ -139,7 +139,7 @@
 - `WorkspaceBrowser.tsx` 负责工作区文件管理：文件查看/下载使用 Authorization Bearer fetch 与 Blob URL，JWT 不进入 URL query
 - `Terminal.tsx` 只负责顶层装配
 - WebSocket URL / resize / reconnect / close policy 集中在 `terminalConnection.ts`
-- Grok 全屏 TUI 的明确版本/终端标题识别和 SGR wheel 编码集中在 `terminalApplicationScroll.ts`；通用 synchronized-update 输出仍走 xterm scrollback
+- Grok 全屏 TUI 的终端标题识别和 SGR wheel 编码集中在 `terminalApplicationScroll.ts`；普通正文中的 Grok 版本名和通用 synchronized-update 输出仍走 xterm scrollback
 - runtime hooks 只装配 xterm、交互和连接状态 adapter
 - session / window 状态下沉到 sessions hook
 - scrollback / upload / 通知下沉到 artifacts hook

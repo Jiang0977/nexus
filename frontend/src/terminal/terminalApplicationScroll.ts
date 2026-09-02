@@ -1,4 +1,3 @@
-const GROK_TUI_SIGNATURE = /\bGrok\s+\d+(?:\.\d+)*\b/
 const GROK_TUI_TITLE_SIGNATURE = /\x1b\](?:0|2);[^\x07]*(?:\bGrok\b)[^\x07]*(?:\x07|\x1b\\)/i
 
 export interface TerminalApplicationScrollState {
@@ -39,7 +38,7 @@ export function observeTerminalApplicationOutput(
   }
   if (
     !state.applicationSignatureObserved
-    && (GROK_TUI_SIGNATURE.test(data) || GROK_TUI_TITLE_SIGNATURE.test(data))
+    && GROK_TUI_TITLE_SIGNATURE.test(data)
   ) {
     state.applicationSignatureObserved = true
   }
