@@ -517,3 +517,113 @@ fn start_script_keeps_codex_wrapper_ahead_of_real_cli() {
     let version_output = fs::read_to_string(&version_log).unwrap();
     assert_eq!(version_output.trim(), "codex-cli test");
 }
+
+#[cfg(unix)]
+#[test]
+fn start_script_keeps_working_wrapper_first_and_includes_real_cli_candidate() {
+    let temp = tempdir().unwrap();
+    let root = temp.path();
+    let home = root.join("home");
+    let local_bin = home.join(".local/bin");
+    let nvm_bin = home.join(".nvm/versions/node/v22.22.2/bin");
+    let server_log = root.join("server.log");
+    let which_log = root.join("which.log");
+    let version_log = root.join("version.log");
+    let bin_dir = root.join("bin");
+
+    copy_startup_scripts(root);
+    fs::write(root.join(".env"), "JWT_SECRET=test\n").unwrap();
+    fs::create_dir_all(root.join("frontend/dist")).unwrap();
+    fs::write(root.join("frontend/dist/index.html"), "<!doctype html>\n").unwrap();
+    fs::create_dir_all(&local_bin).unwrap();
+    fs::create_dir_all(&nvm_bin).unwrap();
+    fs::create_dir_all(&bin_dir).unwrap();
+
+    let real_codex_bin = nvm_bin.join("codex");
+    write_executable(
+        &real_codex_bin,
+        "#!/usr/bin/env bash\nprintf 'real-codex-cli-output\\n'\n",
+    );
+
+    // Wrapper hardcodes the real CLI path so `codex --version` works even before startup path adjustments
+    write_executable(
+        &local_bin.join("codex"),
+        &format!(
+            "#!/usr/bin/env bash\nset -euo pipefail\nexec {:?} --dangerously-bypass-approvals-and-sandbox \"$@\"\n",
+            real_codex_bin
+        ),
+    );
+
+    for name in [
+        "nexus-task-runtime",
+        "nexus-pty-runtime",
+        "nexus-native-pty-supervisor",
+        "nexus-native-session",
+        "nexus-window-launch-runtime",
+        "nexus-session-runtime",
+        "nexus-codex-home",
+    ] {
+        write_executable(&bin_dir.join(name), "#!/usr/bin/env bash\nexit 0\n");
+    }
+
+    write_executable(
+        &bin_dir.join("nexus-server"),
+        &format!(
+            "#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' \"$PATH\" > {:?}\nwhich -a codex > {:?}\ncodex --version > {:?}\n",
+            server_log, which_log, version_log
+        ),
+    );
+
+    let output = Command::new("/usr/bin/bash")
+        .arg("start.sh")
+        .current_dir(root)
+        .env("HOME", &home)
+        .env("PATH", format!("{}:/usr/bin:/bin", local_bin.display()))
+        .env("NEXUS_SESSION_BACKEND", "tmux")
+        .env("NEXUS_SERVER_EXECUTABLE", bin_dir.join("nexus-server"))
+        .env(
+            "NEXUS_TASK_RUNNER_RUST_EXECUTABLE",
+            bin_dir.join("nexus-task-runtime"),
+        )
+        .env(
+            "NEXUS_PTY_BROKER_RUST_EXECUTABLE",
+            bin_dir.join("nexus-pty-runtime"),
+        )
+        .env(
+            "NEXUS_WINDOW_LAUNCH_RUST_EXECUTABLE",
+            bin_dir.join("nexus-window-launch-runtime"),
+        )
+        .env(
+            "NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE",
+            bin_dir.join("nexus-session-runtime"),
+        )
+        .env(
+            "NEXUS_CODEX_HOME_EXECUTABLE",
+            bin_dir.join("nexus-codex-home"),
+        )
+        .output()
+        .unwrap();
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(output.status.success(), "start.sh failed:\n{combined}");
+
+    let observed_path = fs::read_to_string(&server_log).unwrap();
+    assert!(observed_path.starts_with(&format!("{}:", local_bin.display())));
+    assert!(observed_path.contains(&nvm_bin.display().to_string()));
+
+    let which_output = fs::read_to_string(&which_log).unwrap();
+    let candidates: Vec<&str> = which_output.lines().collect();
+    assert_eq!(
+        candidates.first().copied(),
+        Some(local_bin.join("codex").to_str().unwrap())
+    );
+    assert!(candidates.contains(&nvm_bin.join("codex").to_str().unwrap()));
+
+    let version_output = fs::read_to_string(&version_log).unwrap();
+    assert_eq!(version_output.trim(), "real-codex-cli-output");
+}

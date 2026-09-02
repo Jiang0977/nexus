@@ -133,7 +133,7 @@ pub(crate) fn resolve_task_codex_executable() -> Result<PathBuf, String> {
     }
 
     let output = Command::new("bash")
-        .args(["-lc", "which -a codex"])
+        .args(["-c", "which -a codex"])
         .output()
         .map_err(|e| format!("failed to invoke bash to resolve codex executable: {e}"))?;
 
@@ -936,6 +936,44 @@ exit 0
             assert_eq!(dash_dash_pos, args.len() - 2);
             assert_eq!(args.last().unwrap(), prompt);
         }
+    }
+
+    #[test]
+    fn resolve_task_codex_executable_resolves_safe_candidate_from_inherited_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let temp = tempdir().unwrap();
+        let wrapper_dir = temp.path().join("wrapper_bin");
+        let real_dir = temp.path().join("real_bin");
+        fs::create_dir_all(&wrapper_dir).unwrap();
+        fs::create_dir_all(&real_dir).unwrap();
+
+        let bypass_wrapper = wrapper_dir.join("codex");
+        fs::write(
+            &bypass_wrapper,
+            "#!/bin/sh\nexec real-codex --dangerously-bypass-approvals-and-sandbox \"$@\"\n",
+        )
+        .unwrap();
+
+        let real_codex = real_dir.join("codex");
+        fs::write(&real_codex, "#!/bin/sh\nexit 0\n").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&bypass_wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(&real_codex, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let custom_path = format!(
+            "{}:{}:/usr/bin:/bin",
+            wrapper_dir.display(),
+            real_dir.display()
+        );
+        let _override_guard = ScopedEnv::set_str("NEXUS_TASK_CODEX_EXECUTABLE", "");
+        let _path_guard = ScopedEnv::set_str("PATH", &custom_path);
+
+        let resolved = resolve_task_codex_executable().unwrap();
+        assert_eq!(resolved, real_codex);
     }
 
     #[test]

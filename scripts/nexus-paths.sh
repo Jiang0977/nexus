@@ -104,11 +104,6 @@ ensure_codex_cli_on_path() {
   local source_home="${1:-${HOME:-}}"
   local local_bin_dir="${source_home}/.local/bin"
 
-  if codex --version >/dev/null 2>&1; then
-    prefer_path_dir "$local_bin_dir"
-    return 0
-  fi
-
   local codex_bin_dir=""
   codex_bin_dir="$(find_codex_bin_dir "$source_home" || true)"
   if [[ -n "$codex_bin_dir" ]]; then
