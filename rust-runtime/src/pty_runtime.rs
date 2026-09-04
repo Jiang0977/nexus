@@ -1450,18 +1450,13 @@ fn ensure_native_window_pty(
     let key = pty_key(session, window_index);
 
     if let Some(entry) = state.get_entry(&key) {
-        if entry.registry_backed_native && !native_registry_entry_is_current(session, window_index)
-        {
-            if let Some(stale_entry) = state.remove_entry(&key) {
-                kill_entry(&stale_entry);
-            }
-        } else {
+        if can_reuse_native_pty(session, window_index, &entry) {
             return Ok((key, entry));
         }
-    }
-
-    if let Some(entry) = state.get_entry(&key) {
-        return Ok((key, entry));
+        if let Some(stale_entry) = state.remove_entry(&key) {
+            kill_entry(&stale_entry);
+        }
+        reset_native_scrollback(session, window_index);
     }
 
     let create_result = (|| -> Result<Arc<PtyEntry>, String> {
@@ -1533,6 +1528,7 @@ fn ensure_native_window_pty(
             command_spec.registry_backed,
         ));
 
+        reset_native_scrollback(session, window_index);
         state.insert_entry(key.clone(), Arc::clone(&entry));
         start_pty_reader(state.clone(), Arc::clone(&entry), reader);
         start_pty_waiter(
@@ -1557,6 +1553,22 @@ fn native_registry_entry_is_current(session: &str, window_index: u32) -> bool {
         registry.latest_process_instance(session, window_index),
         Ok(Some(instance)) if instance.status == "running"
     )
+}
+
+fn can_reuse_native_pty(session: &str, window_index: u32, entry: &PtyEntry) -> bool {
+    entry.registry_backed_native
+        && NativeSessionRegistry::open_default()
+            .ok()
+            .and_then(|registry| registry.channel_launch(session, window_index).ok())
+            .is_some()
+        && native_registry_entry_is_current(session, window_index)
+}
+
+fn reset_native_scrollback(session: &str, window_index: u32) {
+    let path = native_scrollback_path(session, window_index);
+    if path.exists() {
+        let _ = fs::write(path, "");
+    }
 }
 
 fn attach_connection(

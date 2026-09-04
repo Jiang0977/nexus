@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -992,6 +992,83 @@ test('real rust pty runtime does not reuse an in-memory native entry after the c
   const newInstance = latestNativeProcessInstance(dbPath, 'native-recreate-entry', 1)
   assert.equal(newInstance.status, 'running')
   assert.notEqual(newInstance.start_fingerprint, oldInstance.start_fingerprint)
+})
+
+test('real rust pty runtime does not reuse a fallback native shell after a registry channel is created at the same index', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  ensureSessionRuntimeBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-fallback-reuse-'))
+  const dbPath = join(baseDir, 'session.db')
+  const workspaceRoot = join(baseDir, 'workspace-root')
+  const projectDir = join(baseDir, 'project-dir')
+  mkdirSync(workspaceRoot)
+  mkdirSync(projectDir)
+  const env = {
+    ...process.env,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_NATIVE_SESSION_DB: dbPath,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
+    WORKSPACE_ROOT: workspaceRoot,
+  }
+  const sessionClient = createSessionManagementRustClient({
+    runtimeExecutable: SESSION_RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+  const ptyClient = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env,
+    readyTimeoutMs: 1000,
+    log: { log() {}, error() {} },
+  })
+
+  t.after(async () => {
+    await ptyClient.close()
+    await sessionClient.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await sessionClient.ready()
+  await ptyClient.ready()
+  await sessionClient.createProject({
+    sessionName: 'native-fallback-reuse',
+    cwd: projectDir,
+    initialWindowName: 'shell',
+    shellCmd: 'cat',
+    proxyVars: {},
+  })
+
+  assert.deepEqual(await ptyClient.attachConnection({
+    connectionId: 'native-fallback-old',
+    session: 'native-fallback-reuse',
+    windowIndex: 1,
+  }), { key: 'native-fallback-reuse:1' })
+  assert.equal(latestNativeProcessInstance(dbPath, 'native-fallback-reuse', 1), undefined)
+
+  await sessionClient.createProjectChannel({
+    sessionName: 'native-fallback-reuse',
+    cwd: projectDir,
+    channelName: 'channel',
+    shellCmd: 'cat',
+    defaultShellCmd: 'cat',
+    proxyVars: {},
+  })
+
+  assert.deepEqual(await ptyClient.attachConnection({
+    connectionId: 'native-fallback-new',
+    session: 'native-fallback-reuse',
+    windowIndex: 1,
+  }), { key: 'native-fallback-reuse:1' })
+
+  let instance = null
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    instance = latestNativeProcessInstance(dbPath, 'native-fallback-reuse', 1)
+    if (instance?.status === 'running' && typeof instance.os_pid === 'number') break
+    await delay(20)
+  }
+  assert.equal(instance?.status, 'running')
+  assert.equal(readlinkSync(`/proc/${instance.os_pid}/cwd`), projectDir)
 })
 
 test('real rust pty runtime reconciles old native running processes on startup and can cold-reattach orphaned channels', { skip: process.platform === 'win32' }, async (t) => {
