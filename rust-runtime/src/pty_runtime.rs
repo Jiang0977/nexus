@@ -658,10 +658,15 @@ fn native_command_spec(session: &str, window_index: u32) -> Result<NativeCommand
         });
     }
 
-    if let Ok(registry) = NativeSessionRegistry::open_default()
-        && let Ok(launch) = registry.channel_launch(session, window_index)
-    {
-        return native_command_from_launch(session, window_index, launch);
+    if let Ok(registry) = NativeSessionRegistry::open_default() {
+        if let Ok(launch) = registry.channel_launch(session, window_index) {
+            return native_command_from_launch(session, window_index, launch);
+        }
+        if let Ok(project_cwd) = registry.get_project_cwd(session) {
+            let mut spec = default_native_command_spec()?;
+            spec.cwd = Some(PathBuf::from(project_cwd));
+            return Ok(spec);
+        }
     }
 
     default_native_command_spec()

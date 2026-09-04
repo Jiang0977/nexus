@@ -3,6 +3,7 @@ import type { Terminal as XTerm } from '@xterm/xterm'
 import { isCodexHistoryEnabled } from '../featureFlags'
 import { pickBootstrapSession, sessionExists } from '../sessionBootstrap'
 import { DEFAULT_SHELL_TYPE, type ShellType } from '../shellType'
+import { channelCreatePath } from './channelCreatePath'
 import { createNonOverlappingPoller, pollWindowOutputs } from './windowOutputPolling'
 
 const WINDOW_KEY = 'nexus_window'
@@ -61,10 +62,15 @@ export function useTerminalSessions({
   const [wsSessionKey, setWsSessionKey] = useState<string>(() => getInitialTrustedSession())
   const [defaultTmuxSession, setDefaultTmuxSession] = useState('')
   const [projects, setProjects] = useState<ProjectInfo[] | null>(null)
+  const [workspaceRoot, setWorkspaceRoot] = useState('')
   const [codexHistoryEnabled, setCodexHistoryEnabled] = useState(true)
 
   const activeTmuxSessionRef = useRef(activeTmuxSession)
   activeTmuxSessionRef.current = activeTmuxSession
+  const projectsRef = useRef(projects)
+  projectsRef.current = projects
+  const workspaceRootRef = useRef(workspaceRoot)
+  workspaceRootRef.current = workspaceRoot
 
   const windowsInitializedRef = useRef(false)
   const windowsLoadedRef = useRef(false)
@@ -257,8 +263,8 @@ export function useTerminalSessions({
   const createWindow = useCallback(async (shellType: ShellType = DEFAULT_SHELL_TYPE, profile?: string) => {
     try {
       const session = activeTmuxSessionRef.current
-      const currentProject = (projects ?? []).find((project) => project.name === session)
-      const projectPath = currentProject?.path
+      const currentProject = (projectsRef.current ?? []).find((project) => project.name === session)
+      const projectPath = channelCreatePath(currentProject?.path, workspaceRootRef.current)
       const response = await fetch(`/api/projects/${encodeURIComponent(session)}/channels`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -282,6 +288,7 @@ export function useTerminalSessions({
       const newWindow = wins.find((window) => window.name === newWindowName)
       if (newWindow) {
         await attachToWindow(newWindow.index)
+        return newWindow.index
       }
     } catch (error: unknown) {
       console.error('[useTerminalSessions] Failed to create window', {
@@ -291,7 +298,8 @@ export function useTerminalSessions({
         shellType,
       })
     }
-  }, [attachToWindow, projects, token])
+    return undefined
+  }, [attachToWindow, token])
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -302,6 +310,7 @@ export function useTerminalSessions({
         }
         const data = await response.json()
         setDefaultTmuxSession(data.tmuxSession || '')
+        setWorkspaceRoot(typeof data.workspaceRoot === 'string' ? data.workspaceRoot : '')
         setCodexHistoryEnabled(isCodexHistoryEnabled(data))
       } catch (error: unknown) {
         console.error('[useTerminalSessions] Failed to load Nexus config', error)

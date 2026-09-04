@@ -16,6 +16,50 @@ pub fn resolve_workspace_path(workspace_root: &str, input_path: &str) -> String 
     }
 }
 
+pub fn paths_equal(left: &str, right: &str) -> bool {
+    left.trim_end_matches('/') == right.trim_end_matches('/')
+}
+
+/// Resolve the cwd for a new channel.
+///
+/// A client-supplied workspace-root path is treated as "unspecified" when the
+/// project already has a more specific session cwd. Explicit subdirectory
+/// paths still win so callers can open a channel in a nested folder.
+pub fn resolve_channel_cwd(
+    workspace_root: &str,
+    session_cwd: &str,
+    requested_path: Option<&str>,
+) -> String {
+    let workspace_root = workspace_root.trim_end_matches('/');
+    let session_cwd = session_cwd.trim();
+    let session_cwd = if session_cwd.is_empty() {
+        workspace_root
+    } else {
+        session_cwd.trim_end_matches('/')
+    };
+
+    match requested_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(path) => {
+            let resolved = resolve_workspace_path(workspace_root, path);
+            if paths_equal(&resolved, workspace_root) && !paths_equal(session_cwd, workspace_root) {
+                session_cwd.to_string()
+            } else {
+                resolved
+            }
+        }
+        None => {
+            if session_cwd.is_empty() {
+                workspace_root.to_string()
+            } else {
+                session_cwd.to_string()
+            }
+        }
+    }
+}
+
 pub fn sanitize_request_path(request_path: &str) -> Option<PathBuf> {
     let mut safe_path = PathBuf::new();
     for component in Path::new(request_path.trim_start_matches('/')).components() {
@@ -150,7 +194,7 @@ pub fn percent_encode_utf8(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_path_lexically, percent_encode_utf8, resolve_workspace_path,
+        normalize_path_lexically, percent_encode_utf8, resolve_channel_cwd, resolve_workspace_path,
         sanitize_request_path, strip_leading_parent_components,
     };
     use std::path::{Path, PathBuf};
@@ -164,6 +208,42 @@ mod tests {
         assert_eq!(
             resolve_workspace_path("/workspace", "/tmp/demo"),
             "/tmp/demo"
+        );
+    }
+
+    #[test]
+    fn new_channel_ignores_workspace_root_when_session_cwd_is_more_specific() {
+        assert_eq!(
+            resolve_channel_cwd(
+                "/home/demo/workspace",
+                "/home/demo/workspace/java/sample-shop",
+                Some("/home/demo/workspace"),
+            ),
+            "/home/demo/workspace/java/sample-shop"
+        );
+        assert_eq!(
+            resolve_channel_cwd(
+                "/home/demo/workspace",
+                "/home/demo/workspace/java/sample-shop",
+                None,
+            ),
+            "/home/demo/workspace/java/sample-shop"
+        );
+    }
+
+    #[test]
+    fn new_channel_keeps_explicit_subdirectory_path() {
+        assert_eq!(
+            resolve_channel_cwd("/workspace", "/workspace/demo", Some("apps/demo"),),
+            "/workspace/apps/demo"
+        );
+    }
+
+    #[test]
+    fn new_channel_keeps_workspace_root_when_that_is_the_project() {
+        assert_eq!(
+            resolve_channel_cwd("/home/demo/workspace", "/home/demo/workspace", None),
+            "/home/demo/workspace"
         );
     }
 

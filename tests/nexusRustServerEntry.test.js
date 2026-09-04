@@ -2606,6 +2606,100 @@ test('rust nexus-server sends structured launch plans for native ordinary shell 
   })
 })
 
+test('rust nexus-server inherits project cwd when a new native channel is given the workspace root', async (t) => {
+  ensureRustServerBuilt()
+
+  const projectRoot = createProjectFixture()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-channel-cwd-'))
+  const requestLog = join(baseDir, 'session-requests.jsonl')
+  const dataDir = join(baseDir, 'data')
+  const port = await getFreePort()
+  const password = 'native-channel-cwd-password'
+  const passwordHash = bcrypt.hashSync(password, 8)
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot,
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    JWT_SECRET: 'rust-server-secret',
+    ACC_PASSWORD_HASH: passwordHash,
+    WORKSPACE_ROOT: '/workspace',
+    SHELL: '/bin/sh',
+    HTTPS_PROXY: 'http://proxy.local',
+    HTTP_PROXY: '',
+    ALL_PROXY: '',
+    http_proxy: '',
+    https_proxy: '',
+    NEXUS_DATA_DIR: dataDir,
+    NEXUS_SESSION_BACKEND: 'native',
+    NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
+    NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
+    FAKE_SESSION_MANAGEMENT_REQUEST_LOG: requestLog,
+  })
+
+  t.after(async () => {
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+
+  await waitForHealthyHttp(port, child)
+
+  const { token } = await login(port, password)
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  }
+
+  const rootPathResponse = await fetch(`http://127.0.0.1:${port}/api/projects/demo-project/channels`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      path: '/workspace',
+      shell_type: 'bash',
+    }),
+  })
+  const omittedPathResponse = await fetch(`http://127.0.0.1:${port}/api/projects/demo-project/channels`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      shell_type: 'bash',
+    }),
+  })
+  const nestedPathResponse = await fetch(`http://127.0.0.1:${port}/api/projects/demo-project/channels`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      path: 'apps/demo',
+      shell_type: 'bash',
+    }),
+  })
+
+  assert.equal(rootPathResponse.status, 200)
+  assert.deepEqual(await rootPathResponse.json(), {
+    name: 'channel',
+    cwd: '/workspace/demo',
+    shell_type: 'bash',
+    profile: null,
+    project: 'demo-project',
+  })
+  assert.equal(omittedPathResponse.status, 200)
+  assert.equal((await omittedPathResponse.json()).cwd, '/workspace/demo')
+  assert.equal(nestedPathResponse.status, 200)
+  assert.equal((await nestedPathResponse.json()).cwd, '/workspace/apps/demo')
+
+  const requests = readFileSync(requestLog, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const createChannelRequests = requests.filter((request) => request.method === 'createProjectChannel')
+  assert.equal(createChannelRequests.length, 3)
+  assert.equal(createChannelRequests[0].params.cwd, '/workspace/demo')
+  assert.equal(createChannelRequests[1].params.cwd, '/workspace/demo')
+  assert.equal(createChannelRequests[2].params.cwd, '/workspace/apps/demo')
+  assert.equal(createChannelRequests[0].params.launchPlan.cwd, '/workspace/demo')
+})
+
 test('rust nexus-server plans project and channel creation through the real rust session runtime', async (t) => {
   ensureRustServerBuilt()
 

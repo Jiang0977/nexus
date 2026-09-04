@@ -318,8 +318,16 @@ export default function Terminal({ token }: Props) {
 
   function handleNewWindowConfirm(shellType: ShellType, profile?: string) {
     setShowNewWindow(false)
-    void createWindow(shellType, profile)
-    setTimeout(() => sessionManagerRef.current?.refresh(), 500)
+    const session = activeTmuxSessionRef.current
+    void createWindow(shellType, profile).then((index) => {
+      if (typeof index === 'number' && session) {
+        setSplitViewSelectRequest((current) => ({
+          requestId: (current?.requestId ?? 0) + 1,
+          target: { session, windowIndex: index },
+        }))
+      }
+      setTimeout(() => sessionManagerRef.current?.refresh(), 500)
+    })
   }
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -498,7 +506,7 @@ export default function Terminal({ token }: Props) {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*,video/*"
+        accept="*/*"
         className="fixed top-0 left-0 w-px h-px opacity-[0.01] text-base pointer-events-none -z-10"
         onChange={handleFileInputChange}
         aria-hidden="true"

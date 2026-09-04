@@ -1,8 +1,9 @@
 use crate::auth::validate_auth_token;
 use crate::path_utils::{
     copy_path_recursive_sync, normalize_path_lexically, path_contains_parent_marker,
-    path_to_string, percent_encode_utf8, remove_path_recursive_sync, resolve_workspace_path,
-    sanitize_request_path, strip_leading_parent_components,
+    path_to_string, paths_equal, percent_encode_utf8, remove_path_recursive_sync,
+    resolve_channel_cwd, resolve_workspace_path, sanitize_request_path,
+    strip_leading_parent_components,
 };
 use crate::project_defaults::{get_project_default_payload, remember_project_default};
 use crate::runtime_config::{AppConfig, RuntimeConfigs, RuntimeServiceConfig};
@@ -750,10 +751,19 @@ async fn api_create_project_channel(
 
     let shell_type = normalize_shell_type(body.shell_type.as_deref());
     let response_profile = body.profile.filter(|value| !value.is_empty());
-    let cwd = match body.path.filter(|value| !value.is_empty()) {
-        Some(path) => resolve_workspace_path(state.workspace_root.as_ref(), &path),
-        None => resolve_session_cwd_from_runtime(&state, &name).await,
+    let requested_path = body.path.filter(|value| !value.is_empty());
+    let resolved_requested = requested_path
+        .as_deref()
+        .map(|path| resolve_workspace_path(state.workspace_root.as_ref(), path));
+    let session_cwd = match resolved_requested.as_deref() {
+        Some(path) if !paths_equal(path, state.workspace_root.as_ref()) => String::new(),
+        _ => resolve_session_cwd_from_runtime(&state, &name).await,
     };
+    let cwd = resolve_channel_cwd(
+        state.workspace_root.as_ref(),
+        &session_cwd,
+        requested_path.as_deref(),
+    );
     let base_channel_name = response_profile
         .as_deref()
         .filter(|value| !value.is_empty())
