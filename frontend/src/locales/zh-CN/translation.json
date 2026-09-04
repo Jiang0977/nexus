@@ -94,7 +94,7 @@
   },
   "toolbar": {
     "pasteUpload": "粘贴 / 上传",
-    "pastePlaceholder": "长按此处粘贴文本或图片…",
+    "pastePlaceholder": "长按此处粘贴文本或文件…",
     "selectFile": "选择文件",
     "shortcuts": "快捷键",
     "editShortcuts": "编辑快捷键",
@@ -333,7 +333,7 @@
     "title": "上传文件",
     "clearAll": "清除全部",
     "noFiles": "暂无上传文件",
-    "dropHint": "拖拽文件到终端或粘贴图片即可上传",
+    "dropHint": "拖拽文件到终端或粘贴文件即可上传",
     "copyPath": "复制完整路径",
     "deleteConfirm": "删除文件 \"{{filename}}\"?",
     "deleteAllConfirm": "确定要删除所有上传的文件吗?\\n共 {{count}} 个文件，此操作不可恢复。",

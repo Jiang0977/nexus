@@ -482,7 +482,7 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
             const items = e.clipboardData?.items
             if (items) {
               for (let i = 0; i < items.length; i++) {
-                if (items[i].type.startsWith('image/') && onUploadFile) {
+                if (items[i].kind === 'file' && onUploadFile) {
                   e.preventDefault()
                   const file = items[i].getAsFile()
                   if (file) { onUploadFile(file); setShowPasteBox(false) }
@@ -516,7 +516,6 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
     <>
       <input
         id={mediaInputId}
-        ref={fileInputRef}
         type="file"
         accept="image/*"
         className={visuallyHiddenFileInputClass}
@@ -525,7 +524,7 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
       />
       <input
         id={genericFileInputId}
-        ref={pasteFileRef}
+        ref={fileInputRef}
         type="file"
         accept="*/*"
         className={visuallyHiddenFileInputClass}
@@ -747,7 +746,7 @@ export default function Toolbar({ token, sendToWs, scrollToBottom, termRef: _ter
           <Icon name="paperclip" size={18} />
           <input
             type="file"
-            accept="image/*"
+            accept="*/*"
             className={nativeFileInputOverlayClass}
             data-native-file-picker="true"
             aria-label={t('toolbar.pasteUpload')}

@@ -94,7 +94,7 @@
   },
   "toolbar": {
     "pasteUpload": "Paste / Upload",
-    "pastePlaceholder": "Long-press to paste text or image...",
+    "pastePlaceholder": "Long-press to paste text or a file...",
     "selectFile": "Select File",
     "shortcuts": "Shortcuts",
     "editShortcuts": "Edit shortcuts",
@@ -333,7 +333,7 @@
     "title": "Uploaded Files",
     "clearAll": "Clear All",
     "noFiles": "No uploaded files",
-    "dropHint": "Drag files to the terminal or paste an image to upload",
+    "dropHint": "Drag files to the terminal or paste a file to upload",
     "copyPath": "Copy full path",
     "deleteConfirm": "Delete file \"{{filename}}\"?",
     "deleteAllConfirm": "Delete all {{count}} uploaded files? This cannot be undone.",

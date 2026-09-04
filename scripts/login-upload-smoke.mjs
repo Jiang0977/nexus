@@ -4,9 +4,23 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { chromium } from 'playwright'
 
+function resolveChromiumLaunchOptions() {
+  const executablePath = [
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ].find((candidate) => candidate && existsSync(candidate))
+
+  return executablePath
+    ? { headless: true, executablePath }
+    : { headless: true }
+}
+
 const DEFAULT_SECRET_FILE = '.context/secrets/e2e.env'
 const DEFAULT_BASE_URL = 'http://127.0.0.1:59000'
-const PNG_1X1_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
+const CSV_BODY = 'name,value\nnexus,1\n'
 
 function loadEnvFile(filePath) {
   if (!existsSync(filePath)) return
@@ -112,11 +126,11 @@ async function main() {
     throw new Error(`No channel/window found for session ${sessionName}`)
   }
 
-  const unique = `nexus-login-upload-smoke-${Date.now()}.png`
+  const unique = `nexus-login-upload-smoke-${Date.now()}.csv`
   const uploadPath = `/tmp/${unique}`
-  writeFileSync(uploadPath, Buffer.from(PNG_1X1_BASE64, 'base64'))
+  writeFileSync(uploadPath, CSV_BODY)
 
-  const browser = await chromium.launch({ headless: true })
+  const browser = await chromium.launch(resolveChromiumLaunchOptions())
   const context = await browser.newContext({
     hasTouch: true,
     isMobile: true,
@@ -155,7 +169,7 @@ async function main() {
       return (window.__nexusWsSends || []).some((item) => item.includes('resize'))
     }, null, { timeout: 20000 })
 
-    const mobileUploadInput = page.locator('span[data-native-file-picker="true"] input[type=file][accept="image/*"]').first()
+    const mobileUploadInput = page.locator('span[data-native-file-picker="true"] input[type=file][accept="*/*"]').first()
     await mobileUploadInput.setInputFiles(uploadPath)
     await page.waitForSelector('text=/路径已就绪|Path ready/', { timeout: 20000 })
     const sendsHandle = await page.waitForFunction((filename) => {

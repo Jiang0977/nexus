@@ -122,11 +122,13 @@ export function useTerminalArtifacts({
       if (!items) return
 
       for (let index = 0; index < items.length; index += 1) {
-        if (!items[index].type.startsWith('image/')) continue
-        event.preventDefault()
-        const file = items[index].getAsFile()
-        if (file) uploadFileRef.current(file)
-        return
+        const item = items[index]
+        if (item.kind === 'file') {
+          event.preventDefault()
+          const file = item.getAsFile()
+          if (file) uploadFileRef.current(file)
+          return
+        }
       }
     }
 

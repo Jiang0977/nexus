@@ -25,7 +25,7 @@ Do not treat `~/.codex/memories/` as an authoritative project source.
 - The script reads `.context/secrets/e2e.env` by default. This directory is git-ignored.
 - Required local secret format: `NEXUS_E2E_PASSWORD=<current Nexus login password>`.
 - Optional overrides: `NEXUS_E2E_BASE_URL`, `NEXUS_E2E_SESSION`, `NEXUS_E2E_WINDOW`, `NEXUS_E2E_SECRET_FILE`.
-- The smoke test logs in through the real login page, uploads a temporary 1px image, verifies the returned path is sent through the terminal WebSocket, and cleans up its temporary upload file.
+- The smoke test logs in through the real login page, uploads a temporary csv, verifies the returned path is sent through the terminal WebSocket, and cleans up its temporary upload file.
 
 ## Preferred Verification Entry Points
 
