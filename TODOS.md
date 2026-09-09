@@ -7,7 +7,7 @@
 - 通用 TUI 终端滚动能力与模式快照（P1，L）
   - 已批准范围：先完成默认 tmux 的真实重绘恢复，native 完整状态引擎另行推进；任务拆分与兼容边界见 [tmux 恢复设计](docs/designs/tmux-terminal-redraw.md)。tmux 主线已本地实现，真实 tmux 验收由红灯转为通过。
   - 当前进度：代码已于 2026-09-10 部署；经用户单独授权，生产后端已从 native 切换为 tmux 并重启 nexus。独立端口与生产主入口均已通过真实 tmux 验收，见 [部署记录](docs/verification/tmux-deployment-2026-09-10.md)。已接入 xterm 6、公开 buffer 滚动观测、移动端单一手势处理器、文本/二进制输入分流、PTY 增量 UTF-8 解码及连接错误 UI；tmux 每连接独立 client、真实重绘握手、重连有序重置、丢包重连及清理已实现。Grok legacy 标题分支、native 完整恢复与 capability/profile 路由仍未完成，本项保持 Open。
-  - 后续本地迭代（尚未部署）：已移除 Grok legacy 标题分支，提供每窗格“自动滚动 / 应用滚动 (SGR)”临时选择。标准模式优先、同目标重连保留、换通道/刷新重置；覆盖 Claude Code/Pi 协议 fixture、旧标题不误路由、分屏隔离。native 重连误杀 fallback PTY 的 3 项历史失败已修复，但不等于完成 native 状态恢复。Rust 110、Node 207（含浏览器 43）全部通过，真实隔离 tmux 验收见 [本地生产候选验收](docs/verification/production-readiness-2026-09-10.md)。
+  - 后续迭代（`b90bde3` 已部署并重启 nexus）：已移除 Grok legacy 标题分支，提供每窗格“自动滚动 / 应用滚动 (SGR)”临时选择。标准模式优先、同目标重连保留、换通道/刷新重置；覆盖 Claude Code/Pi 协议 fixture、旧标题不误路由、分屏隔离。native 重连误杀 fallback PTY 的 3 项历史失败已修复，但不等于完成 native 状态恢复，既有 supervisor 未重启。Rust 110、Node 207（含浏览器 43）及提交后的完整门禁全部通过，真实入口的 12 项浏览器检查和 60 次握手通过，见 [本机生产部署验收](docs/verification/production-readiness-2026-09-10.md)。
   - What：继续完善通用终端输入路由；活跃浏览器优先使用 xterm 公开 mouse tracking / buffer 状态。tmux 新连接由 tmux 自身恢复模式和屏幕，不再重复建设 broker DEC 模式解析器；native 后续需单独验证完整状态引擎，不能仅重放 DEC 标志或 ANSI 尾片段。
   - Why：应用名称/标题关键词会误伤普通 scrollback，也无法自动覆盖 Claude Code、Pi 等后续 TUI；旧的最近输出重放会遗失早先的模式启用序列，现已在 tmux 路径移除，native 尚待处理。
   - Pros：标准 mouse tracking 的 TUI 无需单独适配；非标准 TUI 只需声明通用 capability/profile，不再修改滚动代码；刷新、重连和 split pane 的状态一致。

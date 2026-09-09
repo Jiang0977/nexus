@@ -1,6 +1,6 @@
-# 2026-09-10 本地生产候选版本验收
+# 2026-09-10 本机生产部署验收
 
-结论：本轮实现通过完整功能测试、release 构建和隔离环境真实 tmux 验收。**尚未提交、推送或部署本轮代码，不等同于生产上线验收通过。** 范围为现有单用户、自托管、默认 tmux 产品；native 仍为 opt-in/staging。
+结论：实现提交 `b90bde379f7b010cb211e24d53e002f743d7b945` 已推送 main，并于 2026-09-10 02:58 CST 部署到本机 `/home/demo/.local/lib/nexus`，重启 nexus 后通过真实生产入口验收。范围为现有单用户、自托管、默认 tmux 产品；native 仍为 opt-in/staging。下文分别保留开发、隔离验收和部署证据，不扩大为物理手机、真实 AI 推理或容量认证。
 
 ## 实现与迭代
 
@@ -28,7 +28,7 @@
 | 根目录及前端完整 npm audit | 两者均 0 个已知漏洞 |
 | Cargo.lock 中 172 个 registry crate 的 OSV 扫描 | 0 个已知公告命中 |
 
-`npm run check` 整体退出码仍为 1：最后 `check:frontend-dist` 按 Git 工作树状态检查，尚未提交的重新生成 bundle 必然被标记。未修改该门禁、未通过临时 stage 或提交掩盖；已用独立构建逐文件一致性证明源文件与 bundle 同步。授权提交后须再次运行该门禁。
+开发阶段 `npm run check` 整体退出码为 1：最后 `check:frontend-dist` 按 Git 工作树状态检查，尚未提交的重新生成 bundle 被标记；独立构建已证明源文件与 bundle 同步。用户授权提交后再次执行完整 `npm run check`，Rust 110、Node 207、前端构建和无漂移门禁全部通过，整体退出码 **0**。门禁逻辑未被修改或绕过。
 
 ## 隔离环境真实 release 验收
 
@@ -44,7 +44,21 @@
 - 私有 capability/launch profile、native 完整屏幕状态恢复继续留在 TODO，不能用本轮 PTY 生命周期修复冒充完成。
 - Claude Code/Pi 为协议 fixture，不是实际 AI CLI 推理验收；没有消耗官方 Grok/Codex 等套餐。移动端使用 Chromium 触摸模拟，不是物理手机/Safari 验收。
 - 未做长时间 soak、大并发容量测试或多用户安全认证；依赖扫描零命中不等于不存在漏洞。
-- 本轮尚未部署。后续需明确授权提交/推送及 `npm run deploy:service -- --frontend`，按部署 runbook 备份、重启 nexus、核对安装树与 served assets、健康检查和实际入口 smoke；不可达时立即回滚。不得顺带重启 native supervisor 或现有 tmux/Codex 通道。
+- 已完成下述默认 tmux 部署。现场 native supervisor 仍有 7 个子进程，因此保留其原进程；新 native 二进制已安装但旧 supervisor 没有重新加载，不能声称既有 native 通道已应用本轮修复。未停止既有 tmux 应用进程。
+
+## 真实生产入口验收
+
+用户明确授权本机后续生产级验收后，按“提交 → 完整检查 → 推送 → 备份 → 部署重启 → 实际入口验收”串行执行。
+
+- `npm run deploy:service -- --frontend` 成功；`nexus.service` PID 从 `1537384` 变为 `2550508`，保持 active，验收结束时 `NRestarts=0`。
+- 7 个安装 runtime 二进制及 16 个前端文件逐一校验一致，`/proc/2550508/exe` 哈希等于当前 server 构建；首页和公开引用的 assets 与 checkout 一致。
+- `http://127.0.0.1:59000/api/health` 为 200；未登录 `/api/version` 为 401，登录后可访问。发布前获取且仅保存在测试进程内存的真实 JWT，在升级重启后仍被接受。
+- 在 `http://127.0.0.1:59000` 重跑上述 12 项真实浏览器检查，全部通过，包含实际登录上传一次性路径发送、桌面分屏、移动触摸、刷新和异常重连；截图复核通过。仅布局持久化在浏览器中隔离，认证、PTY、WS、上传和 served assets 使用实际安装服务。
+- 另建专用 shell 通道进行 60 次握手、3 并发、正常关闭/异常断开混合测试：测试所属 client/group 最终均为 0，应用 PID 不变；本机 p95 42.85 ms、最大 45.00 ms。测试通道已清理，其他会话保留。
+- 从部署前一分钟至验收结束的 nexus journal 中，error 级及以上记录为 0，Rust panic/fatal runtime 命中为 0；这不是长时间运行保证。
+- 未触发回滚。额外保留旧安装二进制和前端备份于 `/tmp/nexus-release-acceptance.eUBiEq/rollback`（约 28 MB，不含密钥配置）。
+
+部署证据目录 `/tmp/nexus-release-acceptance.eUBiEq`：`check.log`、`deploy.log`、`install-parity.json`、`token-compat.log`、`live.log`、`live-results.json`、`churn-results.json` 及桌面/移动截图。以上为本机临时证据，本文保留关键结果。
 
 ## 本机原始证据
 

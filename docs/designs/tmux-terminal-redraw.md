@@ -18,7 +18,7 @@
 2. **查询和尺寸兼容**：窗口级 snapshot 聚合 client 数及最近活动，维持原参数。首次 attach 可带合法正整数行列；resize 不得截断溢出数字，也不得把无效 resize 控制 JSON 写入应用。尺寸仅作用于所属 PTY。
 3. **重绘握手**：新浏览器请求 `terminalProtocol=2`；broker 返回 `replayPolicy=tmux-redraw` 后，server 在任何终端文本前发送版本 1 的二进制 JSON `terminal-state` 控制帧。文本输出始终按文本处理，不能把用户输出的 JSON 误判为控制消息。native/旧客户端保持旧行为。
 4. **有序重置和丢包恢复**：浏览器收到有效控制帧时排队写入 RIS，保证先前已排队的旧输出在重置之前处理；失效 socket 的控制和回调必须被忽略。未知控制版本明确报错。广播 lag 关闭 1013 并清理连接，新连接重新获得真实重绘；禁止静默跳过字节。tmux client 自身退出也应触发针对该连接的重连，而非挂起或影响全局连接。
-5. **输入路由**：真实 tmux 重绘恢复其协商的鼠标模式，优先由 xterm 编码标准鼠标输入，不凭标题、2026 或 alternate screen 推断应用身份。2026-09-10 后续本地迭代已移除 Grok legacy 分支，增加窗格级临时手动 SGR 选择和独立回归；私有 capability/launch profile 尚未实现。此后续改动不包含在上面的既有部署记录中。
+5. **输入路由**：真实 tmux 重绘恢复其协商的鼠标模式，优先由 xterm 编码标准鼠标输入，不凭标题、2026 或 alternate screen 推断应用身份。2026-09-10 后续迭代已移除 Grok legacy 分支，增加窗格级临时手动 SGR 选择和独立回归；私有 capability/launch profile 尚未实现。此后续改动已随 `b90bde3` 部署，见 [本机生产部署验收](../verification/production-readiness-2026-09-10.md)。
 
 原生后端的完整状态引擎不在本轮；已有 UTF-8/二进制传输修正保留。三个既有 native 重挂接历史测试失败已在未改动 HEAD `134a586` 复现，不随本轮顺手修改。
 
