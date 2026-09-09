@@ -11,6 +11,8 @@ import {
   writeTerminalSelectionToClipboardEvent,
 } from './terminalClipboard'
 import { connectTerminal, type TerminalSocket } from './terminalConnection'
+import { bindTerminalInput } from './terminalInput'
+import { bindTerminalViewportMetrics } from './terminalViewportMetrics'
 import {
   createSgrWheelReport,
   createTerminalApplicationScrollState,
@@ -175,6 +177,7 @@ export function useTerminalPaneRuntime({
     termRef.current = term
     fitAddonRef.current = fitAddon
     term.open(container)
+    const disposeViewportMetrics = bindTerminalViewportMetrics(term, container)
 
     const viewport = container.querySelector('.xterm-viewport') as HTMLElement | null
     if (viewport) {
@@ -202,7 +205,7 @@ export function useTerminalPaneRuntime({
       return true
     })
 
-    term.onData((data) => sendToWs(data))
+    const disposeTerminalInput = bindTerminalInput(term, () => wsRef.current)
     term.onScroll(() => {
       const buffer = (term as any).buffer?.active
       if (!buffer) return
@@ -213,7 +216,8 @@ export function useTerminalPaneRuntime({
     })
 
     function onWheel(event: WheelEvent) {
-      if (!event.ctrlKey && shouldForwardTerminalWheelToApplication(applicationScrollStateRef.current)) {
+      if (!event.ctrlKey && term.modes.mouseTrackingMode === 'none'
+        && shouldForwardTerminalWheelToApplication(applicationScrollStateRef.current)) {
         const target = screen ?? viewport ?? containerEl
         const report = createSgrWheelReport({
           altKey: event.altKey || event.metaKey,
@@ -256,6 +260,8 @@ export function useTerminalPaneRuntime({
       containerEl.removeEventListener('wheel', onWheel, true)
       containerEl.removeEventListener('contextmenu', onContextMenu)
       containerEl.removeEventListener('copy', onCopy)
+      disposeTerminalInput()
+      disposeViewportMetrics()
       term.dispose()
       termRef.current = null
       fitAddonRef.current = null
@@ -290,7 +296,8 @@ export function useTerminalPaneRuntime({
         },
         reset: () => {
           resetTerminalApplicationScrollState(applicationScrollStateRef.current)
-          termRef.current?.reset()
+          // Queue reset behind already pending writes and before the new redraw.
+          termRef.current?.write('\x1bc')
         },
         fit: () => fitAddonRef.current?.fit(),
         dimensions: () => {

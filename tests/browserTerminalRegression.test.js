@@ -179,7 +179,7 @@ function createBrowserProjectFixture() {
   return { dataDir, projectRoot }
 }
 
-async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnapshots = {}, sessionWindows = [] } = {}) {
+async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnapshots = {}, sessionWindows = [], ptyMode = 'normal' } = {}) {
   ensureRustServerBuilt()
 
   const { dataDir, projectRoot } = createBrowserProjectFixture()
@@ -197,6 +197,7 @@ async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnap
     WORKSPACE_ROOT: '/workspace',
     NEXUS_PTY_BROKER_RUST_EXECUTABLE: process.execPath,
     NEXUS_PTY_BROKER_RUST_ARGS: JSON.stringify([PTY_FIXTURE]),
+    FAKE_PTY_RUNTIME_MODE: ptyMode,
     NEXUS_SESSION_MANAGEMENT_RUST_EXECUTABLE: process.execPath,
     NEXUS_SESSION_MANAGEMENT_RUST_ARGS: JSON.stringify([SESSION_MANAGEMENT_FIXTURE]),
     FAKE_SESSION_MANAGEMENT_EXTRA_CHANNELS_JSON: JSON.stringify(extraChannels),
@@ -249,6 +250,20 @@ async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnap
   })
 
   const page = await context.newPage()
+  await page.addInitScript(() => {
+    // Read real xterm buffer coordinates exposed by the runtime. Pixel values
+    // here only keep gesture-distance assertions comparable across font sizes.
+    window.__nexusReadTerminalScroll = (viewport) => {
+      const container = viewport.closest('[data-terminal-viewport-y]')
+      if (!container) throw new Error('Missing terminal buffer metrics')
+      const rows = Number(container.dataset.terminalRows)
+      const lineHeight = container.querySelector('.xterm-screen').clientHeight / rows
+      return {
+        scrollTop: Number(container.dataset.terminalViewportY) * lineHeight,
+        maxScrollTop: Number(container.dataset.terminalBaseY) * lineHeight,
+      }
+    }
+  })
   const pageErrors = []
   page.on('pageerror', (error) => {
     pageErrors.push(error)
@@ -442,8 +457,8 @@ async function releaseAnimationFrames(page) {
 
 async function readTerminalViewportScroll(page) {
   return page.locator('.xterm-viewport').first().evaluate((viewport) => ({
-    maxScrollTop: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
-    scrollTop: viewport.scrollTop,
+    maxScrollTop: Math.max(0, window.__nexusReadTerminalScroll(viewport).maxScrollTop),
+    scrollTop: window.__nexusReadTerminalScroll(viewport).scrollTop,
   }))
 }
 
@@ -451,25 +466,25 @@ async function waitForTerminalViewportAtBottom(page, selector, label) {
   await page.waitForFunction((viewportSelector) => {
     const viewport = document.querySelector(viewportSelector)
     if (!(viewport instanceof HTMLElement)) return false
-    return viewport.scrollHeight - viewport.clientHeight > 400
+    return window.__nexusReadTerminalScroll(viewport).maxScrollTop > 400
   }, selector)
 
   await page.waitForFunction((viewportSelector) => {
     const viewport = document.querySelector(viewportSelector)
     if (!(viewport instanceof HTMLElement)) return false
-    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-    return maxScrollTop <= 4 || viewport.scrollTop >= maxScrollTop - 4
+    const maxScrollTop = Math.max(0, window.__nexusReadTerminalScroll(viewport).maxScrollTop)
+    return maxScrollTop <= 4 || window.__nexusReadTerminalScroll(viewport).scrollTop >= maxScrollTop - 4
   }, selector, { timeout: 10000 })
 
   const metrics = await page.evaluate((viewportSelector) => {
     const viewport = document.querySelector(viewportSelector)
     if (!(viewport instanceof HTMLElement)) return null
-    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    const maxScrollTop = Math.max(0, window.__nexusReadTerminalScroll(viewport).maxScrollTop)
     return {
       clientHeight: viewport.clientHeight,
       maxScrollTop,
-      scrollHeight: viewport.scrollHeight,
-      scrollTop: viewport.scrollTop,
+      scrollHeight: window.__nexusReadTerminalScroll(viewport).maxScrollTop + viewport.clientHeight,
+      scrollTop: window.__nexusReadTerminalScroll(viewport).scrollTop,
     }
   }, selector)
 
@@ -2407,7 +2422,7 @@ test('browser regression: mobile settings modal stays scrollable and closable', 
   )
 })
 
-test('browser regression: mobile terminal vertical drag scrolls xterm history without cancelling native touch scroll', { timeout: 120000 }, async (t) => {
+test('browser regression: mobile terminal vertical drag scrolls the public xterm buffer without native double scrolling', { timeout: 120000 }, async (t) => {
   const longOutput = Array.from({ length: 120 }, (_, index) => `mobile history line ${String(index + 1).padStart(3, '0')}`).join('\n') + '\n'
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
     mobile: true,
@@ -2478,7 +2493,7 @@ test('browser regression: mobile terminal vertical drag scrolls xterm history wi
 
   const startX = rect.left + rect.width / 2
   const startY = rect.top + rect.height / 2
-  const beforeScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  const beforeScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => window.__nexusReadTerminalScroll(viewport).scrollTop)
   await dispatchMobileSwipe(page, [
     [startX, startY],
     [startX + 1, startY + 80],
@@ -2489,16 +2504,15 @@ test('browser regression: mobile terminal vertical drag scrolls xterm history wi
 
   await page.waitForFunction(() => {
     const viewport = document.querySelector('.xterm-viewport')
-    return viewport instanceof HTMLElement && viewport.scrollTop < viewport.scrollHeight - viewport.clientHeight - 20
+    return viewport instanceof HTMLElement && window.__nexusReadTerminalScroll(viewport).scrollTop < window.__nexusReadTerminalScroll(viewport).maxScrollTop - 20
   })
-  const afterScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  const afterScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => window.__nexusReadTerminalScroll(viewport).scrollTop)
   assert.ok(afterScrollTop < beforeScrollTop, `expected mobile drag to move xterm viewport upward, before=${beforeScrollTop}, after=${afterScrollTop}`)
   const touchMoveStats = await page.evaluate(() => window.__nexusTerminalTouchMoveStats)
   assert.ok(touchMoveStats.total > 0, `expected terminal touchmove events to be observed, got ${JSON.stringify(touchMoveStats)}`)
-  assert.equal(
-    touchMoveStats.preventDefaultCalls,
-    0,
-    `vertical terminal dragging must stay on the browser-native scroll path, got ${JSON.stringify(touchMoveStats)}`,
+  assert.ok(
+    touchMoveStats.preventDefaultCalls > 0,
+    `vertical terminal dragging must suppress the competing browser pan, got ${JSON.stringify(touchMoveStats)}`,
   )
   await page.getByRole('button', { name: '滚到底部' }).waitFor()
 
@@ -2507,7 +2521,7 @@ test('browser regression: mobile terminal vertical drag scrolls xterm history wi
     socket?.onmessage?.(new MessageEvent('message', { data: 'streaming output after touch scroll\n' }))
   })
   await delay(150)
-  const afterStreamingScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  const afterStreamingScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => window.__nexusReadTerminalScroll(viewport).scrollTop)
   assert.ok(
     afterStreamingScrollTop < beforeScrollTop,
     `expected incoming output to preserve user scroll, before=${beforeScrollTop}, afterStream=${afterStreamingScrollTop}`,
@@ -2573,14 +2587,14 @@ test('browser regression: mobile terminal short drag scrolls immediately', { tim
 
   const startX = rect.left + rect.width / 2
   const startY = rect.top + rect.height / 2
-  const beforeScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  const beforeScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => window.__nexusReadTerminalScroll(viewport).scrollTop)
   await dispatchMobileSwipe(page, [
     [startX, startY],
     [startX + 1, startY + 18],
     [startX + 1, startY + 28],
   ])
 
-  const afterScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  const afterScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => window.__nexusReadTerminalScroll(viewport).scrollTop)
   assert.ok(
     afterScrollTop < beforeScrollTop,
     `expected short mobile drag to move xterm viewport immediately, before=${beforeScrollTop}, after=${afterScrollTop}`,
@@ -2610,12 +2624,12 @@ test('browser regression: mobile terminal vertical drag still scrolls when nativ
 
   const metrics = await page.locator('.xterm-viewport').first().evaluate((viewport) => {
     const bounds = viewport.getBoundingClientRect()
-    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    const maxScrollTop = Math.max(0, window.__nexusReadTerminalScroll(viewport).maxScrollTop)
     return {
       height: bounds.height,
       left: bounds.left,
       maxScrollTop,
-      scrollTop: viewport.scrollTop,
+      scrollTop: window.__nexusReadTerminalScroll(viewport).scrollTop,
       top: bounds.top,
       width: bounds.width,
     }
@@ -2639,9 +2653,9 @@ test('browser regression: mobile terminal vertical drag still scrolls when nativ
 
   await page.waitForFunction((beforeScrollTop) => {
     const viewport = document.querySelector('.xterm-viewport')
-    return viewport instanceof HTMLElement && viewport.scrollTop < beforeScrollTop - 20
+    return viewport instanceof HTMLElement && window.__nexusReadTerminalScroll(viewport).scrollTop < beforeScrollTop - 20
   }, metrics.scrollTop, { timeout: 5000 })
-  const afterScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => viewport.scrollTop)
+  const afterScrollTop = await page.locator('.xterm-viewport').first().evaluate((viewport) => window.__nexusReadTerminalScroll(viewport).scrollTop)
   assert.ok(
     afterScrollTop < metrics.scrollTop - 20,
     `expected app fallback to move xterm history when native pan did not, before=${metrics.scrollTop}, after=${afterScrollTop}, max=${metrics.maxScrollTop}`,
@@ -2675,12 +2689,12 @@ test('browser regression: mobile terminal fallback still scrolls when streaming 
 
   const startMetrics = await page.locator('.xterm-viewport').first().evaluate((viewport) => {
     const bounds = viewport.getBoundingClientRect()
-    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    const maxScrollTop = Math.max(0, window.__nexusReadTerminalScroll(viewport).maxScrollTop)
     return {
       height: bounds.height,
       left: bounds.left,
       maxScrollTop,
-      scrollTop: viewport.scrollTop,
+      scrollTop: window.__nexusReadTerminalScroll(viewport).scrollTop,
       top: bounds.top,
       width: bounds.width,
     }
@@ -2698,12 +2712,12 @@ test('browser regression: mobile terminal fallback still scrolls when streaming 
   await dispatchCapturedWebSocketMessage(page, 'window=0', streamChunk)
   await page.waitForFunction((previous) => {
     const viewport = document.querySelector('.xterm-viewport')
-    return viewport instanceof HTMLElement && viewport.scrollTop > previous + 10
+    return viewport instanceof HTMLElement && window.__nexusReadTerminalScroll(viewport).scrollTop > previous + 10
   }, startMetrics.scrollTop, { timeout: 5000 })
 
   const postStream = await page.locator('.xterm-viewport').first().evaluate((viewport) => ({
-    maxScrollTop: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
-    scrollTop: viewport.scrollTop,
+    maxScrollTop: Math.max(0, window.__nexusReadTerminalScroll(viewport).maxScrollTop),
+    scrollTop: window.__nexusReadTerminalScroll(viewport).scrollTop,
   }))
   assert.ok(
     postStream.scrollTop > startMetrics.scrollTop,
@@ -2717,15 +2731,15 @@ test('browser regression: mobile terminal fallback still scrolls when streaming 
 
   await page.waitForFunction((postStreamScrollTop) => {
     const viewport = document.querySelector('.xterm-viewport')
-    return viewport instanceof HTMLElement && viewport.scrollTop < postStreamScrollTop - 20
+    return viewport instanceof HTMLElement && window.__nexusReadTerminalScroll(viewport).scrollTop < postStreamScrollTop - 20
   }, postStream.scrollTop, { timeout: 5000 })
   await page.getByRole('button', { name: '滚到底部' }).waitFor()
 
   await dispatchCapturedWebSocketMessage(page, 'window=0', 'more live output after fallback\n')
   await delay(150)
   const afterMoreOutput = await page.locator('.xterm-viewport').first().evaluate((viewport) => ({
-    maxScrollTop: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
-    scrollTop: viewport.scrollTop,
+    maxScrollTop: Math.max(0, window.__nexusReadTerminalScroll(viewport).maxScrollTop),
+    scrollTop: window.__nexusReadTerminalScroll(viewport).scrollTop,
   }))
   assert.ok(
     afterMoreOutput.scrollTop < afterMoreOutput.maxScrollTop - 20,
@@ -2740,7 +2754,7 @@ test('browser regression: mobile terminal fallback still scrolls when streaming 
   )
 })
 
-test('browser regression: delayed native viewport movement prevents mobile terminal fallback from double-scrolling', { timeout: 120000 }, async (t) => {
+test('browser regression: mobile terminal drag remains single-owner when animation frames are delayed', { timeout: 120000 }, async (t) => {
   const longOutput = Array.from({ length: 120 }, (_, index) => `delayed native history line ${String(index + 1).padStart(3, '0')}`).join('\n') + '\n'
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
     mobile: true,
@@ -2771,12 +2785,12 @@ test('browser regression: delayed native viewport movement prevents mobile termi
 
   const metrics = await page.locator('.xterm-viewport').first().evaluate((viewport) => {
     const bounds = viewport.getBoundingClientRect()
-    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    const maxScrollTop = Math.max(0, window.__nexusReadTerminalScroll(viewport).maxScrollTop)
     return {
       height: bounds.height,
       left: bounds.left,
       maxScrollTop,
-      scrollTop: viewport.scrollTop,
+      scrollTop: window.__nexusReadTerminalScroll(viewport).scrollTop,
       top: bounds.top,
       width: bounds.width,
     }
@@ -2814,11 +2828,11 @@ test('browser regression: delayed native viewport movement prevents mobile termi
   const afterNative = await readTerminalViewportScroll(page)
   assert.ok(
     afterNative.scrollTop < metrics.scrollTop - 40,
-    `expected CDP native pan to move history while fallback rAF is held, start=${metrics.scrollTop}, afterNative=${afterNative.scrollTop}`,
+    `expected CDP touch to move the public buffer while rendering rAF is held, start=${metrics.scrollTop}, afterTouch=${afterNative.scrollTop}`,
   )
   assert.ok(
     metrics.scrollTop - afterNative.scrollTop < 480,
-    `expected native-only movement while fallback rAF is held, not native+manual double-scroll, start=${metrics.scrollTop}, afterNative=${afterNative.scrollTop}`,
+    `expected one owner of touch movement, not native+manual double-scroll, start=${metrics.scrollTop}, afterTouch=${afterNative.scrollTop}`,
   )
 
   await releaseAnimationFrames(page)
@@ -2843,10 +2857,9 @@ test('browser regression: delayed native viewport movement prevents mobile termi
     `expected gesture to remain scrolled after native continuation, start=${metrics.scrollTop}, final=${finalScroll.scrollTop}`,
   )
   const touchMoveStats = await page.evaluate(() => window.__nexusTerminalTouchMoveStats)
-  assert.equal(
-    touchMoveStats.preventDefaultCalls,
-    0,
-    `delayed native movement must stay on the browser-native scroll path, got ${JSON.stringify(touchMoveStats)}`,
+  assert.ok(
+    touchMoveStats.preventDefaultCalls > 0,
+    `terminal touch scrolling must suppress the competing native pan, got ${JSON.stringify(touchMoveStats)}`,
   )
 
   assert.deepEqual(
@@ -2855,6 +2868,85 @@ test('browser regression: delayed native viewport movement prevents mobile termi
     `unexpected page errors:\n${pageErrors.map((error) => String(error?.stack || error)).join('\n\n')}\n\nserver logs:\n${getLogs()}`,
   )
 })
+
+test('browser regression: mobile standard mouse tracking uses xterm encoding and exits back to scrollback', { timeout: 120000 }, async (t) => {
+  const history = Array.from({ length: 120 }, (_, index) => `standard history ${index}\r\n`).join('')
+  const { page, password, port, pageErrors } = await launchBrowserApp(t, {
+    mobile: true,
+    ptySnapshots: { 'nexus-preview-rust:0': { output: history + '\x1b[?1000;1006hREADY', clients: 1 } },
+  })
+  await page.addInitScript(installWebSocketCapture)
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('READY'))
+  const box = await page.locator('.xterm-viewport').first().boundingBox()
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await dispatchSyntheticMobileSwipe(page, '.xterm-viewport', [[x, y], [x, y + 40], [x, y + 80]])
+  const reports = await page.evaluate(() => window.__nexusWsSends.filter(({ data }) => /^\x1b\[<64;\d+;\d+M$/.test(String(data))))
+  assert.equal(reports.length, 2, 'each touch step produces one negotiated SGR report, without duplication')
+  await dispatchCapturedWebSocketMessage(page, 'window=0', '\x1b]0;Grok fixture\x07\x1b[?1006lLEGACY')
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('LEGACY'))
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await dispatchSyntheticMobileSwipe(page, '.xterm-viewport', [[x, y], [x, y + 40]])
+  const legacy = await page.evaluate(() => window.__nexusWsSends.map(({ data }) => (
+    data instanceof Uint8Array ? Array.from(data) : data
+  )))
+  assert.equal(legacy.length, 1, 'one legacy report must be sent without SGR fallback duplication')
+  assert.ok(Array.isArray(legacy[0]), 'legacy mouse report uses the binary WebSocket path')
+  assert.deepEqual(legacy[0].slice(0, 4), [27, 91, 77, 96], 'xterm encodes a legacy wheel-up report')
+  await dispatchCapturedWebSocketMessage(page, 'window=0', '\x1b[?1000lSTOPPED')
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('STOPPED'))
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  const before = await readTerminalViewportScroll(page)
+  await dispatchSyntheticMobileSwipe(page, '.xterm-viewport', [[x, y], [x, y + 40], [x, y + 80]])
+  const after = await readTerminalViewportScroll(page)
+  assert.ok(after.scrollTop < before.scrollTop, 'disabling tracking restores ordinary history scrolling')
+  const afterSends = await page.evaluate(() => window.__nexusWsSends)
+  assert.equal(afterSends.some(({ data }) => /^\x1b\[<6[45];/.test(String(data))), false)
+  assert.deepEqual(pageErrors, [])
+})
+
+for (const mobile of [false, true]) {
+  test(`browser regression: ${mobile ? 'mobile' : 'desktop pane'} tmux redraw handshake resets an existing terminal after retryable disconnect`, { timeout: 60000 }, async (t) => {
+    const { page, password, port, pageErrors } = await launchBrowserApp(t, {
+      mobile, ptyMode: 'tmux-redraw',
+      extraChannels: [{ index: 0, name: 'preview', active: false, cwd: '/workspace' }],
+      ptySnapshots: { 'nexus-preview-rust:0': { output: '\x1b[?1049h\x1b[HREDRAW_READY', clients: 1 } },
+    })
+    await page.addInitScript(installWebSocketCapture)
+    await page.addInitScript(() => localStorage.setItem('nexus_sidebar_collapsed', 'false'))
+    await loginAndWaitForTerminal(page, port, password)
+    if (!mobile) {
+      const channel = page.locator('[draggable="true"]').filter({ hasText: 'preview' }).first()
+      await channel.waitFor()
+      await channel.dragTo(page.getByTestId('terminal-pane-pane-1'))
+    }
+    await page.waitForFunction(() => [...document.querySelectorAll('.xterm-rows')].some((rows) => rows.textContent.includes('REDRAW_READY')))
+    await page.evaluate(() => {
+      const socket = window.__nexusWsInstances.find((socket) => socket.__nexusUrl.includes('window=0'))
+      window.__oldTerminalSocket = socket
+      socket.onmessage({ data: '\x1b[8;1HSTALE_SCREEN_MUST_DISAPPEAR\x1b[?1000h' })
+    })
+    await page.waitForFunction(() => [...document.querySelectorAll('.xterm-rows')].some((rows) => rows.textContent.includes('STALE_SCREEN_MUST_DISAPPEAR')))
+    await page.evaluate(() => window.__oldTerminalSocket.send('__client_exit__'))
+    await page.waitForFunction(() => window.__nexusWsInstances.filter((socket) => socket.__nexusUrl.includes('window=0')).length >= 2)
+    await page.waitForFunction(() => {
+      const text = [...document.querySelectorAll('.xterm-rows')].map((rows) => rows.textContent).join('')
+      return text.includes('REDRAW_READY') && !text.includes('STALE_SCREEN_MUST_DISAPPEAR')
+    })
+    await page.evaluate(() => {
+      window.__oldTerminalSocket.onmessage({ data: 'STALE_CALLBACK_MUST_BE_IGNORED' })
+      window.__nexusWsSends = []
+    })
+    const viewport = page.locator('.xterm').filter({ hasText: 'REDRAW_READY' }).locator('.xterm-viewport').first()
+    await viewport.dispatchEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true })
+    assert.equal(await page.evaluate(() => window.__nexusWsSends.some(({ data }) => data instanceof Uint8Array || /^\x1b\[<(64|65);/.test(String(data)))), false, 'old mouse mode is reset (alternate scroll may still emit arrow keys)')
+    const rendered = (await page.locator('.xterm-rows').allTextContents()).join('')
+    assert.doesNotMatch(rendered, /STALE_CALLBACK_MUST_BE_IGNORED|replayPolicy|terminal-state/)
+    assert.deepEqual(pageErrors, [])
+  })
+}
 
 test('browser regression: reconnected Grok TUI forwards mouse wheel and touch scroll to the application', { timeout: 120000 }, async (t) => {
   const grokTuiReplay = '\x1b]0;Grok mobile reconnect\x07Grok 4.6 reconnect frame without retained mouse mode'
@@ -3012,11 +3104,11 @@ test('browser regression: desktop Codex synchronized updates keep native xterm s
   await targetRows.waitFor()
   const targetViewport = page.getByTestId('terminal-pane-pane-1').locator('.xterm-viewport')
   await targetViewport.evaluate((viewport) => {
-    viewport.scrollTop = viewport.scrollHeight
+    // Replay already positions the public buffer at the bottom.
   })
   const before = await targetViewport.evaluate((viewport) => ({
-    maxScrollTop: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
-    scrollTop: viewport.scrollTop,
+    maxScrollTop: Math.max(0, window.__nexusReadTerminalScroll(viewport).maxScrollTop),
+    scrollTop: window.__nexusReadTerminalScroll(viewport).scrollTop,
   }))
   assert.ok(before.maxScrollTop > 400, `expected Codex scrollback range, got ${JSON.stringify(before)}`)
 
@@ -3038,7 +3130,7 @@ test('browser regression: desktop Codex synchronized updates keep native xterm s
   await delay(100)
 
   const after = await targetViewport.evaluate((viewport) => ({
-    scrollTop: viewport.scrollTop,
+    scrollTop: window.__nexusReadTerminalScroll(viewport).scrollTop,
   }))
   const wheelSends = await page.evaluate(() => window.__nexusWsSends || [])
   assert.equal(

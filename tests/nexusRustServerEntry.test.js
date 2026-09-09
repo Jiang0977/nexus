@@ -1289,6 +1289,84 @@ test('rust nexus-server bridges pty websocket traffic through the rust runtime',
   })
 })
 
+test('rust websocket negotiates redraw before buffered output and isolates client exit cleanup', { timeout: 30000 }, async (t) => {
+  ensureRustServerBuilt()
+  const projectRoot = createProjectFixture()
+  const requestLog = join(projectRoot, 'attach.jsonl')
+  const port = await getFreePort()
+  const password = 'redraw-fixture'
+  const { child } = spawnRustServer({
+    NEXUS_PROJECT_ROOT: projectRoot, HOST: '127.0.0.1', PORT: String(port),
+    JWT_SECRET: 'isolated-redraw-secret', ACC_PASSWORD_HASH: bcrypt.hashSync(password, 8),
+    NEXUS_PTY_BROKER_RUST_EXECUTABLE: process.execPath,
+    NEXUS_PTY_BROKER_RUST_ARGS: JSON.stringify([PTY_FIXTURE]),
+    FAKE_PTY_RUNTIME_MODE: 'tmux-redraw', FAKE_PTY_RUNTIME_REQUEST_LOG: requestLog,
+  })
+  const sockets = []
+  t.after(async () => {
+    for (const socket of sockets) socket.terminate()
+    await stopChild(child)
+    rmSync(projectRoot, { recursive: true, force: true })
+  })
+  await waitForHealthyHttp(port, child)
+  const { token } = await login(port, password)
+  const connect = async (query) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}&session=restore&window=0${query}`)
+    sockets.push(socket)
+    const messages = []
+    socket.on('message', (data, binary) => messages.push({ data: data.toString(), binary }))
+    await waitForWebSocketOpen(socket)
+    await waitFor(() => messages.some(({ data }) => data === 'INITIAL_REDRAW'))
+    return { socket, messages }
+  }
+  const first = await connect('&terminalProtocol=2&cols=97&rows=31')
+  assert.equal(first.messages[0].binary, true)
+  assert.deepEqual(JSON.parse(first.messages[0].data), { type: 'terminal-state', version: 1, replayPolicy: 'tmux-redraw' })
+  assert.deepEqual(first.messages[1], { data: 'INITIAL_REDRAW', binary: false })
+  const second = await connect('&terminalProtocol=2&cols=65536&rows=0')
+  const legacy = await connect('')
+  assert.deepEqual(legacy.messages, [{ data: 'INITIAL_REDRAW', binary: false }])
+  const requests = readFileSync(requestLog, 'utf8').trim().split('\n').map(JSON.parse)
+  assert.equal(requests[0].params.cols, 97)
+  assert.equal(requests[0].params.rows, 31)
+  assert.equal(requests[1].params.cols, null)
+  assert.equal(requests[1].params.rows, null)
+  const jsonOutput = JSON.stringify({ type: 'terminal-state', version: 999 })
+  first.socket.send(jsonOutput)
+  await waitFor(() => first.messages.some(({ data }) => data === jsonOutput))
+  assert.equal(first.messages.at(-1).binary, false)
+  const closed = waitForWebSocketClose(first.socket)
+  first.socket.send('__client_exit__')
+  assert.equal((await closed).code, 1011)
+  const readSnapshot = async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/api/sessions/0/output?session=restore`, { headers: { Authorization: `Bearer ${token}` } })
+    return response.json()
+  }
+  await waitFor(async () => (await readSnapshot()).clients === 2)
+  second.socket.send('SURVIVING_CLIENT')
+  await waitFor(() => second.messages.some(({ data }) => data === 'SURVIVING_CLIENT'))
+  assert.equal(second.socket.readyState, WebSocket.OPEN)
+  const secondClosed = waitForWebSocketClose(second.socket)
+  const legacyClosed = waitForWebSocketClose(legacy.socket)
+  second.socket.send('__fatal__')
+  assert.equal((await secondClosed).code, 1011)
+  assert.equal((await legacyClosed).code, 1011)
+  await waitFor(async () => (await readSnapshot()).clients === 0)
+  // More than the 256-event broadcast capacity before attach resolves: deterministic lag.
+  const lag = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}&session=lag&window=0&terminalProtocol=2`)
+  sockets.push(lag)
+  const lagFrames = []
+  lag.on('message', (data, binary) => lagFrames.push({ data: data.toString(), binary }))
+  const lagClose = await waitForWebSocketClose(lag)
+  assert.equal(lagClose.code, 1013)
+  assert.match(lagClose.reason, /output lost/)
+  assert.equal(lagFrames[0].binary, true)
+  await waitFor(async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/api/sessions/0/output?session=lag`, { headers: { Authorization: `Bearer ${token}` } })
+    return (await response.json()).clients === 0
+  })
+})
+
 test('rust nexus-server rejects websocket clients with invalid tokens', async (t) => {
   ensureRustServerBuilt()
 

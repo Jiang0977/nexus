@@ -293,11 +293,12 @@ test('real rust pty runtime speaks the broker contract through a fake tmux backe
     session: 'main',
     windowIndex: 3,
   })
-  assert.deepEqual(attached, { key: 'main:3' })
+  assert.equal(attached.replayPolicy, 'tmux-redraw')
+  assert.equal(attached.key, 'tmux:["main",3,"conn-1"]')
 
   client.handleConnectionMessage({
     connectionId: 'conn-1',
-    key: 'main:3',
+    key: attached.key,
     rawMessage: 'pwd\n',
   })
 
@@ -316,7 +317,7 @@ test('real rust pty runtime speaks the broker contract through a fake tmux backe
   assert.match(snapshot.output, /pwd\r?\n/)
   assert.equal(snapshot.clients, 1)
 
-  client.closeConnection({ connectionId: 'conn-1', key: 'main:3' })
+  client.closeConnection({ connectionId: 'conn-1', key: attached.key })
 
   let status = await client.getStatus()
   for (let attempt = 0; attempt < 20 && status.runningPtys !== 0; attempt += 1) {
@@ -1449,8 +1450,9 @@ test('real rust pty runtime isolates same-session windows with grouped tmux sess
     windowIndex: 3,
   })
 
-  assert.deepEqual(first, { key: 'main:0' })
-  assert.deepEqual(second, { key: 'main:3' })
+  assert.equal(first.replayPolicy, 'tmux-redraw')
+  assert.equal(second.replayPolicy, 'tmux-redraw')
+  assert.notEqual(first.key, second.key)
 
   const log = readFileSync(logFile, 'utf8')
   assert.doesNotMatch(log, /attach-session\|-t main:/)
@@ -1538,11 +1540,11 @@ test('real rust pty runtime forces an xterm TERM when parent env is dumb', { ski
     session: 'main',
     windowIndex: 0,
   })
-  assert.deepEqual(attached, { key: 'main:0' })
+  assert.equal(attached.replayPolicy, 'tmux-redraw')
 
   client.handleConnectionMessage({
     connectionId: 'conn-dumb-term',
-    key: 'main:0',
+    key: attached.key,
     rawMessage: 'hello from dumb parent\n',
   })
 
@@ -1559,7 +1561,7 @@ test('real rust pty runtime forces an xterm TERM when parent env is dumb', { ski
   assert.match(combinedOutput, /hello from dumb parent\r?\n/)
   assert.doesNotMatch(combinedOutput, /open terminal failed: terminal does not support clear/)
 
-  client.closeConnection({ connectionId: 'conn-dumb-term', key: 'main:0' })
+  client.closeConnection({ connectionId: 'conn-dumb-term', key: attached.key })
 
   let status = await client.getStatus()
   for (let attempt = 0; attempt < 20 && status.runningPtys !== 0; attempt += 1) {

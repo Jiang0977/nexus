@@ -79,6 +79,51 @@ function isolatedNativeEnv(baseDir, overrides = {}) {
   }
 }
 
+test('pty runtime forwards every binary byte unchanged through the native supervisor', { skip: process.platform === 'win32', timeout: 180000 }, async (t) => {
+  ensureBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-binary-'))
+  const socketPath = join(baseDir, 'supervisor.sock')
+  const env = isolatedNativeEnv(baseDir, {
+    NEXUS_NATIVE_PTY_PROGRAM: '/bin/sh',
+    NEXUS_NATIVE_PTY_ARGS: 'tests/fixtures/native-binary-probe.sh',
+    NEXUS_NATIVE_PTY_CWD: ROOT,
+    NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: socketPath,
+  })
+  const supervisor = spawn(SUPERVISOR, [], { cwd: ROOT, stdio: 'ignore', env })
+  let runtime
+  t.after(async () => {
+    await runtime?.close()
+    if (supervisor.exitCode === null) {
+      await new Promise((resolveExit) => {
+        supervisor.once('exit', resolveExit)
+        supervisor.kill('SIGTERM')
+      })
+    }
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+  await waitForSocket(socketPath)
+  runtime = createPtyBrokerRustClient({
+    runtimeExecutable: PTY_RUNTIME, env, readyTimeoutMs: 3000,
+    log: { log() {}, error() {} },
+  })
+  let output = ''
+  runtime.onEvent((event) => { if (event.type === 'output') output += event.data })
+  await runtime.ready()
+  const { key } = await runtime.attachConnection({
+    connectionId: 'binary-client', session: 'binary-project', windowIndex: 0,
+  })
+  for (let attempt = 0; attempt < 100 && !output.includes('READY'); attempt++) await delay(20)
+  assert.ok(output.includes('READY'), `PTY did not become ready: ${output}`)
+  const bytes = Array.from({ length: 256 }, (_, index) => index)
+  runtime.handleConnectionMessage({ connectionId: 'binary-client', key, rawBytes: bytes })
+  for (let attempt = 0; attempt < 100 && !output.includes('DONE'); attempt++) await delay(20)
+  assert.ok(output.includes('DONE'), `PTY did not receive 256 bytes: ${output}`)
+  const hex = output.slice(output.indexOf('READY') + 5, output.indexOf('DONE')).trim().split(/\s+/)
+  assert.deepEqual(hex, bytes.map((byte) => byte.toString(16).padStart(2, '0')))
+  for (let attempt = 0; attempt < 100 && !output.includes('UTF8:中🙂:�'); attempt++) await delay(20)
+  assert.ok(output.includes('UTF8:中🙂:�'), `split UTF-8 and incomplete EOF must be decoded exactly: ${output}`)
+})
+
 test('native pty supervisor keeps a native PTY alive across socket clients', { skip: process.platform === 'win32' }, async (t) => {
   ensureBuilt()
 

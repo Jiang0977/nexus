@@ -140,6 +140,7 @@
 - `Terminal.tsx` 只负责顶层装配
 - WebSocket URL / resize / reconnect / close policy 集中在 `terminalConnection.ts`
 - Grok 全屏 TUI 的终端标题识别和 SGR wheel 编码集中在 `terminalApplicationScroll.ts`；普通正文中的 Grok 版本名和通用 synchronized-update 输出仍走 xterm scrollback
+- xterm 6 的滚动观测统一在 `terminalViewportMetrics.ts`，使用公开 buffer 坐标；`terminalInput.ts` 共用文本/二进制输入绑定。移动触摸由单一处理器滚动公开 buffer，标准鼠标模式则交给 xterm 编码；不依赖旧 viewport DOM 的原生滚动。
 - runtime hooks 只装配 xterm、交互和连接状态 adapter
 - session / window 状态下沉到 sessions hook
 - scrollback / upload / 通知下沉到 artifacts hook
@@ -157,13 +158,14 @@
 ### 终端 attach
 
 1. 浏览器建 WebSocket 到 `/ws`
-2. `terminalConnection.ts` 负责连接、首帧 resize、retry 与 fatal close-code policy
+2. `terminalConnection.ts` 负责连接前 fit/尺寸查询、首帧 resize、二进制重绘控制、有序 reset、retry 与 fatal close-code policy
 3. `session_ws.rs` 默认每 10 秒发送 Ping，并处理浏览器 Close 握手
 4. `nexus-server` 把请求转给 `nexus-pty-runtime`
 5. PTY runtime attach 到目标 project/channel
-6. tmux backend 下连接 `tmux session:window`；native backend 下连接 Rust PTY/supervisor
+6. tmux backend 每连接创建独立 client PTY/grouped session 链接原 `session:window`，由 tmux 完整重绘而不是重放输出尾部；native backend 下连接 Rust PTY/supervisor，完整状态恢复仍待实现
 7. stdio child 与 supervisor socket 都使用 `child_runtime_protocol` 的 JSON-line contract
 8. 浏览器和后端 PTY 双向 I/O；全屏 TUI 的滚轮或触摸滑动可由 `terminalApplicationScroll.ts` 编码回应用
+9. tmux 客户端 EOF 和广播丢包使对应 WebSocket 以可重试状态关闭并清理；新连接先收版本化二进制 `terminal-state` 再收文本重绘，旧客户端/native 保持兼容
 
 ### 新建 project / channel
 

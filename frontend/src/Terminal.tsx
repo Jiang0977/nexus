@@ -171,6 +171,7 @@ export default function Terminal({ token }: Props) {
     handleInputChange,
     handleKeyDown,
     isConnecting,
+    connectionError,
     isScrolledUp,
     scrollToBottom,
     sendToWs,
@@ -587,6 +588,7 @@ export default function Terminal({ token }: Props) {
           <TerminalViewport
             containerRef={containerRef}
             isConnecting={isConnecting}
+            connectionError={connectionError}
             isScrolledUp={isScrolledUp}
             onFetchScrollback={fetchScrollback}
             onScrollToBottom={scrollToBottom}

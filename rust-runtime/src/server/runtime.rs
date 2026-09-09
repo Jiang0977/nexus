@@ -840,6 +840,10 @@ pub(super) struct WsQuery {
     pub(super) token: Option<String>,
     pub(super) session: Option<String>,
     pub(super) window: Option<String>,
+    #[serde(rename = "terminalProtocol")]
+    pub(super) terminal_protocol: Option<String>,
+    pub(super) cols: Option<String>,
+    pub(super) rows: Option<String>,
 }
 
 #[derive(Deserialize, Default)]

@@ -115,7 +115,16 @@ rl.on('line', (line) => {
         const entry = ensureEntry(params.session, params.windowIndex)
         entry.clients.add(params.connectionId)
         connections.set(params.connectionId, entry.key)
-        response(id, true, { key: entry.key })
+        if (mode === 'tmux-redraw') {
+          const requestLog = process.env.FAKE_PTY_RUNTIME_REQUEST_LOG
+          if (requestLog) appendFileSync(requestLog, `${JSON.stringify({ method, params })}\n`)
+          // Deliberately emit before the attach response to exercise server ordering.
+          const frames = params.session === 'lag' ? 300 : 1
+          for (let index = 0; index < frames; index++) {
+            event('output', { connectionId: params.connectionId, data: 'INITIAL_REDRAW' })
+          }
+        }
+        response(id, true, { key: entry.key, ...(mode === 'tmux-redraw' ? { replayPolicy: 'tmux-redraw' } : {}) })
         if (entry.output) {
           event('output', {
             connectionId: params.connectionId,
@@ -180,6 +189,14 @@ rl.on('line', (line) => {
     if (method === 'handleConnectionMessage') {
       const entry = entries.get(params.key) || ensureEntry('main', 0)
       const raw = String(params.rawMessage || '')
+      if (mode === 'tmux-redraw' && raw === '__client_exit__') {
+        event('connectionClosed', { connectionId: params.connectionId })
+        return
+      }
+      if (mode === 'tmux-redraw' && raw === '__fatal__') {
+        event('fatal', { message: 'fixture fatal' })
+        return
+      }
       if (!raw.includes('resize')) {
         entry.output += raw
         for (const connectionId of entry.clients) {

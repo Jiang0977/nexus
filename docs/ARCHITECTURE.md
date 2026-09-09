@@ -172,6 +172,11 @@ bash start.sh
 
 - `session_ws.rs` 默认每 10 秒发送 WebSocket Ping；`NEXUS_WS_HEARTBEAT_MS` 可改为其他正数，无效值回退到默认值。
 - 浏览器关闭连接时，server 参与标准关闭握手；非预期断开由 `terminalConnection.ts` 走指数退避重连，最多 8 次。
+- xterm 6 的历史位置以公开的 `buffer.active.viewportY/baseY` 为准，不读取旧 `.xterm-viewport.scrollTop`。移动端纵向拖动由单一手势处理器调用 `scrollLines`，禁止浏览器同时 pan；pinch 与横向切换仍由终端手势处理器负责。标准 mouse tracking 开启时，触摸转换为 wheel 事件交给 xterm 按已协商协议编码；关闭后恢复普通历史滚动。
+- `terminalInput.ts` 在单窗和 split pane 同时绑定 `onData` 与 `onBinary`，二进制输入经 WebSocket Binary → broker `rawBytes` → PTY 原样写入；旧 `rawMessage` 字段仍兼容。PTY 输出使用每个 reader 独立的增量 UTF-8 解码器，跨 read 的半个字符不会被提前替换。
+- tmux 每个浏览器连接独占一个 client PTY/grouped session，共享原窗口中的应用进程；首次 attach 带真实尺寸，reader 启动前注册 client，禁止尾片段 replay。窗口级 snapshot 聚合连接数，断开只回收自己的 client/group。共享 pane 逻辑尺寸仍由 tmux window-size 策略决定。native 保留旧生命周期与 replay，完整恢复尚未实现。
+- 新网页声明 `terminalProtocol=2`；tmux attach 返回 `replayPolicy=tmux-redraw` 时，server 在所有文本前发版本 1 的二进制 `terminal-state` JSON。浏览器排队写 RIS 再接收 tmux 完整重绘；文本 JSON 不作为控制帧。未知控制失败关闭；广播 lag 关闭 1013、client EOF 关闭 1011，清理后重连获取新重绘。旧客户端和 native 不接收新控制帧。
+- 连接错误显示在终端外的状态 UI 中，不向 PTY 内容插入 Nexus 状态 ANSI；旧 socket、定时器与写入回调在连接替换/销毁后不再更新当前界面。初次 resize 发送真实行列，不再使用临时少一行的尺寸。
 - xterm scrollback 只负责普通终端历史。全屏 Grok TUI 若没有重新声明鼠标跟踪，但输出出现 Grok 终端标题签名，单窗与 split pane runtime 会把鼠标滚轮或手机纵向滑动编码为 SGR wheel 发回应用；普通正文中的 Grok 版本名和通用 synchronized-update 序列不作为应用识别依据，以免误拦截 Codex 的普通历史滚动。
 - 一旦 TUI 明确声明鼠标跟踪，前端停止使用上述补偿，避免重复发送滚轮事件。
 

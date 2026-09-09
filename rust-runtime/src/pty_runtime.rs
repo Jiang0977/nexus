@@ -45,6 +45,10 @@ struct AttachConnectionParams {
     connection_id: String,
     session: String,
     window_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cols: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rows: Option<u16>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -53,6 +57,8 @@ struct ConnectionNotifyParams {
     connection_id: String,
     key: String,
     raw_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    raw_bytes: Option<Vec<u8>>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -85,6 +91,8 @@ struct ReadyPayload {
 #[serde(rename_all = "camelCase")]
 struct AttachConnectionResult {
     key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    replay_policy: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -133,6 +141,7 @@ struct PtyEntry {
     last_output: Mutex<String>,
     last_activity_ms: AtomicU64,
     grouped_session: Option<String>,
+    tmux_channel_key: Option<String>,
     native_scrollback_path: Option<PathBuf>,
     registry_backed_native: bool,
 }
@@ -155,6 +164,7 @@ impl PtyEntry {
             last_output: Mutex::new(String::new()),
             last_activity_ms: AtomicU64::new(now_ms()),
             grouped_session,
+            tmux_channel_key: None,
             native_scrollback_path,
             registry_backed_native,
         }
@@ -178,6 +188,7 @@ impl RuntimeOutput {
 
 trait OutputSink: Send + Sync {
     fn send_output(&self, connection_id: &str, data: String);
+    fn send_closed(&self, _connection_id: &str) {}
 }
 
 struct ChannelOutputSink {
@@ -191,6 +202,13 @@ impl ChannelOutputSink {
 }
 
 impl OutputSink for ChannelOutputSink {
+    fn send_closed(&self, connection_id: &str) {
+        self.output.event(
+            "connectionClosed",
+            serde_json::json!({ "connectionId": connection_id }),
+        );
+    }
+
     fn send_output(&self, connection_id: &str, data: String) {
         self.output.event(
             "output",
@@ -1282,8 +1300,16 @@ fn kill_entry(entry: &Arc<PtyEntry>) {
 fn resize_entry(entry: &Arc<PtyEntry>, cols: u16, rows: u16) {
     if let Ok(master) = entry.master.lock() {
         let _ = master.resize(PtySize {
-            rows: rows.max(5),
-            cols: cols.max(10),
+            rows: if entry.tmux_channel_key.is_some() {
+                rows
+            } else {
+                rows.max(5)
+            },
+            cols: if entry.tmux_channel_key.is_some() {
+                cols
+            } else {
+                cols.max(10)
+            },
             pixel_width: 0,
             pixel_height: 0,
         });
@@ -1314,33 +1340,65 @@ fn recompute_remaining_size(entry: &Arc<PtyEntry>) {
 
 fn start_pty_reader(state: SharedState, entry: Arc<PtyEntry>, mut reader: Box<dyn Read + Send>) {
     thread::spawn(move || {
+        let mut decoder = crate::utf8_stream::Utf8StreamDecoder::new();
         let mut buffer = [0_u8; 4096];
         loop {
             match reader.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let data = String::from_utf8_lossy(&buffer[..n]).to_string();
-                    entry.last_activity_ms.store(now_ms(), Ordering::SeqCst);
-                    if let Ok(mut output) = entry.last_output.lock() {
-                        output.push_str(&data);
-                        trim_output(&mut output);
+                Ok(0) => {
+                    let data = decoder.finish();
+                    if !data.is_empty() {
+                        emit_pty_output(&data, &entry, &state);
                     }
-                    if let Some(path) = entry.native_scrollback_path.as_deref() {
-                        append_native_scrollback(path, &data);
-                    }
-                    let clients = entry
-                        .clients
-                        .lock()
-                        .map(|clients| clients.iter().cloned().collect::<Vec<_>>())
-                        .unwrap_or_default();
-                    for connection_id in clients {
-                        state.send_output(&connection_id, data.clone());
-                    }
+                    break;
                 }
-                Err(_) => break,
+                Ok(n) => {
+                    let data = decoder.feed(&buffer[..n]);
+                    entry.last_activity_ms.store(now_ms(), Ordering::SeqCst);
+                    emit_pty_output(&data, &entry, &state);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    let data = decoder.finish();
+                    if !data.is_empty() {
+                        emit_pty_output(&data, &entry, &state);
+                    }
+                    break;
+                }
+            }
+        }
+        // Preserve output/EOF order; the child waiter may run before the reader drains.
+        if entry.tmux_channel_key.is_some()
+            && let Ok(clients) = entry.clients.lock()
+        {
+            for connection_id in clients.iter() {
+                state.output.sink.send_closed(connection_id);
             }
         }
     });
+}
+
+/// Route one decoded chunk through the same cache/persist/broadcast path
+/// used per read. Empty decoded strings are skipped; pending UTF-8 bytes are
+/// flushed by the caller via `decoder.finish()` at EOF/permanent error.
+fn emit_pty_output(data: &str, entry: &PtyEntry, state: &SharedState) {
+    if data.is_empty() {
+        return;
+    }
+    if let Ok(mut output) = entry.last_output.lock() {
+        output.push_str(data);
+        trim_output(&mut output);
+    }
+    if let Some(path) = entry.native_scrollback_path.as_deref() {
+        append_native_scrollback(path, data);
+    }
+    let clients = entry
+        .clients
+        .lock()
+        .map(|clients| clients.iter().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    for connection_id in clients {
+        state.send_output(&connection_id, data.to_string());
+    }
 }
 
 fn start_pty_waiter(
@@ -1370,13 +1428,19 @@ fn ensure_window_pty(
     state: &SharedState,
     session: &str,
     requested_window_index: u32,
+    connection_id: &str,
+    cols: Option<u16>,
+    rows: Option<u16>,
 ) -> Result<(String, Arc<PtyEntry>), String> {
     if backend_mode() == BackendMode::Native {
         return ensure_native_window_pty(state, session, requested_window_index);
     }
 
     let target_window = resolve_attach_target(session, requested_window_index)?;
-    let key = pty_key(session, target_window);
+    let key = format!(
+        "tmux:{}",
+        serde_json::json!([session, target_window, connection_id])
+    );
 
     if let Some(entry) = state.get_entry(&key) {
         return Ok((key, entry));
@@ -1389,8 +1453,8 @@ fn ensure_window_pty(
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
-                rows: DEFAULT_ROWS,
-                cols: DEFAULT_COLS,
+                rows: rows.filter(|value| *value > 0).unwrap_or(DEFAULT_ROWS),
+                cols: cols.filter(|value| *value > 0).unwrap_or(DEFAULT_COLS),
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -1417,14 +1481,22 @@ fn ensure_window_pty(
             .take_writer()
             .map_err(|error| error.to_string())?;
         let killer = child.clone_killer();
-        let entry = Arc::new(PtyEntry::new(
+        let mut entry = PtyEntry::new(
             pair.master,
             writer,
             killer,
             Some(grouped_session.clone()),
             None,
             false,
-        ));
+        );
+        entry.tmux_channel_key = Some(pty_key(session, target_window));
+        // Register before starting the reader: the initial redraw is not replayable.
+        entry
+            .clients
+            .get_mut()
+            .map_err(|error| error.to_string())?
+            .insert(connection_id.to_string());
+        let entry = Arc::new(entry);
 
         state.insert_entry(key.clone(), Arc::clone(&entry));
         start_pty_reader(state.clone(), Arc::clone(&entry), reader);
@@ -1575,24 +1647,39 @@ fn attach_connection(
     state: &SharedState,
     params: AttachConnectionParams,
 ) -> Result<AttachConnectionResult, String> {
-    let (key, entry) = ensure_window_pty(state, &params.session, params.window_index)?;
+    let (key, entry) = ensure_window_pty(
+        state,
+        &params.session,
+        params.window_index,
+        &params.connection_id,
+        params.cols,
+        params.rows,
+    )?;
 
     if let Ok(mut clients) = entry.clients.lock() {
         clients.insert(params.connection_id.clone());
     }
     entry.last_activity_ms.store(now_ms(), Ordering::SeqCst);
 
-    let replay = entry
-        .last_output
-        .lock()
-        .map(|output| replay_output(&output))
-        .unwrap_or_default();
+    let replay_policy = entry
+        .tmux_channel_key
+        .as_ref()
+        .map(|_| "tmux-redraw".to_string());
+    let replay = if replay_policy.is_none() {
+        entry
+            .last_output
+            .lock()
+            .map(|output| replay_output(&output))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
 
     if !replay.is_empty() {
         state.send_output(&params.connection_id, replay);
     }
 
-    Ok(AttachConnectionResult { key })
+    Ok(AttachConnectionResult { key, replay_policy })
 }
 
 fn handle_connection_message(state: &SharedState, params: ConnectionNotifyParams) {
@@ -1600,8 +1687,16 @@ fn handle_connection_message(state: &SharedState, params: ConnectionNotifyParams
         return;
     };
 
+    if let Some(bytes) = params.raw_bytes {
+        if let Ok(mut writer) = entry.writer.lock() {
+            let _ = writer.write_all(&bytes);
+            let _ = writer.flush();
+        }
+        entry.last_activity_ms.store(now_ms(), Ordering::SeqCst);
+        return;
+    }
+
     let raw_message = params.raw_message.unwrap_or_default();
-    let mut handled_resize = false;
 
     if let Ok(value) = serde_json::from_str::<Value>(&raw_message)
         && value.get("type").and_then(Value::as_str) == Some("resize")
@@ -1609,21 +1704,20 @@ fn handle_connection_message(state: &SharedState, params: ConnectionNotifyParams
         let cols = value
             .get("cols")
             .and_then(Value::as_u64)
-            .map(|value| value as u16);
+            .and_then(|value| u16::try_from(value).ok())
+            .filter(|value| *value > 0);
         let rows = value
             .get("rows")
             .and_then(Value::as_u64)
-            .map(|value| value as u16);
+            .and_then(|value| u16::try_from(value).ok())
+            .filter(|value| *value > 0);
         if let (Some(cols), Some(rows)) = (cols, rows) {
             if let Ok(mut client_sizes) = entry.client_sizes.lock() {
                 client_sizes.insert(params.connection_id, (cols, rows));
             }
             resize_entry(&entry, cols, rows);
-            handled_resize = true;
         }
-    }
-
-    if handled_resize {
+        // Invalid control frames must never become application input.
         entry.last_activity_ms.store(now_ms(), Ordering::SeqCst);
         return;
     }
@@ -1652,7 +1746,9 @@ fn close_connection(state: &SharedState, params: ConnectionNotifyParams, policy:
     }
 
     if remaining_clients == 0 {
-        if entry.registry_backed_native || policy == LastClientPolicy::KeepPty {
+        if entry.tmux_channel_key.is_none()
+            && (entry.registry_backed_native || policy == LastClientPolicy::KeepPty)
+        {
             entry.last_activity_ms.store(now_ms(), Ordering::SeqCst);
             return;
         }
@@ -1674,6 +1770,43 @@ fn bound_snapshot_output(output: String, tail_chars: Option<u32>) -> String {
 
 fn get_output_snapshot(state: &SharedState, params: SnapshotParams) -> SnapshotResult {
     let key = pty_key(&params.session, params.window_index);
+    if backend_mode() == BackendMode::Tmux {
+        let entries = state
+            .ptys
+            .lock()
+            .map(|ptys| {
+                ptys.values()
+                    .filter(|entry| entry.tmux_channel_key.as_deref() == Some(key.as_str()))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let latest = entries
+            .iter()
+            .max_by_key(|entry| entry.last_activity_ms.load(Ordering::SeqCst));
+        return SnapshotResult {
+            connected: !entries.is_empty(),
+            output: bound_snapshot_output(
+                latest
+                    .and_then(|entry| entry.last_output.lock().ok().map(|output| output.clone()))
+                    .unwrap_or_default(),
+                params.tail_chars,
+            ),
+            clients: entries
+                .iter()
+                .map(|entry| {
+                    entry
+                        .clients
+                        .lock()
+                        .map(|clients| clients.len())
+                        .unwrap_or(0)
+                })
+                .sum(),
+            idle_ms: latest.map(|entry| {
+                now_ms().saturating_sub(entry.last_activity_ms.load(Ordering::SeqCst))
+            }),
+        };
+    }
     let Some(entry) = state.get_entry(&key) else {
         let output = if backend_mode() == BackendMode::Native {
             read_native_scrollback(&native_scrollback_path(
@@ -1711,6 +1844,11 @@ fn get_output_snapshot(state: &SharedState, params: SnapshotParams) -> SnapshotR
 }
 
 fn get_scrollback_snapshot(state: &SharedState, params: SnapshotParams) -> SnapshotResult {
+    if backend_mode() == BackendMode::Tmux {
+        let mut snapshot = get_output_snapshot(state, params);
+        snapshot.output.clear();
+        return snapshot;
+    }
     let output = if backend_mode() == BackendMode::Native {
         read_native_scrollback(&native_scrollback_path(
             &params.session,
@@ -2140,5 +2278,34 @@ mod tests {
         assert_eq!(trimmed, "a".repeat(NATIVE_SCROLLBACK_FILE_CAP - 2));
         assert!(trimmed.len() <= NATIVE_SCROLLBACK_FILE_CAP);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn binary_connection_notify_roundtrip() {
+        let bytes = (0u8..=255u8).collect::<Vec<_>>();
+        let params = super::ConnectionNotifyParams {
+            connection_id: "conn1".to_string(),
+            key: "k1".to_string(),
+            raw_message: None,
+            raw_bytes: Some(bytes.clone()),
+        };
+        let json = serde_json::to_value(&params).unwrap();
+        assert_eq!(json["rawBytes"], serde_json::json!(bytes));
+        assert!(json.get("raw_bytes").is_none());
+        assert!(json["rawMessage"].is_null());
+        let parsed: super::ConnectionNotifyParams = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.raw_bytes, Some(bytes));
+        assert!(parsed.raw_message.is_none());
+    }
+
+    #[test]
+    fn binary_legacy_raw_message_absent_raw_bytes_stays_none() {
+        let json = r#"{"connectionId":"c","key":"k","rawMessage":"hi"}"#;
+        let params: super::ConnectionNotifyParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.raw_message, Some("hi".to_string()));
+        assert!(params.raw_bytes.is_none());
+        let serialized = serde_json::to_value(params).unwrap();
+        assert_eq!(serialized["rawMessage"], "hi");
+        assert!(serialized.get("rawBytes").is_none());
     }
 }

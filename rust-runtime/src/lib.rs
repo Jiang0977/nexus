@@ -12,3 +12,4 @@ pub mod runtime_config;
 pub mod sanitize;
 pub mod server;
 pub mod shell;
+mod utf8_stream;

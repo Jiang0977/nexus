@@ -45,7 +45,17 @@ pub(super) async fn handle_pty_websocket(
         state.ws_connection_counter.fetch_add(1, Ordering::SeqCst) + 1
     );
 
-    let key = match state
+    let initial_cols = query
+        .cols
+        .as_deref()
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|value| *value > 0);
+    let initial_rows = query
+        .rows
+        .as_deref()
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|value| *value > 0);
+    let (key, tmux_redraw) = match state
         .runtime_manager
         .pty_broker_request(
             "attachConnection",
@@ -53,12 +63,17 @@ pub(super) async fn handle_pty_websocket(
                 "connectionId": connection_id.clone(),
                 "session": session_name,
                 "windowIndex": window_index,
+                "cols": initial_cols,
+                "rows": initial_rows,
             }),
         )
         .await
     {
         Ok(Value::Object(payload)) => match payload.get("key").and_then(Value::as_str) {
-            Some(key) if !key.is_empty() => key.to_string(),
+            Some(key) if !key.is_empty() => (
+                key.to_string(),
+                payload.get("replayPolicy").and_then(Value::as_str) == Some("tmux-redraw"),
+            ),
             _ => {
                 let _ =
                     send_websocket_close(&mut socket, 4004, "attach connection missing key").await;
@@ -75,7 +90,28 @@ pub(super) async fn handle_pty_websocket(
         }
     };
 
-    let mut disconnect_notify: Option<&'static str> = None;
+    // Binary frames are protocol controls; text frames remain unmodified PTY data.
+    // The event subscription predates attach, so this precedes all buffered redraw output.
+    if tmux_redraw && query.terminal_protocol.as_deref() == Some("2") {
+        let control =
+            json!({"type": "terminal-state", "version": 1, "replayPolicy": "tmux-redraw"});
+        if socket
+            .send(Message::Binary(control.to_string().into_bytes().into()))
+            .await
+            .is_err()
+        {
+            let _ = state
+                .runtime_manager
+                .pty_broker_notify(
+                    "errorConnection",
+                    json!({"connectionId": connection_id, "key": key}),
+                )
+                .await;
+            return;
+        }
+    }
+
+    let disconnect_notify: &'static str;
     let mut heartbeat = tokio::time::interval(websocket_heartbeat_interval());
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     heartbeat.tick().await;
@@ -93,7 +129,7 @@ pub(super) async fn handle_pty_websocket(
                                 "rawMessage": text.to_string(),
                             }),
                         ).await {
-                            disconnect_notify = Some("errorConnection");
+                            disconnect_notify = "errorConnection";
                             let _ = send_websocket_close(&mut socket, 1011, &error).await;
                             break;
                         }
@@ -104,34 +140,34 @@ pub(super) async fn handle_pty_websocket(
                             json!({
                                 "connectionId": connection_id.clone(),
                                 "key": key.clone(),
-                                "rawMessage": String::from_utf8_lossy(&data).to_string(),
+                                "rawBytes": data.to_vec(),
                             }),
                         ).await {
-                            disconnect_notify = Some("errorConnection");
+                            disconnect_notify = "errorConnection";
                             let _ = send_websocket_close(&mut socket, 1011, &error).await;
                             break;
                         }
                     }
                     Some(Ok(Message::Close(_))) => {
                         let _ = timeout(Duration::from_secs(1), socket.recv()).await;
-                        disconnect_notify = Some("closeConnection");
+                        disconnect_notify = "closeConnection";
                         break;
                     }
                     Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
                     Some(Err(error)) => {
                         eprintln!("WebSocket error: {error}");
-                        disconnect_notify = Some("errorConnection");
+                        disconnect_notify = "errorConnection";
                         break;
                     }
                     None => {
-                        disconnect_notify = Some("closeConnection");
+                        disconnect_notify = "closeConnection";
                         break;
                     }
                 }
             }
             _ = heartbeat.tick() => {
                 if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
-                    disconnect_notify = Some("errorConnection");
+                    disconnect_notify = "errorConnection";
                     break;
                 }
             }
@@ -155,11 +191,20 @@ pub(super) async fn handle_pty_websocket(
                                 .unwrap_or_default()
                                 .to_string();
                             if socket.send(Message::Text(data.into())).await.is_err() {
-                                disconnect_notify = Some("errorConnection");
+                                disconnect_notify = "errorConnection";
                                 break;
                             }
                         }
+                        "connectionClosed" => {
+                            if event.params.get("connectionId").and_then(Value::as_str) != Some(connection_id.as_str()) {
+                                continue;
+                            }
+                            disconnect_notify = "errorConnection";
+                            let _ = send_websocket_close(&mut socket, 1011, "terminal client exited").await;
+                            break;
+                        }
                         "fatal" => {
+                            disconnect_notify = "errorConnection";
                             let reason = event
                                 .params
                                 .get("message")
@@ -170,8 +215,13 @@ pub(super) async fn handle_pty_websocket(
                         }
                         _ => {}
                     },
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        disconnect_notify = "errorConnection";
+                        let _ = send_websocket_close(&mut socket, 1013, "terminal output lost; reconnect required").await;
+                        break;
+                    }
                     Err(broadcast::error::RecvError::Closed) => {
+                        disconnect_notify = "errorConnection";
                         let _ = send_websocket_close(&mut socket, 1011, "pty broker unavailable")
                             .await;
                         break;
@@ -181,16 +231,14 @@ pub(super) async fn handle_pty_websocket(
         }
     }
 
-    if let Some(method) = disconnect_notify {
-        let _ = state
-            .runtime_manager
-            .pty_broker_notify(
-                method,
-                json!({
-                    "connectionId": connection_id.clone(),
-                    "key": key.clone(),
-                }),
-            )
-            .await;
-    }
+    let _ = state
+        .runtime_manager
+        .pty_broker_notify(
+            disconnect_notify,
+            json!({
+                "connectionId": connection_id.clone(),
+                "key": key.clone(),
+            }),
+        )
+        .await;
 }
