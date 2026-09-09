@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readlinkSync, rmSync, rmdirSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -325,6 +325,59 @@ test('real rust pty runtime speaks the broker contract through a fake tmux backe
     status = await client.getStatus()
   }
   assert.equal(status.runningPtys, 0)
+})
+
+test('native reattach database errors preserve the existing PTY and its history', { skip: process.platform === 'win32' }, async (t) => {
+  ensureBuilt()
+  const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-db-error-'))
+  const dbPath = join(baseDir, 'session.db')
+  const client = createPtyBrokerRustClient({
+    runtimeExecutable: RUNTIME,
+    env: {
+      ...process.env,
+      NEXUS_SESSION_BACKEND: 'native',
+      NEXUS_DATA_DIR: baseDir,
+      NEXUS_NATIVE_SESSION_DB: dbPath,
+      NEXUS_NATIVE_SCROLLBACK_DIR: join(baseDir, 'scrollback'),
+      NEXUS_NATIVE_PTY_SUPERVISOR_SOCKET: '',
+      NEXUS_NATIVE_PTY_PROGRAM: 'cat',
+      NEXUS_NATIVE_PTY_ARGS: '',
+    },
+    log: { log() {}, error() {} },
+  })
+  t.after(async () => {
+    await client.close()
+    rmSync(baseDir, { recursive: true, force: true })
+  })
+  const target = { session: 'db-error', windowIndex: 0 }
+  await client.ready()
+  const { key } = await client.attachConnection({ ...target, connectionId: 'original' })
+  const send = (text) => client.handleConnectionMessage({ connectionId: 'original', key, rawMessage: `${text}\n` })
+  const waitOutput = async (marker) => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const snapshot = await client.getOutputSnapshot(target)
+      if (snapshot.output.includes(marker)) return snapshot
+      await delay(20)
+    }
+    assert.fail(`existing PTY did not produce ${marker}`)
+  }
+  send('BEFORE_DB_ERROR')
+  await waitOutput('BEFORE_DB_ERROR')
+  // Explicit fallback launch does not need a registry until the next attach.
+  // A directory at the database filename produces a deterministic open error.
+  mkdirSync(dbPath)
+  await assert.rejects(client.attachConnection({ ...target, connectionId: 'failed-reattach' }))
+  const preserved = await client.getOutputSnapshot(target)
+  assert.equal(preserved.clients, 1)
+  assert.match(preserved.output, /BEFORE_DB_ERROR/)
+  send('AFTER_DB_ERROR')
+  await waitOutput('AFTER_DB_ERROR')
+  rmdirSync(dbPath)
+  await client.attachConnection({ ...target, connectionId: 'recovered-reattach' })
+  const recovered = await client.getOutputSnapshot(target)
+  assert.equal(recovered.clients, 2)
+  assert.match(recovered.output, /BEFORE_DB_ERROR/)
+  assert.match(recovered.output, /AFTER_DB_ERROR/)
 })
 
 test('real rust pty runtime can attach to an opt-in native foreground PTY', { skip: process.platform === 'win32' }, async (t) => {

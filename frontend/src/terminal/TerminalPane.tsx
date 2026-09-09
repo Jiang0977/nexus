@@ -184,6 +184,8 @@ export function TerminalPane({
         onClear={() => onClearTarget(pane.id)}
         onFit={runtime.fitNow}
         onOpenScrollback={openScrollback}
+        scrollMode={runtime.scrollMode}
+        onScrollModeChange={runtime.setScrollMode}
         target={pane.target}
         windowName={currentWindowName}
       />

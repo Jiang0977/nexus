@@ -40,7 +40,7 @@ anyhow = "1"
 axum = { version = "0.8", features = ["json", "http1", "multipart", "ws"] }
 bcrypt = "0.16"
 chrono = { version = "0.4", default-features = true, features = ["clock", "serde"] }
-jsonwebtoken = "9"
+jsonwebtoken = { version = "=10.3.0", default-features = false, features = ["aws_lc_rs"] }
 mime_guess = "2"
 portable-pty = "0.9"
 rusqlite = { version = "0.32", features = ["bundled"] }

@@ -173,6 +173,8 @@ export default function Terminal({ token }: Props) {
     isConnecting,
     connectionError,
     isScrolledUp,
+    scrollMode,
+    setScrollMode,
     scrollToBottom,
     sendToWs,
     vvHeight,
@@ -593,6 +595,8 @@ export default function Terminal({ token }: Props) {
             onFetchScrollback={fetchScrollback}
             onScrollToBottom={scrollToBottom}
             selectTextLabel={t('terminal.selectText')}
+            scrollMode={scrollMode}
+            onScrollModeChange={setScrollMode}
           />
           {!!activeTmuxSession && codexHistoryEnabled && (
             <DraggableFab

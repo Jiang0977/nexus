@@ -179,10 +179,16 @@ function createBrowserProjectFixture() {
   return { dataDir, projectRoot }
 }
 
-async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnapshots = {}, sessionWindows = [], ptyMode = 'normal' } = {}) {
+async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnapshots = {}, sessionWindows = [], ptyMode = 'normal', workspaceFiles = null } = {}) {
   ensureRustServerBuilt()
 
   const { dataDir, projectRoot } = createBrowserProjectFixture()
+  if (workspaceFiles) {
+    for (const [name, content] of Object.entries(workspaceFiles)) {
+      assert.equal(name.includes('/'), false, 'fixture filenames must stay inside the temporary workspace')
+      writeFileSync(join(projectRoot, name), content)
+    }
+  }
   const port = await getFreePort()
   const password = 'browser-regression-password'
   const passwordHash = bcrypt.hashSync(password, 8)
@@ -194,7 +200,8 @@ async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnap
     JWT_SECRET: 'browser-regression-secret',
     ACC_PASSWORD_HASH: passwordHash,
     TMUX_SESSION: 'nexus-preview-rust',
-    WORKSPACE_ROOT: '/workspace',
+    WORKSPACE_ROOT: workspaceFiles ? projectRoot : '/workspace',
+    FAKE_SESSION_MANAGEMENT_WORKSPACE_ROOT: workspaceFiles ? projectRoot : '/workspace',
     NEXUS_PTY_BROKER_RUST_EXECUTABLE: process.execPath,
     NEXUS_PTY_BROKER_RUST_ARGS: JSON.stringify([PTY_FIXTURE]),
     FAKE_PTY_RUNTIME_MODE: ptyMode,
@@ -2189,10 +2196,10 @@ test('browser regression: mobile codex history continue opens codex profile pick
   await page.getByRole('button', { name: 'Codex History' }).click()
   await page.getByRole('button', { name: 'Continue: Fix bug' }).click()
 
-  const profileSelect = page.locator('select')
+  const profileSelect = page.getByRole('combobox', { name: 'Codex Profile', exact: true })
   await profileSelect.waitFor()
   await page.waitForFunction(() => {
-    const select = document.querySelector('select')
+    const select = document.querySelector('select[aria-label="Codex Profile"]')
     return select instanceof HTMLSelectElement && select.value === 'daily'
   })
   assert.equal(await profileSelect.inputValue(), 'daily')
@@ -2253,13 +2260,13 @@ test('browser regression: mobile codex history continue prefers the current cc-s
   ))
   await page.getByRole('button', { name: 'Continue: Fix bug' }).click()
   await ccSwitchResponsePromise
-  await page.waitForFunction(() => document.querySelector('select') instanceof HTMLSelectElement)
+  await page.getByRole('combobox', { name: 'Codex Profile', exact: true }).waitFor()
   await page.waitForFunction(() => document.body.textContent?.includes('Continue Session'))
 
-  const profileSelect = page.locator('select')
+  const profileSelect = page.getByRole('combobox', { name: 'Codex Profile', exact: true })
   await profileSelect.waitFor()
   await page.waitForFunction(() => {
-    const select = document.querySelector('select')
+    const select = document.querySelector('select[aria-label="Codex Profile"]')
     return select instanceof HTMLSelectElement && select.value === 'focus'
   })
   assert.equal(await profileSelect.inputValue(), 'focus')
@@ -2478,15 +2485,14 @@ test('browser regression: mobile terminal vertical drag scrolls the public xterm
   await loginAndWaitForTerminal(page, port, password)
   await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('mobile history line 120'))
 
-  const rect = await page.getByRole('button', { name: 'Select text' }).evaluate((button) => {
-    const container = button.parentElement?.firstElementChild
-    const bounds = container?.getBoundingClientRect()
-    return bounds ? {
+  const rect = await page.locator('.xterm-viewport').first().evaluate((viewport) => {
+    const bounds = viewport.getBoundingClientRect()
+    return {
       left: bounds.left,
       top: bounds.top,
       width: bounds.width,
       height: bounds.height,
-    } : null
+    }
   })
 
   assert.ok(rect, 'expected terminal container bounds to exist')
@@ -2572,15 +2578,14 @@ test('browser regression: mobile terminal short drag scrolls immediately', { tim
   await loginAndWaitForTerminal(page, port, password)
   await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('short drag history line 120'))
 
-  const rect = await page.getByRole('button', { name: 'Select text' }).evaluate((button) => {
-    const container = button.parentElement?.firstElementChild
-    const bounds = container?.getBoundingClientRect()
-    return bounds ? {
+  const rect = await page.locator('.xterm-viewport').first().evaluate((viewport) => {
+    const bounds = viewport.getBoundingClientRect()
+    return {
       left: bounds.left,
       top: bounds.top,
       width: bounds.width,
       height: bounds.height,
-    } : null
+    }
   })
 
   assert.ok(rect, 'expected terminal container bounds to exist')
@@ -2869,15 +2874,17 @@ test('browser regression: mobile terminal drag remains single-owner when animati
   )
 })
 
-test('browser regression: mobile standard mouse tracking uses xterm encoding and exits back to scrollback', { timeout: 120000 }, async (t) => {
+for (const application of ['Claude Code', 'Pi']) {
+test(`browser regression: mobile standard mouse tracking for ${application} fixture takes priority and exits to scrollback`, { timeout: 120000 }, async (t) => {
   const history = Array.from({ length: 120 }, (_, index) => `standard history ${index}\r\n`).join('')
   const { page, password, port, pageErrors } = await launchBrowserApp(t, {
     mobile: true,
-    ptySnapshots: { 'nexus-preview-rust:0': { output: history + '\x1b[?1000;1006hREADY', clients: 1 } },
+    ptySnapshots: { 'nexus-preview-rust:0': { output: history + `\x1b]0;${application}\x07\x1b[?1000;1006hREADY`, clients: 1 } },
   })
   await page.addInitScript(installWebSocketCapture)
   await loginAndWaitForTerminal(page, port, password)
   await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('READY'))
+  await page.getByRole('combobox', { name: '终端滚动模式' }).selectOption('application-sgr')
   const box = await page.locator('.xterm-viewport').first().boundingBox()
   const x = box.x + box.width / 2
   const y = box.y + box.height / 2
@@ -2895,7 +2902,8 @@ test('browser regression: mobile standard mouse tracking uses xterm encoding and
   assert.equal(legacy.length, 1, 'one legacy report must be sent without SGR fallback duplication')
   assert.ok(Array.isArray(legacy[0]), 'legacy mouse report uses the binary WebSocket path')
   assert.deepEqual(legacy[0].slice(0, 4), [27, 91, 77, 96], 'xterm encodes a legacy wheel-up report')
-  await dispatchCapturedWebSocketMessage(page, 'window=0', '\x1b[?1000lSTOPPED')
+  await page.getByRole('combobox', { name: '终端滚动模式' }).selectOption('auto')
+  await dispatchCapturedWebSocketMessages(page, 'window=0', ['\x1b[?', '1000', 'lSTOPPED'])
   await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('STOPPED'))
   await page.evaluate(() => { window.__nexusWsSends = [] })
   const before = await readTerminalViewportScroll(page)
@@ -2904,6 +2912,57 @@ test('browser regression: mobile standard mouse tracking uses xterm encoding and
   assert.ok(after.scrollTop < before.scrollTop, 'disabling tracking restores ordinary history scrolling')
   const afterSends = await page.evaluate(() => window.__nexusWsSends)
   assert.equal(afterSends.some(({ data }) => /^\x1b\[<6[45];/.test(String(data))), false)
+  assert.deepEqual(pageErrors, [])
+})
+}
+
+test('browser regression: scroll override is pane scoped, survives reconnect and resets on target change or reload', { timeout: 120000 }, async (t) => {
+  const { page, password, port, pageErrors } = await launchBrowserApp(t, {
+    ptyMode: 'tmux-redraw',
+    sessionWindows: [
+      { index: 0, name: 'preview', active: true },
+      { index: 1, name: 'shell', active: false },
+      { index: 2, name: 'review', active: false },
+    ],
+    extraChannels: [{ index: 0, name: 'preview', active: false, cwd: '/workspace' }],
+    ptySnapshots: { 'nexus-preview-rust:2': { output: 'REVIEW_READY', clients: 0 } },
+  })
+  await page.addInitScript(installWebSocketCapture)
+  await page.addInitScript(() => localStorage.setItem('nexus_sidebar_collapsed', 'false'))
+  await loginAndWaitForTerminal(page, port, password)
+  await page.getByRole('button', { name: '2x2', exact: true }).click()
+  const pane1 = page.getByTestId('terminal-pane-pane-1')
+  const pane2 = page.getByTestId('terminal-pane-pane-2')
+  await page.getByTestId('sidebar-channel-nexus-preview-rust-0').dragTo(pane1)
+  await page.getByTestId('sidebar-channel-nexus-preview-rust-1').dragTo(pane2)
+  await pane1.locator('.xterm-rows').filter({ hasText: 'preview shell ready' }).waitFor()
+  const mode1 = pane1.getByRole('combobox', { name: '终端滚动模式' })
+  const mode2 = pane2.getByRole('combobox', { name: '终端滚动模式' })
+  const socketCount = await page.evaluate(() => window.__nexusWsInstances.length)
+  await mode1.selectOption('application-sgr')
+  assert.equal(await mode2.inputValue(), 'auto')
+  assert.equal(await page.evaluate(() => window.__nexusWsInstances.length), socketCount, 'changing routing must not reconnect the application')
+  await page.evaluate(() => window.__nexusWsInstances.find((socket) => socket.__nexusUrl.includes('window=0') && socket.readyState === 1).send('__client_exit__'))
+  await page.waitForFunction((count) => window.__nexusWsInstances.length > count && window.__nexusWsInstances.some((socket) => socket.__nexusUrl.includes('window=0') && socket.readyState === 1), socketCount)
+  assert.equal(await mode1.inputValue(), 'application-sgr')
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await pane1.locator('.xterm-viewport').dispatchEvent('wheel', { deltaY: -120, ctrlKey: true, bubbles: true, cancelable: true })
+  assert.equal(await page.evaluate(() => window.__nexusWsSends.some(({ data }) => /^\x1b\[<6[45];/.test(String(data)))), false, 'Ctrl+wheel must not become application input')
+  const save = page.waitForResponse((response) => {
+    const body = workspaceLayoutPutBody(response)
+    return body && workspaceLayoutHasPaneTarget(body, 'pane-1', 'nexus-preview-rust', 2)
+  })
+  await page.getByTestId('sidebar-channel-nexus-preview-rust-2').dragTo(pane1)
+  await save
+  await pane1.locator('.xterm-rows').filter({ hasText: 'REVIEW_READY' }).waitFor()
+  assert.equal(await mode1.inputValue(), 'auto')
+  assert.equal(await mode2.inputValue(), 'auto')
+  await mode1.selectOption('application-sgr')
+  await page.reload()
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => window.__nexusWsInstances.some((socket) => socket.__nexusUrl.includes('window=2') && socket.readyState === 1))
+  await pane1.locator('.xterm-rows').filter({ hasText: 'INITIAL_REDRAW' }).waitFor()
+  assert.equal(await mode1.inputValue(), 'auto')
   assert.deepEqual(pageErrors, [])
 })
 
@@ -2948,7 +3007,44 @@ for (const mobile of [false, true]) {
   })
 }
 
-test('browser regression: reconnected Grok TUI forwards mouse wheel and touch scroll to the application', { timeout: 120000 }, async (t) => {
+test('browser regression: Markdown preview preserves formatting and strips executable HTML', { timeout: 120000 }, async (t) => {
+  const content = [
+    '# Markdown 中文验收',
+    '**Strong text** and `inline code`',
+    '',
+    '| A | B |', '| --- | --- |', '| one | two |',
+    '',
+    '<script>window.__markdownExecuted = true</script>',
+    '<img src="/missing-sanitizer-test" onerror="window.__markdownExecuted = true">',
+    '<svg onload="window.__markdownExecuted = true"></svg>',
+    '<a href="javascript:window.__markdownExecuted=true">unsafe link</a>',
+    '<iframe srcdoc="<script>parent.__markdownExecuted=true</script>"></iframe>',
+  ].join('\n')
+  const { page, password, port, pageErrors } = await launchBrowserApp(t, {
+    workspaceFiles: { 'preview-security.md': content },
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('nexus_sidebar_collapsed', 'true')
+    window.__markdownExecuted = false
+  })
+  await loginAndWaitForTerminal(page, port, password)
+  await page.getByTitle('浏览工作目录', { exact: true }).click()
+  await page.getByRole('button', { name: /preview-security\.md/ }).dblclick()
+  await page.getByRole('button', { name: 'Preview', exact: true }).click()
+  const preview = page.locator('.markdown-body')
+  await preview.getByRole('heading', { name: 'Markdown 中文验收' }).waitFor()
+  assert.equal(await preview.locator('strong').textContent(), 'Strong text')
+  assert.equal(await preview.locator('code').textContent(), 'inline code')
+  assert.equal(await preview.locator('table tbody tr').count(), 1)
+  assert.equal(await preview.locator('script, svg, iframe, [onerror], [onload], [srcdoc]').count(), 0)
+  assert.equal(await preview.locator('a').getAttribute('href'), null)
+  assert.equal(await page.evaluate(() => window.__markdownExecuted), false)
+  await page.getByRole('button', { name: 'Edit', exact: true }).and(page.locator('button:not([title])')).click()
+  assert.equal(await page.locator('textarea').filter({ visible: true }).inputValue(), content)
+  assert.deepEqual(pageErrors, [])
+})
+
+test('browser regression: mobile application wheel requires an explicit mode, not a Grok title', { timeout: 120000 }, async (t) => {
   const grokTuiReplay = '\x1b]0;Grok mobile reconnect\x07Grok 4.6 reconnect frame without retained mouse mode'
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t, {
     mobile: true,
@@ -2979,6 +3075,11 @@ test('browser regression: reconnected Grok TUI forwards mouse wheel and touch sc
 
   await page.evaluate(() => { window.__nexusWsSends = [] })
   await page.mouse.move(centerX, centerY)
+  await page.mouse.wheel(0, -120)
+  await delay(100)
+  assert.equal(await page.evaluate(() => window.__nexusWsSends.some(({ data }) => /^\x1b\[<6[45];/.test(String(data)))), false, 'a title must not enable application input')
+  await page.getByRole('combobox', { name: '终端滚动模式' }).selectOption('application-sgr')
+  await page.evaluate(() => { window.__nexusWsSends = [] })
   await page.mouse.wheel(0, -120)
   await delay(100)
   const wheelSends = await page.evaluate(() => window.__nexusWsSends || [])
@@ -3012,7 +3113,7 @@ test('browser regression: reconnected Grok TUI forwards mouse wheel and touch sc
   )
 })
 
-test('browser regression: desktop pane forwards reconnected synchronized TUI wheel to the application', { timeout: 120000 }, async (t) => {
+test('browser regression: desktop pane explicitly routes non-standard TUI wheel without title detection', { timeout: 120000 }, async (t) => {
   const synchronizedTuiReplay = [
     '\x1b]0;Grok desktop reconnect\x07',
     '\x1b[?2026hGrok desktop reconnect frame one\x1b[?2026l',
@@ -3055,6 +3156,11 @@ test('browser regression: desktop pane forwards reconnected synchronized TUI whe
     terminalBounds.left + terminalBounds.width / 2,
     terminalBounds.top + terminalBounds.height / 2,
   )
+  await page.mouse.wheel(0, -120)
+  await delay(100)
+  assert.equal(await page.evaluate(() => window.__nexusWsSends.some(({ data }) => /^\x1b\[<6[45];/.test(String(data)))), false, 'title and synchronized updates are not scroll capabilities')
+  await page.getByTestId('terminal-pane-pane-1').getByRole('combobox', { name: '终端滚动模式' }).selectOption('application-sgr')
+  await page.evaluate(() => { window.__nexusWsSends = [] })
   await page.mouse.wheel(0, -120)
   await delay(100)
   const wheelSends = await page.evaluate(() => window.__nexusWsSends || [])
@@ -3157,15 +3263,14 @@ test('browser regression: mobile diagonal-horizontal swipe switches channel even
 
   await loginAndWaitForTerminal(page, port, password)
 
-  const rect = await page.getByRole('button', { name: 'Select text' }).evaluate((button) => {
-    const container = button.parentElement?.firstElementChild
-    const bounds = container?.getBoundingClientRect()
-    return bounds ? {
+  const rect = await page.locator('.xterm-viewport').first().evaluate((viewport) => {
+    const bounds = viewport.getBoundingClientRect()
+    return {
       left: bounds.left,
       top: bounds.top,
       width: bounds.width,
       height: bounds.height,
-    } : null
+    }
   })
 
   assert.ok(rect, 'expected terminal container bounds to exist')

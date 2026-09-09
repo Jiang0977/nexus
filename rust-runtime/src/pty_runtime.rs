@@ -1522,7 +1522,7 @@ fn ensure_native_window_pty(
     let key = pty_key(session, window_index);
 
     if let Some(entry) = state.get_entry(&key) {
-        if can_reuse_native_pty(session, window_index, &entry) {
+        if can_reuse_native_pty(session, window_index, &entry)? {
             return Ok((key, entry));
         }
         if let Some(stale_entry) = state.remove_entry(&key) {
@@ -1617,23 +1617,20 @@ fn ensure_native_window_pty(
     create_result.map(|entry| (key, entry))
 }
 
-fn native_registry_entry_is_current(session: &str, window_index: u32) -> bool {
-    let Ok(registry) = NativeSessionRegistry::open_default() else {
-        return false;
-    };
-    matches!(
-        registry.latest_process_instance(session, window_index),
-        Ok(Some(instance)) if instance.status == "running"
-    )
-}
-
-fn can_reuse_native_pty(session: &str, window_index: u32, entry: &PtyEntry) -> bool {
-    entry.registry_backed_native
-        && NativeSessionRegistry::open_default()
-            .ok()
-            .and_then(|registry| registry.channel_launch(session, window_index).ok())
-            .is_some()
-        && native_registry_entry_is_current(session, window_index)
+fn can_reuse_native_pty(
+    session: &str,
+    window_index: u32,
+    entry: &PtyEntry,
+) -> Result<bool, String> {
+    let registry = NativeSessionRegistry::open_default()?;
+    if !registry.channel_exists(session, window_index)? {
+        return Ok(!entry.registry_backed_native);
+    }
+    Ok(entry.registry_backed_native
+        && matches!(
+            registry.latest_process_instance(session, window_index)?,
+            Some(instance) if instance.status == "running"
+        ))
 }
 
 fn reset_native_scrollback(session: &str, window_index: u32) {

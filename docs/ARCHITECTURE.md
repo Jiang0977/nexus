@@ -157,7 +157,8 @@ bash start.sh
 | `frontend/src/PromptLibrary.tsx` | 提示词库列表/编辑器、搜索、拖拽排序、复制、列表直插当前终端、脏状态与响应式交互 |
 | `frontend/src/promptLibrary/api.ts` | 提示词库鉴权 REST client、类型与前后端共享长度边界 |
 | `frontend/src/terminal/terminalConnection.ts` | 浏览器终端连接 port：URL、open/resize、data/autoscroll、close-code、retry/backoff 与 cleanup；production WebSocket 和测试 fake 共用 contract |
-| `frontend/src/terminal/terminalApplicationScroll.ts` | 全屏终端应用滚动识别与 SGR wheel 编码；为 Grok 等同步刷新 TUI 在重连后补偿应用内滚动 |
+| `frontend/src/terminal/terminalApplicationScroll.ts` | 通用临时滚动模式与 SGR wheel 编码；不按应用名称或标题推断能力 |
+| `frontend/src/terminal/useTerminalScrollMode.ts` | 每个视图独立保存临时滚动选择；同目标重连保留，切换目标或刷新恢复自动 |
 | `frontend/src/terminal/useTerminalRuntime.ts` | 单窗 xterm、输入代理与移动端键盘行为；通过 adapter 投影连接状态 |
 | `frontend/src/terminal/useTerminalPaneRuntime.ts` | PC split-view pane 的 xterm/状态 adapter；共享 terminal connection policy |
 | `frontend/src/terminal/useTerminalSessions.ts` | tmux session/window 列表、切换、创建、轮询状态 |
@@ -177,8 +178,8 @@ bash start.sh
 - tmux 每个浏览器连接独占一个 client PTY/grouped session，共享原窗口中的应用进程；首次 attach 带真实尺寸，reader 启动前注册 client，禁止尾片段 replay。窗口级 snapshot 聚合连接数，断开只回收自己的 client/group。共享 pane 逻辑尺寸仍由 tmux window-size 策略决定。native 保留旧生命周期与 replay，完整恢复尚未实现。
 - 新网页声明 `terminalProtocol=2`；tmux attach 返回 `replayPolicy=tmux-redraw` 时，server 在所有文本前发版本 1 的二进制 `terminal-state` JSON。浏览器排队写 RIS 再接收 tmux 完整重绘；文本 JSON 不作为控制帧。未知控制失败关闭；广播 lag 关闭 1013、client EOF 关闭 1011，清理后重连获取新重绘。旧客户端和 native 不接收新控制帧。
 - 连接错误显示在终端外的状态 UI 中，不向 PTY 内容插入 Nexus 状态 ANSI；旧 socket、定时器与写入回调在连接替换/销毁后不再更新当前界面。初次 resize 发送真实行列，不再使用临时少一行的尺寸。
-- xterm scrollback 只负责普通终端历史。全屏 Grok TUI 若没有重新声明鼠标跟踪，但输出出现 Grok 终端标题签名，单窗与 split pane runtime 会把鼠标滚轮或手机纵向滑动编码为 SGR wheel 发回应用；普通正文中的 Grok 版本名和通用 synchronized-update 序列不作为应用识别依据，以免误拦截 Codex 的普通历史滚动。
-- 一旦 TUI 明确声明鼠标跟踪，前端停止使用上述补偿，避免重复发送滚轮事件。
+- xterm scrollback 只负责普通终端历史。默认“自动滚动”只遵循公开终端模式，不依据 Grok 等标题、正文、2026 或 alternate screen 猜测应用能力。没有标准鼠标模式的 TUI 可在当前视图临时选择“应用滚动 (SGR)”，把滚轮或手机纵向滑动编码后发回应用；退出该应用后应切回自动，避免把鼠标输入送入普通 shell。
+- 标准鼠标模式始终优先，避免手动补偿重复发包；Ctrl+wheel 不作为应用输入。临时选择不触发重连，不跨 pane 共享；同目标断线重连保留，切换目标或刷新重置。私有 capability/launch profile 仍未实现。
 
 ## 数据落点
 

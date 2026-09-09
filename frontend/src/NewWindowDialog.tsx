@@ -216,6 +216,7 @@ export default function NewWindowDialog({
             <div>
               <div className="text-[11px] text-nexus-text-2 tracking-wider uppercase mb-2">{t(profileLabelKey)}</div>
               <select
+                aria-label={t(profileLabelKey)}
                 className="bg-nexus-bg-2 border border-nexus-border rounded-md text-nexus-text text-sm px-2.5 py-2 w-full outline-none"
                 value={selectedProfile}
                 onChange={e => handleProfileChange(e.target.value)}

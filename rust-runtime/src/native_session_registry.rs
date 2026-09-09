@@ -500,6 +500,18 @@ impl NativeSessionRegistry {
             .map_err(|_| "channel not found".to_string())
     }
 
+    pub fn channel_exists(&self, project_name: &str, channel_index: u32) -> Result<bool, String> {
+        self.connection
+            .query_row(
+                "SELECT 1 FROM native_channels WHERE project_name = ?1 AND channel_index = ?2",
+                params![project_name, channel_index],
+                |_| Ok(()),
+            )
+            .optional()
+            .map(|row| row.is_some())
+            .map_err(|error| error.to_string())
+    }
+
     pub fn set_channel_metadata(
         &self,
         project_name: &str,

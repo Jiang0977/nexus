@@ -1,5 +1,7 @@
 import type { RefObject } from 'react'
 import { Icon } from '../icons'
+import type { TerminalScrollMode } from './terminalApplicationScroll'
+import { TerminalScrollModeSelect } from './TerminalScrollModeSelect'
 
 interface Props {
   containerRef: RefObject<HTMLDivElement>
@@ -10,6 +12,8 @@ interface Props {
   onFetchScrollback: () => void
   onScrollToBottom: () => void
   selectTextLabel: string
+  scrollMode: TerminalScrollMode
+  onScrollModeChange: (mode: TerminalScrollMode) => void
 }
 
 export function TerminalViewport({
@@ -21,27 +25,32 @@ export function TerminalViewport({
   onFetchScrollback,
   onScrollToBottom,
   selectTextLabel,
+  scrollMode,
+  onScrollModeChange,
 }: Props) {
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden relative">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-nexus-border bg-nexus-bg px-2 py-1">
+        <TerminalScrollModeSelect value={scrollMode} onChange={onScrollModeChange} />
+        <button
+          type="button"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-nexus-border bg-nexus-bg/80 px-2.5 py-1.5 text-xs font-medium text-nexus-text cursor-pointer active:scale-95 hover:bg-nexus-bg-2/90"
+          onClick={(event) => {
+            event.stopPropagation()
+            onFetchScrollback()
+          }}
+          title={selectTextLabel}
+          aria-label={selectTextLabel}
+        >
+          <Icon name="copy" size={14} />
+          <span>{selectTextLabel}</span>
+        </button>
+      </div>
       <div
         ref={containerRef}
-        className="flex-1 overflow-hidden relative"
+        className="flex-1 min-h-0 overflow-hidden relative"
         onClick={onFocusTerminal}
       />
-      <button
-        type="button"
-        className="absolute top-3 right-3 z-40 inline-flex items-center gap-1.5 rounded-md border border-nexus-border bg-nexus-bg/80 px-2.5 py-1.5 text-xs font-medium text-nexus-text backdrop-blur-sm cursor-pointer active:scale-95 hover:bg-nexus-bg-2/90"
-        onClick={(event) => {
-          event.stopPropagation()
-          onFetchScrollback()
-        }}
-        title={selectTextLabel}
-        aria-label={selectTextLabel}
-      >
-        <Icon name="copy" size={14} />
-        <span>{selectTextLabel}</span>
-      </button>
       {isConnecting && (
         <div className="absolute inset-0 bg-nexus-bg flex flex-col items-center justify-center gap-3 z-10">
           <div className="w-8 h-8 border-[3px] border-nexus-border border-t-nexus-accent rounded-full animate-spin" />

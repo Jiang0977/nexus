@@ -1,9 +1,4 @@
-const GROK_TUI_TITLE_SIGNATURE = /\x1b\](?:0|2);[^\x07]*(?:\bGrok\b)[^\x07]*(?:\x07|\x1b\\)/i
-
-export interface TerminalApplicationScrollState {
-  applicationSignatureObserved: boolean
-  mouseTrackingObserved: boolean
-}
+export type TerminalScrollMode = 'auto' | 'application-sgr'
 
 interface SgrWheelReportArgs {
   altKey?: boolean
@@ -17,37 +12,10 @@ interface SgrWheelReportArgs {
   shiftKey?: boolean
 }
 
-export function createTerminalApplicationScrollState(): TerminalApplicationScrollState {
-  return {
-    applicationSignatureObserved: false,
-    mouseTrackingObserved: false,
-  }
-}
-
-export function resetTerminalApplicationScrollState(state: TerminalApplicationScrollState): void {
-  state.applicationSignatureObserved = false
-  state.mouseTrackingObserved = false
-}
-
-export function observeTerminalApplicationOutput(
-  state: TerminalApplicationScrollState,
-  data: string,
-): void {
-  if (!state.mouseTrackingObserved && /\x1b\[\?(?:1000|1002|1003)[hl]/.test(data)) {
-    state.mouseTrackingObserved = true
-  }
-  if (
-    !state.applicationSignatureObserved
-    && GROK_TUI_TITLE_SIGNATURE.test(data)
-  ) {
-    state.applicationSignatureObserved = true
-  }
-}
-
 export function shouldForwardTerminalWheelToApplication(
-  state: TerminalApplicationScrollState,
+  mode: TerminalScrollMode,
 ): boolean {
-  return !state.mouseTrackingObserved && state.applicationSignatureObserved
+  return mode === 'application-sgr'
 }
 
 export function createSgrWheelReport({

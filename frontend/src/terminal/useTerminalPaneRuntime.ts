@@ -13,11 +13,9 @@ import {
 import { connectTerminal, type TerminalSocket } from './terminalConnection'
 import { bindTerminalInput } from './terminalInput'
 import { bindTerminalViewportMetrics } from './terminalViewportMetrics'
+import { useTerminalScrollMode } from './useTerminalScrollMode'
 import {
   createSgrWheelReport,
-  createTerminalApplicationScrollState,
-  observeTerminalApplicationOutput,
-  resetTerminalApplicationScrollState,
   shouldForwardTerminalWheelToApplication,
 } from './terminalApplicationScroll'
 
@@ -48,7 +46,7 @@ export function useTerminalPaneRuntime({
   const userScrolledRef = useRef(false)
   const userScrollHoldUntilRef = useRef(0)
   const lastContainerSizeRef = useRef({ w: 0, h: 0 })
-  const applicationScrollStateRef = useRef(createTerminalApplicationScrollState())
+  const { scrollMode, scrollModeRef, setScrollMode } = useTerminalScrollMode(JSON.stringify([enabled, target?.session, target?.windowIndex]))
   const [connectionState, setConnectionState] = useState<PaneConnectionState>(target ? 'loading' : 'empty')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
@@ -159,7 +157,6 @@ export function useTerminalPaneRuntime({
 
     const storedFontSize = parseInt(localStorage.getItem(FONT_SIZE_KEY) || '16', 10)
     const fontSize = compact ? Math.min(storedFontSize, 12) : Math.min(storedFontSize, 15)
-    resetTerminalApplicationScrollState(applicationScrollStateRef.current)
     const term = new XTerm({
       theme: THEMES[themeMode],
       fontSize,
@@ -217,7 +214,7 @@ export function useTerminalPaneRuntime({
 
     function onWheel(event: WheelEvent) {
       if (!event.ctrlKey && term.modes.mouseTrackingMode === 'none'
-        && shouldForwardTerminalWheelToApplication(applicationScrollStateRef.current)) {
+        && shouldForwardTerminalWheelToApplication(scrollModeRef.current)) {
         const target = screen ?? viewport ?? containerEl
         const report = createSgrWheelReport({
           altKey: event.altKey || event.metaKey,
@@ -295,7 +292,6 @@ export function useTerminalPaneRuntime({
           setErrorMessage(message)
         },
         reset: () => {
-          resetTerminalApplicationScrollState(applicationScrollStateRef.current)
           // Queue reset behind already pending writes and before the new redraw.
           termRef.current?.write('\x1bc')
         },
@@ -305,7 +301,6 @@ export function useTerminalPaneRuntime({
           return term ? { cols: term.cols, rows: term.rows } : null
         },
         write: (data, callback) => {
-          observeTerminalApplicationOutput(applicationScrollStateRef.current, data)
           termRef.current?.write(data, callback)
         },
         shouldAutoScroll,
@@ -333,6 +328,8 @@ export function useTerminalPaneRuntime({
     errorMessage,
     fitNow,
     isScrolledUp,
+    scrollMode,
+    setScrollMode,
     scrollToBottom,
     sendToWs,
     termRef,

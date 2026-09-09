@@ -1,6 +1,8 @@
 import { Icon } from '../icons'
 import type { PaneTarget } from './splitLayoutTypes'
 import type { PaneConnectionState } from './useTerminalPaneRuntime'
+import type { TerminalScrollMode } from './terminalApplicationScroll'
+import { TerminalScrollModeSelect } from './TerminalScrollModeSelect'
 
 type PaneHealth = PaneConnectionState | 'stale' | 'checking'
 
@@ -11,6 +13,8 @@ interface Props {
   onClear: () => void
   onFit: () => void
   onOpenScrollback: () => void
+  scrollMode: TerminalScrollMode
+  onScrollModeChange: (mode: TerminalScrollMode) => void
   target: PaneTarget | null
   windowName?: string
 }
@@ -24,7 +28,7 @@ const STATUS_META: Record<PaneHealth, { label: string; color: string }> = {
   stale: { label: '已失效', color: 'var(--nexus-error)' },
 }
 
-export function PaneHeader({ focused, health, index, onClear, onFit, onOpenScrollback, target, windowName }: Props) {
+export function PaneHeader({ focused, health, index, onClear, onFit, onOpenScrollback, scrollMode, onScrollModeChange, target, windowName }: Props) {
   const meta = STATUS_META[health]
   const title = target
     ? `${target.session} / ${windowName || `#${target.windowIndex}`}`
@@ -41,6 +45,9 @@ export function PaneHeader({ focused, health, index, onClear, onFit, onOpenScrol
       <span className="shrink-0 text-xs font-semibold" style={{ color: meta.color }}>
         {meta.label}
       </span>
+      {target && (
+        <TerminalScrollModeSelect value={scrollMode} onChange={onScrollModeChange} />
+      )}
       {target && (
         <button
           aria-label="选字复制"

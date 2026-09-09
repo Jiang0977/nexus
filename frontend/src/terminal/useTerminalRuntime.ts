@@ -14,11 +14,9 @@ import {
 import { connectTerminal, type TerminalSocket } from './terminalConnection'
 import { bindTerminalInput } from './terminalInput'
 import { bindTerminalViewportMetrics } from './terminalViewportMetrics'
+import { useTerminalScrollMode } from './useTerminalScrollMode'
 import {
   createSgrWheelReport,
-  createTerminalApplicationScrollState,
-  observeTerminalApplicationOutput,
-  resetTerminalApplicationScrollState,
   shouldForwardTerminalWheelToApplication,
 } from './terminalApplicationScroll'
 
@@ -78,7 +76,7 @@ export function useTerminalRuntime({
   const keyboardVisibleRef = useRef(false)
   const isComposingRef = useRef(false)
   const overlayOpenRef = useRef(overlayOpen)
-  const applicationScrollStateRef = useRef(createTerminalApplicationScrollState())
+  const { scrollMode, scrollModeRef, setScrollMode } = useTerminalScrollMode(JSON.stringify([enabled, activeTmuxSession, activeWindowIndex]))
   const [isConnecting, setIsConnecting] = useState(false)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
@@ -200,7 +198,6 @@ export function useTerminalRuntime({
 
     const fontSize = parseInt(localStorage.getItem(FONT_SIZE_KEY) || '16', 10)
     const initialTheme = getInitialTheme()
-    resetTerminalApplicationScrollState(applicationScrollStateRef.current)
     const term = new XTerm({
       theme: THEMES[initialTheme],
       fontSize,
@@ -517,7 +514,7 @@ export function useTerminalRuntime({
         event.preventDefault()
         event.stopPropagation()
         const standardMouseWheel = ['vt200', 'drag', 'any'].includes(term.modes.mouseTrackingMode)
-        if (standardMouseWheel || shouldForwardTerminalWheelToApplication(applicationScrollStateRef.current)) {
+        if (standardMouseWheel || (term.modes.mouseTrackingMode === 'none' && shouldForwardTerminalWheelToApplication(scrollModeRef.current))) {
           const deltaY = currentY - touchLastY
           applicationTouchWheelRemainder += deltaY
           const reports = Math.min(3, Math.floor(Math.abs(applicationTouchWheelRemainder) / APPLICATION_TOUCH_WHEEL_STEP_PX))
@@ -666,7 +663,7 @@ export function useTerminalRuntime({
 
     function onWheel(event: WheelEvent) {
       if (event.ctrlKey || term.modes.mouseTrackingMode !== 'none'
-        || !shouldForwardTerminalWheelToApplication(applicationScrollStateRef.current)) return
+        || !shouldForwardTerminalWheelToApplication(scrollModeRef.current)) return
       if (!sendApplicationWheelReport(event.clientX, event.clientY, event.deltaY, event)) return
       event.preventDefault()
       event.stopPropagation()
@@ -792,7 +789,6 @@ export function useTerminalRuntime({
           setIsConnecting(false)
         },
         reset: () => {
-          resetTerminalApplicationScrollState(applicationScrollStateRef.current)
           // Queue reset behind already pending writes and before the new redraw.
           termRef.current?.write('\x1bc')
         },
@@ -802,7 +798,6 @@ export function useTerminalRuntime({
           return term ? { cols: term.cols, rows: term.rows } : null
         },
         write: (data, callback) => {
-          observeTerminalApplicationOutput(applicationScrollStateRef.current, data)
           termRef.current?.write(data, callback)
         },
         shouldAutoScroll: () => !userScrolledRef.current,
@@ -965,6 +960,8 @@ export function useTerminalRuntime({
     connectionError,
     isConnecting,
     isScrolledUp,
+    scrollMode,
+    setScrollMode,
     scrollToBottom,
     sendToWs,
     vvHeight,
