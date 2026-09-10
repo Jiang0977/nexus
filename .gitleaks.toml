@@ -1,0 +1,13 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Historical public JWT default, explicitly rejected by the current runtime and installer"
+regexes = ['''fcea4c5c28bee4c9fa7adca25c947f87b2a7179202c824d185618d3b3bf2a333''']
+
+[[allowlists]]
+description = "xterm minified class export, not an API credential"
+condition = "AND"
+paths = ['''^frontend/dist/assets/xterm-[^/]+\.js$''']
+regexTarget = "match"
+regexes = ['''r\.FourKeyMap=r\.TwoKeyMap=void''']

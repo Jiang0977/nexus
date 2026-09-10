@@ -1683,6 +1683,18 @@ impl ServiceRouteError {
 }
 
 pub(super) async fn current_version_payload(project_root: &Path) -> Value {
+    // Release archives have no .git directory. Do not accidentally describe an
+    // unrelated parent checkout when an archive is unpacked inside another repo.
+    if !project_root.join(".git").exists()
+        && let Ok(marker) = tokio::fs::read_to_string(project_root.join("VERSION")).await
+        && let Some(version) = marker.lines().next()
+        && version.split('.').count() == 3
+        && version
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|c| c.is_ascii_digit()))
+    {
+        return json!({ "current": format!("v{version}"), "clean": true });
+    }
     let describe_output = Command::new("git")
         .args(["describe", "--tags", "--abbrev=0"])
         .current_dir(project_root)
@@ -1711,4 +1723,17 @@ pub(super) async fn current_version_payload(project_root: &Path) -> Value {
         "current": String::from_utf8_lossy(&describe_output.stdout).trim().to_string(),
         "clean": String::from_utf8_lossy(&status_output.stdout).trim().is_empty(),
     })
+}
+
+#[cfg(test)]
+mod release_version_tests {
+    #[tokio::test]
+    async fn binary_archive_reports_its_version_without_git() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("VERSION"), "4.5.0\nsource example\n").unwrap();
+        assert_eq!(
+            super::current_version_payload(root.path()).await,
+            serde_json::json!({"current": "v4.5.0", "clean": true})
+        );
+    }
 }

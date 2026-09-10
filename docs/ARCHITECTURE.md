@@ -1,6 +1,6 @@
 # Nexus Architecture
 
-最后更新：2026-07-25
+最后更新：2026-09-10
 
 目标：给维护者一个当前真实可运行的结构图，不保留已经删除的 Node/npm/PM2 叙事，也不把 tmux-only 的旧边界误当成当前事实。
 
@@ -39,7 +39,7 @@ bash start.sh
   -> 检查 .env
   -> 检查 frontend/dist/index.html
   -> 必要时补齐 Claude / Codex CLI 所在 PATH
-  -> 必要时补构建缺失的 Rust release binaries
+  -> 必要时重建缺失或依赖已更新的 Rust release binaries
   -> 启动 rust-runtime/target/release/nexus-server
 ```
 
@@ -47,12 +47,13 @@ bash start.sh
 
 ```text
 ./setup.sh
-  -> cargo run --bin nexus-setup --release
+  -> 构建全部 Rust binaries（源码安装）或使用预编译 binaries（安装包）
+  -> 校验前置条件、生成凭据并立即显示密码
   -> 写入 systemd user units
   -> 启动 nexus-tmux.service
   -> 启动 nexus-native-pty.service（未启用 native backend 时保持空闲轮询）
   -> 启动 nexus.service
-  -> 安装 ~/.local/bin/nexus-native-session symlink
+  -> 安装 ~/.local/bin/nexus-native-session symlink（启动服务前完成）
 ```
 
 ### 关键约束

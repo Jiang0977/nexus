@@ -1,6 +1,8 @@
 # Native 终端专项最终验收：2026-09-10
 
-结论：本机单用户、自托管、用户指定 native 部署的终端改造已通过约定验收。实现提交 `58cb569`，发布时 HEAD `5426d01`；2026-09-10 09:36 CST 部署到 `/home/demo/.local/lib/nexus`，重启 nexus 和 native supervisor。指定入口 `https://nexus.example.com:8443/` 的真实验收通过。此结论不代表所有项目 TODO、物理手机、AI 推理供应商或任意终端扩展均已认证。
+> Historical environment-specific evidence. Personal paths, project names and addresses have been anonymized; examples are not executable deployment targets.
+
+结论：本机单用户、自托管、用户指定 native 部署的终端改造已通过约定验收。实现提交 `58cb569`，发布时 HEAD `5426d01`；2026-09-10 09:36 CST 部署到 `/home/demo/.local/lib/nexus`，重启 nexus 和 native supervisor。指定入口 `https://nexus.example.com` 的真实验收通过。此结论不代表所有项目 TODO、物理手机、AI 推理供应商或任意终端扩展均已认证。
 
 ## 实现与缺陷闭环
 

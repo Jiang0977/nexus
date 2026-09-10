@@ -1,6 +1,6 @@
 {
   "name": "nexus",
-  "version": "4.4.2",
+  "version": "4.5.0",
   "type": "module",
   "scripts": {
     "start": "bash ./start.sh",
@@ -18,7 +18,7 @@
     "build:frontend": "npm --prefix frontend run build",
     "check:frontend-dist": "npm run build:frontend && node ./scripts/check-frontend-dist.mjs",
     "check": "npm run test:rust && npm run test:node && npm run check:frontend-dist",
-    "setup": "cargo run --manifest-path rust-runtime/Cargo.toml --release --bin nexus-setup --",
+    "setup": "bash ./setup.sh",
     "build:rust-setup": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-setup --bin nexus-native-session",
     "build:rust-server": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-server",
     "build:rust-codex-home": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-codex-home",
@@ -27,7 +27,8 @@
     "build:rust-native-session": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-native-session",
     "build:rust-launch-runtime": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-window-launch-runtime",
     "build:rust-session-runtime": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-session-runtime",
-    "build:rust-runtimes": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime"
+    "build:rust-runtimes": "cargo build --manifest-path rust-runtime/Cargo.toml --release --bin nexus-pty-runtime --bin nexus-native-pty-supervisor --bin nexus-native-session --bin nexus-window-launch-runtime --bin nexus-session-runtime",
+    "package:release": "python3 scripts/package-release.py"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",
@@ -35,5 +36,11 @@
     "playwright": "^1.58.2",
     "typescript": "^6.0.2",
     "ws": "^8.21.3"
+  },
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jiang0977/nexus.git"
   }
 }

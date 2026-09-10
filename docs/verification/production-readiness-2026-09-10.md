@@ -1,5 +1,7 @@
 # 2026-09-10 本机生产部署验收
 
+> Historical environment-specific evidence. Personal paths, project names and addresses have been anonymized; examples are not executable deployment targets.
+
 结论：实现提交 `b90bde379f7b010cb211e24d53e002f743d7b945` 已推送 main，并于 2026-09-10 02:58 CST 部署到本机 `/home/demo/.local/lib/nexus`，重启 nexus 后通过真实生产入口验收。范围为现有单用户、自托管、默认 tmux 产品；native 仍为 opt-in/staging。下文分别保留开发、隔离验收和部署证据，不扩大为物理手机、真实 AI 推理或容量认证。
 
 ## 实现与迭代

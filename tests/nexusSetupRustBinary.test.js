@@ -104,7 +104,7 @@ exit 1
 set -eu
 printf '%s\\n' "$*" >> ${JSON.stringify(systemctlLogFile)}
 case "$*" in
-  "--user --version"|"--version"|"--user daemon-reload"|"--user enable --now nexus-tmux.service"|"--user enable --now nexus-native-pty.service"|"--user enable --now nexus.service")
+  "--user show-environment"|"--version"|"--user daemon-reload"|"--user enable --now nexus-tmux.service"|"--user enable --now nexus-native-pty.service"|"--user enable --now nexus.service")
     exit 0
     ;;
 esac
@@ -169,7 +169,7 @@ test('real rust setup binary provisions secure env, frontend, systemd units, 060
       .split('\n')
       .filter(Boolean)
     assert.deepEqual(systemctlLog, [
-      '--user --version',
+      '--user show-environment',
       '--user daemon-reload',
       '--user enable --now nexus-tmux.service',
       '--user enable --now nexus-native-pty.service',
@@ -247,4 +247,64 @@ test('real rust setup binary migrates insecure legacy defaults and preserves cus
   } finally {
     rmSync(customFixture.fixtureRoot, { recursive: true, force: true })
   }
+})
+
+test('configure-only needs no systemd, preserves credentials and explicitly rotates them', () => {
+  ensureBuilt()
+  const fixture = createSetupFixture()
+  try {
+    writeExecutable(join(fixture.binDir, 'systemctl'), '#!/bin/sh\nexit 99\n')
+    const invoke = (...args) => spawnSync(BINARY, ['--configure-only', ...args], {
+      cwd: fixture.fixtureRoot,
+      env: { ...process.env, PATH: `${fixture.binDir}:${process.env.PATH}` }, encoding: 'utf8',
+    })
+    const first = invoke()
+    assert.equal(first.status, 0)
+    const password = first.stdout.match(/Password: (\S+)/)?.[1]
+    assert.ok(password)
+    const config = readFileSync(join(fixture.fixtureRoot, '.env'), 'utf8')
+    assert.equal(bcrypt.compareSync(password, config.match(/^ACC_PASSWORD_HASH=(.+)$/m)[1]), true)
+    assert.equal(invoke().status, 0)
+    assert.equal(readFileSync(join(fixture.fixtureRoot, '.env'), 'utf8'), config)
+    const reset = invoke('--reset-password')
+    assert.equal(reset.status, 0)
+    const rotated = readFileSync(join(fixture.fixtureRoot, '.env'), 'utf8')
+    assert.notEqual(rotated.match(/^JWT_SECRET=(.+)$/m)[1], config.match(/^JWT_SECRET=(.+)$/m)[1])
+    assert.equal(bcrypt.compareSync(reset.stdout.match(/Password: (\S+)/)[1], rotated.match(/^ACC_PASSWORD_HASH=(.+)$/m)[1]), true)
+    assert.equal(readFileSync(fixture.systemctlLogFile, 'utf8'), '')
+  } finally { rmSync(fixture.fixtureRoot, { recursive: true, force: true }) }
+})
+
+test('missing native CLI fails before credentials are created', () => {
+  ensureBuilt()
+  const fixture = createSetupFixture()
+  try {
+    rmSync(join(fixture.fixtureRoot, 'rust-runtime/target/release/nexus-native-session'))
+    const result = spawnSync(BINARY, [], {
+      cwd: fixture.fixtureRoot, env: { ...process.env, PATH: `${fixture.binDir}:${process.env.PATH}` }, encoding: 'utf8',
+    })
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /native session CLI is missing/)
+    assert.equal(existsSync(join(fixture.fixtureRoot, '.env')), false)
+  } finally { rmSync(fixture.fixtureRoot, { recursive: true, force: true }) }
+})
+
+test('source setup builds every binary before invoking the installer', () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'nexus-source-setup-'))
+  try {
+    mkdirSync(join(fixture, 'rust-runtime'), { recursive: true })
+    mkdirSync(join(fixture, 'bin'))
+    copyFileSync(join(ROOT, 'setup.sh'), join(fixture, 'setup.sh'))
+    writeFileSync(join(fixture, 'rust-runtime/Cargo.toml'), '[package]\n')
+    writeExecutable(join(fixture, 'bin/cargo'), `#!/bin/sh
+set -eu
+case "$*" in *"--release --bins") ;; *) exit 91;; esac
+mkdir -p rust-runtime/target/release
+printf '#!/bin/sh\ntest -f rust-runtime/target/release/nexus-native-session\n' > rust-runtime/target/release/nexus-setup
+chmod +x rust-runtime/target/release/nexus-setup
+touch rust-runtime/target/release/nexus-native-session
+`)
+    const result = spawnSync('bash', ['setup.sh', '--configure-only'], { cwd: fixture, env: { ...process.env, PATH: `${fixture}/bin:${process.env.PATH}` }, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+  } finally { rmSync(fixture, { recursive: true, force: true }) }
 })

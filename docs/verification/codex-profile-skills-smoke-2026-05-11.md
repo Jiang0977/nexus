@@ -1,5 +1,7 @@
 # Codex Profile Skills Smoke
 
+> Historical environment-specific evidence. Personal paths, project names and addresses have been anonymized; examples are not executable deployment targets.
+
 日期：2026-05-11
 
 ## 背景

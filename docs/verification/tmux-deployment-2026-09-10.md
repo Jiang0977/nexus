@@ -1,5 +1,7 @@
 # tmux 优化部署与现场验收（2026-09-10）
 
+> Historical environment-specific evidence. Personal paths, project names and addresses have been anonymized; examples are not executable deployment targets.
+
 ## 结果与边界
 
 代码已部署到 `/home/demo/.local/lib/nexus`。首次部署时现场确认生产配置为 native，因此先保留原配置、完成独立端口验收。用户随后明确授权切换：现已将 `data/session-backend.json` 改为 tmux，并于 `2026-09-10 00:59:44 CST` 再次重启 `nexus.service`。鉴权后的主入口 `/api/config` 确认 `sessionBackend=tmux`、`configuredSessionBackend=tmux`；主入口 tmux 重绘已启用并完成验收。

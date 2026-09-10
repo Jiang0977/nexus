@@ -1,62 +1,69 @@
 # Nexus
 
-Self-hosted workbench for running local coding agents from desktop, mobile, and browser terminals.
+Run and manage your local coding agents from a desktop or phone browser.
 
-[![Rust](https://img.shields.io/badge/rust-stable-orange?style=flat-square)](https://www.rust-lang.org/)
-[![License: GPL v3 / Commercial](https://img.shields.io/badge/license-GPL%20v3%20%2F%20Commercial-blue?style=flat-square)](LICENSE.md)
-[![GitHub stars](https://img.shields.io/github/stars/Jiang0977/nexus?style=flat-square)](https://github.com/Jiang0977/nexus/stargazers)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](CONTRIBUTING.md)
+[简体中文](README_CN.md) · [Getting started](docs/QUICKSTART_EN.md) · [Releases](https://github.com/Jiang0977/nexus/releases) · [GPL-3.0-or-later](LICENSE.md)
 
-[Chinese](README_CN.md)
+Nexus is a single-user, self-hosted workbench. Open a project, start Claude,
+Codex or a shell, and return to the same terminal after closing your browser.
+Desktop split panes let you follow several channels; mobile controls let you
+send input, upload files and resume work away from your desk.
 
-## What It Is
+This is an independently maintained derivative of
+[Nexus4CC](https://github.com/librae8226/nexus4cc), originally developed by
+librae8226, faywong and contributors. This fork adds a Rust runtime, terminal
+state recovery, an opt-in native PTY backend and expanded workspace tooling.
+See [attribution](LICENSE.md) and [changes](CHANGELOG.md).
 
-Nexus is a single-user, self-hosted control surface for local AI coding agents. It runs on your own machine, serves a PWA/browser UI, and lets you keep terminal-backed agent sessions alive after you close the browser.
+<p>
+  <img src="docs/images/desktop.png" alt="Nexus desktop terminal with a synthetic demo project" width="72%">
+  <img src="docs/images/mobile.png" alt="Nexus mobile terminal with the same demo project" width="24%">
+</p>
 
-Current runtime shape:
+## What you can do
 
-```text
-Browser / PWA
-  <-> Rust server (HTTP / WebSocket)
-  <-> Rust child runtimes
-  <-> session backend
-      - tmux: default, stable path
-      - native: opt-in Rust PTY backend, still converging
-```
+- Organize directories as projects with multiple agent or shell channels.
+- Use single, vertical, horizontal, 2×2 or 3×3 terminal layouts on desktop.
+- Browse and edit files; upload, download, rename, move and copy them.
+- Save, search, reorder and insert reusable prompts without auto-submitting.
+- Launch Claude/Codex profiles and browse/resume Codex history.
+- Use dark/light themes and install the browser UI as a PWA over HTTPS.
 
-## Features
+The default **tmux** backend keeps sessions alive across browser disconnects
+and Nexus server restarts. The **native** Rust PTY backend is opt-in/staging.
+Neither backend promises to preserve running processes across a host reboot.
+PWA installation does not make terminal access work while the server is offline.
 
-- Browser terminal built on xterm.js with mobile touch controls, scrollback, upload, and configurable toolbar.
-- Project and channel management: directory-based projects, each with multiple terminal channels.
-- Desktop split view: single / vertical / horizontal / 2x2 / 3x3 terminal panes.
-- File browser for workspace browsing, editing, upload, rename, move, copy, and delete; file view and download use `Authorization: Bearer` fetch and Blob URLs without passing JWT in URL query strings.
-- Authenticated prompt library for saving, editing, searching, drag-sorting, copying, and inserting reusable prompts into the active terminal without auto-submit.
-- Codex and Claude profile launchers, including Codex history/resume flows.
-- PWA support with dark/light themes, registering `/sw.js` on page load.
-- Rust-first runtime: `nexus-server` serves `frontend/dist/` directly.
+## Install
 
-## Terminal Backends
+Supported deployment target: **Linux with systemd user services**, including
+WSL2 with systemd enabled. The binary release targets **Linux x86_64 with glibc
+2.39 or newer** (Ubuntu 24.04 or newer). Other Linux systems can build from source.
+macOS and Windows-native installations are not supported by this release.
 
-| Backend | Status | Notes |
-|---|---|---|
-| `tmux` | Default / stable | Production path. Sessions survive browser and `nexus` service restarts through `nexus-tmux.service`. |
-| `native` | Opt-in / staging | Rust PTY backend with `nexus-native-pty-supervisor`, SQLite-backed native session registry, bounded scrollback, and `nexus-native-session` CLI attach. It is not the default production path yet. |
-
-Switching backend:
-
-- UI: Settings -> Terminal Backend -> save -> restart `nexus`.
-- Config: set `NEXUS_SESSION_BACKEND=native` in `.env`, or write `data/session-backend.json`.
-- Native mode also needs `nexus-native-pty.service` running.
-- Terminal WebSockets use a 10-second server heartbeat by default; set a positive `NEXUS_WS_HEARTBEAT_MS` value in `.env` only when an operator needs a different interval.
-
-Attach to native sessions from another terminal:
+Install runtime prerequisites on Ubuntu:
 
 ```bash
-nexus-native-session list
-nexus-native-session attach <project> <channel-index>
+sudo apt update
+sudo apt install -y tmux zsh python3 curl git ca-certificates
 ```
 
-## Quick Start
+Download the binary archive and `SHA256SUMS` from [Releases](https://github.com/Jiang0977/nexus/releases), then:
+
+```bash
+sha256sum --ignore-missing -c SHA256SUMS
+mkdir -p "$HOME/.local/lib/nexus"
+tar -xzf nexus-4.5.0-linux-x86_64.tar.gz -C "$HOME/.local/lib/nexus" --strip-components=1
+cd "$HOME/.local/lib/nexus"
+./setup.sh
+```
+
+Save the generated password and open **http://127.0.0.1:59000**.
+The installer creates `.env` and three user services: Nexus, tmux and the
+native supervisor (idle while using tmux). Keep the installation directory in place.
+
+To build from source, install Rust stable and a C/C++ build toolchain plus CMake,
+then run:
 
 ```bash
 git clone https://github.com/Jiang0977/nexus.git
@@ -64,111 +71,53 @@ cd nexus
 ./setup.sh
 ```
 
-Open:
+The checked-in frontend bundle means Node is not needed just to run Nexus.
+Source setup builds all Rust binaries and may take several minutes.
+For foreground mode, run `./setup.sh --configure-only`, then `bash start.sh`.
+Read the [complete tutorial](docs/QUICKSTART_EN.md) for first login, agent profiles,
+phone access, password reset and troubleshooting.
 
-```text
-http://127.0.0.1:59000
-```
+## Security and permissions
 
-`./setup.sh` generates secure credentials (and displays a one-time random password), provisions `.env`, installs `systemd --user` units, installs the native session CLI symlink, and starts:
+**An authenticated terminal has the permissions of the account running Nexus.**
+`WORKSPACE_ROOT` is not a shell sandbox. Claude/Codex launchers currently bypass
+their permission prompts, and Codex also bypasses its sandbox. Read
+[SECURITY.md](SECURITY.md) before connecting agents to sensitive projects.
 
-- `nexus.service`
-- `nexus-tmux.service`
-- `nexus-native-pty.service` (idle unless native backend is enabled)
+The default listener is loopback-only. Use a private VPN or an authenticated
+HTTPS proxy for remote access. Do not expose the server directly to the internet.
+Never publish `.env`, `data/`, terminal history or profile credentials.
 
-Direct foreground start:
+## Development and updates
 
-```bash
-bash start.sh
-```
-
-Full setup guide: [docs/QUICKSTART.md](docs/QUICKSTART.md)
-
-## Development
-
-Important constraints:
-
-- Runtime serves `frontend/dist/`; `frontend/src/` is source, not the production entrypoint.
-- Frontend source changes require rebuilding `frontend/dist/`.
-- Rust release binaries are the deployment artifacts.
-- Repository-wide verification is `npm run check`.
-
-Useful commands:
+Development requires Node.js 22.13+ (or a newer supported LTS), npm, Rust stable,
+and the runtime prerequisites above.
 
 ```bash
+npm ci
+npm --prefix frontend ci
+npx playwright install --with-deps chromium
 npm run check
-npm run build:frontend
-npm run build:rust-runtimes
-npm run smoke:login-upload
 ```
 
-The login/upload smoke reads `.context/secrets/e2e.env`:
-
-```text
-NEXUS_E2E_PASSWORD=<current Nexus login password>
-```
-
-## Deployment
-
-Use [docs/DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md) as the deployment source of truth.
-
-Short path:
-
-```bash
-npm run deploy:service
-```
-
-If frontend source changed:
-
-```bash
-npm run deploy:service -- --frontend
-```
-
-If native sessions can be interrupted and the native supervisor binary must be refreshed:
-
-```bash
-npm run deploy:service -- --restart-native-pty
-```
-
-The deploy script resolves the runtime install tree automatically — it prefers `NEXUS_INSTALL_ROOT`, then reads `systemctl show nexus.service -p WorkingDirectory`, then falls back to the checkout — and syncs the freshly built binaries and `frontend/dist` into that tree. Release binaries use same-directory rename cutovers, which are atomic at the file level. `frontend/dist` uses a staged two-rename cutover: there is a brief window where `dist/` does not exist, but readers never see a half-copied directory. On any build / sync / restart / healthcheck failure it restores both the checkout and the install tree to their pre-deploy snapshot before re-invoking the restart helper. The CLI symlink (`~/.local/bin/nexus-native-session`) points at the install-tree binary, not the checkout.
-
-Expose Nexus behind a trusted tunnel or private network such as Cloudflare Tunnel or Tailscale. Do not expose it directly to the public internet.
-
-## Requirements
-
-| Dependency | Note |
-|---|---|
-| Rust stable toolchain | Builds `nexus-server`, child runtimes, setup, and native PTY binaries. |
-| tmux | Required for the default backend. |
-| systemd user services | Required by `./setup.sh`; direct `bash start.sh` can run without it. |
-| Node.js + npm | Needed for frontend development, tests, and `npm run check`. |
-| Linux / WSL2 | Primary supported deployment target. Native backend is still being hardened for broader platform support. |
-| Claude / Codex CLI | Optional, needed only for launching those agents inside Nexus. |
-
-## Security
-
-Nexus is a single-user tool, not a multi-tenant platform.
-
-- bcrypt password hash + 30-day JWT.
-- WebSocket token is passed through the query string; use TLS in production.
-- Run behind a firewall, VPN, or tunnel.
-- Treat any browser terminal as local shell access to `WORKSPACE_ROOT`.
+Production serves `frontend/dist/`; frontend edits need `npm run build:frontend`.
+Source deployments use `npm run deploy:service -- --frontend`. Service scope is
+auto-detected; when both scopes exist, set `NEXUS_SERVICE_SCOPE=user` or `system`.
+See the [deployment runbook](docs/DEPLOYMENT-RUNBOOK.md) before updating.
 
 ## Documentation
 
-| Doc | Purpose |
+| Guide | Purpose |
 |---|---|
-| [QUICKSTART.md](docs/QUICKSTART.md) | Setup, config, profiles, native backend notes, smoke testing. |
-| [DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md) | Production update, restart, verification, rollback. |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current runtime architecture and module boundaries. |
-| [CURRENT-ROADMAP.md](docs/CURRENT-ROADMAP.md) | Current execution status and documentation authority order. |
-| [NORTH-STAR.md](docs/NORTH-STAR.md) | Product boundaries and non-goals. |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Local development and contribution rules. |
-
-## Contributing
-
-PRs and issues are welcome. Keep changes scoped, run `npm run check`, and update docs when runtime behavior changes.
+| [English tutorial](docs/QUICKSTART_EN.md) / [中文教程](docs/QUICKSTART.md) | Installation through your first agent session |
+| [Deployment runbook](docs/DEPLOYMENT-RUNBOOK.md) | Updates, backup, rollback and uninstall |
+| [Architecture](docs/ARCHITECTURE.md) / [code map](docs/code.md) | Runtime design and source navigation |
+| [Current roadmap](docs/CURRENT-ROADMAP.md) | Current scope and remaining work |
+| [Contributing](CONTRIBUTING.md) | Checks, bug reports and pull requests |
+| [Security](SECURITY.md) | Permissions and private vulnerability reports |
 
 ## License
 
-Dual-licensed: [GPL v3](LICENSE.md) for open-source use, commercial license available for proprietary / SaaS use.
+This fork is distributed under **GPL-3.0-or-later**. Original author copyrights
+and third-party notices are retained. See [LICENSE.md](LICENSE.md),
+[COPYING](COPYING) and [THIRD_PARTY.md](THIRD_PARTY.md).

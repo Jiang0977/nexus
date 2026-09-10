@@ -1,66 +1,59 @@
 # Contributing to Nexus
 
-Thanks for contributing.
+This is an independently maintained GPL-3.0-or-later derivative of
+[Nexus4CC](https://github.com/librae8226/nexus4cc). Contributions must be compatible
+with that license; retain upstream and third-party copyright notices.
 
-## Local Development
+## Local setup
 
-**Prerequisites:** Rust stable toolchain, tmux, Linux / WSL2. For frontend work: Node.js + npm.
+Use Linux/WSL2 with Rust stable, a C/C++ compiler, CMake, pkg-config, tmux, zsh,
+Python 3, curl and Node.js 22.13+ (or a newer supported LTS).
 
 ```bash
-git clone https://github.com/Jiang0977/nexus.git && cd nexus
-cp .env.example .env
-cargo build --manifest-path rust-runtime/Cargo.toml
+git clone https://github.com/Jiang0977/nexus.git
+cd nexus
+npm ci
+npm --prefix frontend ci
+npx playwright install --with-deps chromium
+./setup.sh --configure-only
 bash start.sh
 ```
 
-Open `http://localhost:59000`.
-
-Important constraints:
-
-- Runtime still serves `frontend/dist/` directly from Rust.
-- Frontend source lives under `frontend/src/`; rebuild `frontend/dist/` after frontend changes.
-- `tmux` is the default stable session backend.
-- `native` is opt-in/staging; keep changes reversible to `tmux` unless a design doc explicitly promotes it.
-- Do not bring PM2 back as the default runtime path.
-
-For frontend changes:
+Save the generated password and open http://127.0.0.1:59000. This setup does not
+install system services. Never commit local `.env`, `data/`, `.context/` or credentials.
+The Rust server serves `frontend/dist/`, so rebuild it after frontend changes:
 
 ```bash
-cd frontend
-npm install
-npm run build
+npm run build:frontend
 ```
 
-## Before You Submit
+## Before submitting
 
-1. Read [NORTH-STAR.md](docs/NORTH-STAR.md).
-2. Run the relevant checks, at minimum `npm run check`.
-3. Manually verify the affected browser flow when UI or startup behavior changes.
-4. If the change touches terminal/session behavior, verify the relevant backend path:
-   - tmux path: default browser terminal attach and project/channel lifecycle.
-   - native path: `NEXUS_SESSION_BACKEND=native`, `nexus-native-pty.service`, and `nexus-native-session list`.
-5. Keep scope to one logical change.
-
-## Commit Message Standard
-
-```text
-type(scope): imperative subject <= 72 chars
-
-Body (optional): explain why, not what.
-Bug fixes: explain root cause.
-
-Co-Authored-By: Claude <noreply@anthropic.com>
+```bash
+npm run check
+cargo fmt --manifest-path rust-runtime/Cargo.toml --check
+cargo clippy --manifest-path rust-runtime/Cargo.toml --all-targets --all-features -- -D warnings
 ```
 
-Types: `feat` `fix` `docs` `refactor` `test` `chore` `style`
+Keep changes scoped, include regression coverage for behavioral fixes, and update
+user documentation when commands or behavior change. Browser terminal changes
+also need `npm run test:browser` and a manual check of the affected interaction.
+Tmux is the default stable backend; native remains opt-in/staging.
 
-## Good First Issues
+Use commit subjects such as `fix(setup): build all required runtime binaries`.
+Do not add co-author identities unless they accurately describe the contribution.
+For personal email privacy, use your GitHub-provided noreply address before committing.
 
-- Rust runtime tests and startup-path coverage
-- Docs cleanup in `README.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT-RUNBOOK.md`
-- systemd / tmux / native PTY operational fixes
-- Bug reports with a clear reproduction path
+## Issues and security
 
-## Questions?
+Report ordinary bugs through [Issues](https://github.com/Jiang0977/nexus/issues),
+including version, OS, backend and a minimal reproduction. Replace real projects,
+paths, addresses and terminal content with synthetic examples. Do not upload raw
+configuration files or secrets. Report vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md).
 
-Open an issue or reach out via WeChat (`librae8226`).
+## Release maintenance
+
+Read [docs/RELEASING.md](docs/RELEASING.md) for versioning, checks, source/binary
+packaging, checksum verification and publishing. Historical verification documents
+record one environment at one date; they are not a promise of universal compatibility.

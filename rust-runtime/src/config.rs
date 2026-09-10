@@ -29,7 +29,9 @@ pub fn resolve_project_root() -> Result<PathBuf, String> {
 }
 
 fn looks_like_project_root(path: &Path) -> bool {
-    path.join("start.sh").is_file() && path.join("rust-runtime/Cargo.toml").is_file()
+    path.join("start.sh").is_file()
+        && (path.join("rust-runtime/Cargo.toml").is_file()
+            || (path.join("VERSION").is_file() && path.join("package.json").is_file()))
 }
 
 fn project_root_from_executable() -> Option<PathBuf> {
@@ -163,8 +165,8 @@ fn upsert_proxy_var(proxy_vars: &mut Vec<(String, String)>, key: &str, value: &s
 #[cfg(test)]
 mod tests {
     use super::{
-        load_dotenv, parse_json_array_env, project_root_from_executable, resolve_data_dir_path,
-        resolve_runtime_path,
+        load_dotenv, looks_like_project_root, parse_json_array_env, project_root_from_executable,
+        resolve_data_dir_path, resolve_runtime_path,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -216,6 +218,16 @@ mod tests {
         assert_eq!(values.get("ACC_PASSWORD_HASH"), Some(&"xyz".to_string()));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recognizes_binary_release_root_without_cargo_manifest() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("start.sh"), "#!/bin/sh").unwrap();
+        fs::write(root.path().join("package.json"), "{}").unwrap();
+        assert!(!looks_like_project_root(root.path()));
+        fs::write(root.path().join("VERSION"), "4.5.0").unwrap();
+        assert!(looks_like_project_root(root.path()));
     }
 
     #[test]

@@ -31,6 +31,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
+source "$SCRIPT_DIR/nexus-systemd.sh"
+nexus_resolve_service_scope
 
 RUN_FRONTEND_BUILD=0
 RESTART_NATIVE_PTY=0
@@ -141,7 +143,7 @@ resolve_install_root() {
     elif command -v systemctl >/dev/null 2>&1; then
         local discovered=""
         # systemctl show is a read-only query; do not wrap it in sudo.
-        discovered="$(systemctl show "${SERVICE_NAME}.service" -p WorkingDirectory --value 2>/dev/null || true)"
+        discovered="$(nexus_systemctl_query show "${SERVICE_NAME}.service" -p WorkingDirectory --value 2>/dev/null || true)"
         if [ -n "$discovered" ] && [ "$discovered" != "/" ]; then
             candidate="$discovered"
             source="systemd:${SERVICE_NAME}.service"
@@ -381,14 +383,14 @@ restart_native_pty_supervisor_if_requested() {
     if [ "$RESTART_NATIVE_PTY" -ne 1 ]; then
         return 0
     fi
-    if ! sudo -n systemctl is-active --quiet nexus-native-pty.service; then
+    if ! nexus_systemctl is-active --quiet nexus-native-pty.service; then
         echo "[Nexus] --restart-native-pty set but nexus-native-pty.service is not active; skipping restart"
         return 0
     fi
     echo "[Nexus] Restarting native PTY supervisor..."
-    sudo -n systemctl restart nexus-native-pty.service
+    nexus_systemctl restart nexus-native-pty.service
     NATIVE_RESTART_DONE=1
-    sudo -n systemctl status nexus-native-pty.service --no-pager
+    nexus_systemctl status nexus-native-pty.service --no-pager
 }
 
 # When NATIVE_RESTART_DONE is set, restart the native supervisor again so
@@ -404,10 +406,10 @@ rollback_native_pty_supervisor() {
     set +E
     trap - ERR
     local rc=0
-    sudo -n systemctl restart nexus-native-pty.service
+    nexus_systemctl restart nexus-native-pty.service
     rc=$?
     if [ "$rc" -eq 0 ]; then
-        sudo -n systemctl status nexus-native-pty.service --no-pager
+        nexus_systemctl status nexus-native-pty.service --no-pager
         rc=$?
     fi
     set -e
@@ -462,7 +464,7 @@ sync_install_tree_frontend
 install_native_session_cli
 
 restart_native_pty_supervisor_if_requested
-if [ "$RESTART_NATIVE_PTY" -ne 1 ] && sudo -n systemctl is-active --quiet nexus-native-pty.service; then
+if [ "$RESTART_NATIVE_PTY" -ne 1 ] && nexus_systemctl is-active --quiet nexus-native-pty.service; then
     echo "[Nexus] Native PTY supervisor is running; not restarting it to preserve native sessions."
     echo "[Nexus] Pass --restart-native-pty to restart it explicitly."
 fi

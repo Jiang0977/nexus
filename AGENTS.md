@@ -43,7 +43,7 @@ Do not treat `~/.codex/memories/` as an authoritative project source.
 - Preferred deployment entrypoint: `npm run deploy:service`.
 - If frontend source changed, deploy with `npm run deploy:service -- --frontend`.
 - If native supervisor binaries must be refreshed and interrupting native sessions is acceptable, deploy with `npm run deploy:service -- --restart-native-pty`.
-- `npm run restart:service` restarts `nexus` and checks `/api/version`, accepting HTTP 200 or 401; override with `NEXUS_HEALTHCHECK_URL`, `NEXUS_HOST`, or `PORT` when needed.
+- `NEXUS_SERVICE_SCOPE=auto|user|system` selects service scope; auto detects installed units and rejects ambiguity. `npm run restart:service` restarts `nexus` and checks `/api/version`, accepting HTTP 200 or 401; override with `NEXUS_HEALTHCHECK_URL`, `NEXUS_HOST`, or `PORT` when needed.
 - `nexus.service` restart does not refresh already-running tmux/Codex channels under `nexus-tmux.service`; when verifying deployment-sensitive Codex behavior, verify with a newly created channel or explicitly account for existing runtime state.
 - `start.sh` and `scripts/nexus-tmux-service.sh` both rely on `scripts/nexus-paths.sh` to repair agent CLI `PATH`; keep that path in scope for startup or Codex/Claude launcher changes.
 - Do not use `pm2` as an operations path; current service management is via systemd scripts and `npm run deploy:service` / `npm run restart:service`.

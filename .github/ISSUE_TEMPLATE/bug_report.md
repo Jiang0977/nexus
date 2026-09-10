@@ -16,11 +16,12 @@ A clear, concise description of what went wrong.
 What you expected to happen.
 
 **Environment**
-- OS: (e.g. Ubuntu 22.04 / WSL2)
-- Rust version: (`cargo --version`)
+- OS: (e.g. Ubuntu 24.04 / WSL2)
+- Nexus version and install method (binary/source):
+- Rust version, if building from source: (`cargo --version`)
 - Browser: (e.g. Chrome 123, Safari 17)
 - tmux version: (`tmux -V`)
 - Service manager: (`systemctl --user status nexus` or direct `bash start.sh`)
 
 **Additional context**
-Logs, screenshots, or anything else relevant.
+Redacted logs, screenshots, or anything else relevant. Do not attach passwords, tokens, profiles, or private terminal output. Use SECURITY.md for vulnerability reports.

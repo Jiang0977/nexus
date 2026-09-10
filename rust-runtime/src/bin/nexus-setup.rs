@@ -26,10 +26,41 @@ fn run() -> Result<(), String> {
     let root = env::current_dir()
         .map_err(|error| format!("failed to determine current working directory: {error}"))?;
 
-    ensure_tmux(&root)?;
-    ensure_systemd_user(&root)?;
-    let generated_password = ensure_env_file(&root)?;
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!(
+            "Usage: ./setup.sh [--configure-only] [--reset-password]\n\
+            --configure-only  Generate credentials without installing services\n\
+            --reset-password  Generate a new password and JWT secret (invalidates existing logins)"
+        );
+        return Ok(());
+    }
+    if args
+        .iter()
+        .any(|arg| arg != "--configure-only" && arg != "--reset-password")
+    {
+        return Err("Unknown option; run ./setup.sh --help".to_string());
+    }
+    let configure_only = args.iter().any(|arg| arg == "--configure-only");
+    if !configure_only {
+        ensure_tmux(&root)?;
+        ensure_systemd_user(&root)?;
+    }
     ensure_frontend_bundle(&root)?;
+    if !configure_only {
+        validate_native_session_cli(&root)?;
+    }
+    let generated_password =
+        ensure_env_file(&root, args.iter().any(|arg| arg == "--reset-password"))?;
+    // Display credentials before any service operation can fail. They are not recoverable
+    // from the stored bcrypt hash, so delaying this until the completion banner loses them.
+    if let Some(password) = &generated_password {
+        println!("Password: {password}  (one-time generated, save now)");
+    }
+    if configure_only {
+        println!("Configuration ready. Run bash start.sh for foreground use.");
+        return Ok(());
+    }
     install_native_session_cli(&root)?;
     install_user_units(&root)?;
     start_user_units(&root)?;
@@ -109,9 +140,7 @@ fn ensure_tmux(root: &Path) -> Result<(), String> {
 
 fn ensure_systemd_user(root: &Path) -> Result<(), String> {
     step("Checking systemd user services");
-    if command_succeeds("systemctl", &["--user", "--version"], root)
-        || command_succeeds("systemctl", &["--version"], root)
-    {
+    if command_succeeds("systemctl", &["--user", "show-environment"], root) {
         ok("systemd available");
         return Ok(());
     }
@@ -329,7 +358,7 @@ fn atomic_write_env_file(target_file: &Path, content: &str) -> Result<(), String
     Ok(())
 }
 
-fn ensure_env_file(root: &Path) -> Result<Option<String>, String> {
+fn ensure_env_file(root: &Path, reset_credentials: bool) -> Result<Option<String>, String> {
     step("Setting up .env");
     let env_file = root.join(".env");
     let env_example = root.join(".env.example");
@@ -347,7 +376,7 @@ fn ensure_env_file(root: &Path) -> Result<Option<String>, String> {
         (example_content, true)
     };
 
-    let outcome = provision_env_content(&content_to_parse, is_new)?;
+    let outcome = provision_env_content(&content_to_parse, is_new || reset_credentials)?;
 
     atomic_write_env_file(&env_file, &outcome.content)?;
 
@@ -404,10 +433,7 @@ fn current_path() -> String {
 }
 
 #[cfg(unix)]
-fn install_native_session_cli(root: &Path) -> Result<(), String> {
-    use std::os::unix::fs::symlink;
-
-    step("Installing native session CLI");
+fn validate_native_session_cli(root: &Path) -> Result<(), String> {
     let target = root
         .join("rust-runtime")
         .join("target")
@@ -419,6 +445,20 @@ fn install_native_session_cli(root: &Path) -> Result<(), String> {
             target.display()
         ));
     }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_native_session_cli(_root: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn install_native_session_cli(root: &Path) -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+    step("Installing native session CLI");
+    validate_native_session_cli(root)?;
+    let target = root.join("rust-runtime/target/release/nexus-native-session");
 
     let bin_dir = current_home()?.join(".local").join("bin");
     fs::create_dir_all(&bin_dir)
@@ -592,7 +632,7 @@ fn start_user_units(root: &Path) -> Result<(), String> {
 
 fn print_completion_banner(generated_password: Option<&str>) {
     let password_line = match generated_password {
-        Some(password) => format!("Password: {password}  (one-time generated, save now)"),
+        Some(_) => "Password: (shown above; save it before closing this terminal)".to_string(),
         None => "Password: (retained existing custom password)".to_string(),
     };
 

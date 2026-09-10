@@ -20,6 +20,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const START_SCRIPT = readFileSync(join(ROOT, 'start.sh'), 'utf8')
 const NEXUS_PATHS_SCRIPT = readFileSync(join(ROOT, 'scripts', 'nexus-paths.sh'), 'utf8')
 const DEPLOY_SERVICE_SCRIPT = readFileSync(join(ROOT, 'scripts', 'deploy-nexus-service.sh'), 'utf8')
+const SYSTEMD_SCRIPT = readFileSync(join(ROOT, 'scripts', 'nexus-systemd.sh'), 'utf8')
 const RESTART_SERVICE_SCRIPT = readFileSync(join(ROOT, 'scripts', 'restart-nexus-service.sh'), 'utf8')
 
 function createFakeRustServerScript(envFile) {
@@ -168,6 +169,7 @@ function createDeployScriptFixture({ separateInstallTree = false } = {}) {
   writeFileSync(cargoLogFile, '', 'utf8')
   writeFileSync(restartLogFile, '', 'utf8')
   writeFileSync(systemctlLogFile, '', 'utf8')
+  writeFileSync(join(scriptsDir, 'nexus-systemd.sh'), SYSTEMD_SCRIPT)
   writeFileSync(join(fixtureRoot, 'scripts', 'deploy-nexus-service.sh'), DEPLOY_SERVICE_SCRIPT, { mode: 0o755 })
   writeFileSync(join(frontendDistDir, 'index.html'), '<!doctype html><html><body>checkout</body></html>\n')
   writeFileSync(join(frontendDistDir, 'checkout-asset.js'), '// checkout-asset\n', 'utf8')
@@ -266,6 +268,7 @@ function runDeployScript(fixture, envOverrides = {}, args = []) {
     cwd: fixture.fixtureRoot,
     env: {
       ...process.env,
+      NEXUS_SERVICE_SCOPE: 'system',
       HOME: fixture.homeDir,
       PATH: `${fixture.binDir}:${process.env.PATH || ''}`,
       ...envOverrides,
@@ -291,7 +294,7 @@ test('package.json keeps rust startup scripts and declares browser regression to
   assert.equal(packageJson.scripts.check, 'npm run test:rust && npm run test:node && npm run check:frontend-dist')
   assert.equal(
     packageJson.scripts.setup,
-    'cargo run --manifest-path rust-runtime/Cargo.toml --release --bin nexus-setup --',
+    'bash ./setup.sh',
   )
   assert.equal(
     packageJson.scripts['build:rust-setup'],
@@ -376,10 +379,10 @@ test('nexus-run-codex.sh uses the rust codex home tool instead of a node materia
   assert.doesNotMatch(runCodexScript, /node "\$\{SCRIPT_DIR\}\/scripts\/materialize-codex-home\.mjs"/)
 })
 
-test('restart helper uses non-interactive sudo and accepts auth-gated healthchecks', () => {
-  assert.match(RESTART_SERVICE_SCRIPT, /sudo -n systemctl restart "\$\{SERVICE_NAME\}"/)
-  assert.match(RESTART_SERVICE_SCRIPT, /sudo -n systemctl status "\$\{SERVICE_NAME\}" --no-pager/)
-  assert.match(RESTART_SERVICE_SCRIPT, /curl -s -o \/tmp\/nexus-healthcheck\.out -w '%\{http_code\}' --max-time 5/)
+test('restart helper selects service scope and accepts auth-gated healthchecks', () => {
+  assert.match(RESTART_SERVICE_SCRIPT, /nexus_resolve_service_scope/)
+  assert.match(RESTART_SERVICE_SCRIPT, /nexus_systemctl restart/)
+  assert.match(RESTART_SERVICE_SCRIPT, /mktemp \/tmp\/nexus-healthcheck/)
   assert.match(RESTART_SERVICE_SCRIPT, /"\$\{http_code\}" != "200"/)
   assert.match(RESTART_SERVICE_SCRIPT, /"\$\{http_code\}" != "401"/)
 })

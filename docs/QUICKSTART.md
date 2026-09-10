@@ -1,291 +1,198 @@
-# Quick Start — 从零开始运行 Nexus
+# 从安装到第一个 agent 会话
 
-预计时间：10 分钟左右。默认平台：Linux / WSL2。
+[English](QUICKSTART_EN.md) · [返回首页](../README_CN.md)
 
-## 前置要求
+## 1. 准备环境
 
-| 依赖 | 检查命令 | 说明 |
-|---|---|---|
-| Rust stable toolchain | `cargo --version` | 用于构建 `nexus-server` 和 child runtimes |
-| Node.js + npm | `node --version` / `npm --version` | 仅在修改前端源码并重建 `frontend/dist` 时需要 |
-| tmux | `tmux -V` | Nexus 会话事实源 |
-| systemd user services | `systemctl --user --version` | `./setup.sh` 需要；直接 `bash start.sh` 可不依赖 |
-| Claude / Codex CLI | `claude --version` / `codex --version` | 如需在 Nexus 内启动对应 agent |
-
-注意：
-
-- 默认运行链仍然不依赖 Node/PM2。
-- 默认 session backend 是 `tmux`；`native` 是 opt-in，仍在收敛。
-- 仓库现在重新携带 `frontend/src/` 和 `frontend/package.json`，前端可以在本仓库内重新构建。
-- 线上运行仍直接使用 `frontend/dist/`。
-- 仓库级验证入口统一为 `npm run check`。
-- 如果 Codex CLI 通过 NVM / Volta / npm 安装，Nexus 启动链会在运行时补齐对应 PATH；但前提是机器上真实 `codex` 二进制本来就存在。
-
-## 第一步：克隆仓库
+推荐 Ubuntu 24.04+，使用普通用户安装。WSL2 必须先启用 systemd。
+macOS、原生 Windows、Alpine/musl 不在预编译包支持范围内。
 
 ```bash
-git clone https://github.com/Jiang0977/nexus.git
-cd nexus
+sudo apt update
+sudo apt install -y tmux zsh python3 curl git ca-certificates
+uname -m
+getconf GNU_LIBC_VERSION
+systemctl --user show-environment >/dev/null
 ```
 
-## 第二步：安装或直接启动
+二进制包要求输出包含 `x86_64`，glibc 版本至少 2.39。最后一个命令应成功，
+它检查实际用户服务管理器是否可用；只有 `systemctl --version` 成功还不够。
 
-推荐方式：
+如果 WSL2 没有启用 systemd，按 [Microsoft 指南](https://learn.microsoft.com/windows/wsl/systemd)
+启用并重启 WSL。暂时不能启用时，可用后文的前台模式。
+
+Claude/Codex CLI 可在 Nexus 安装后另行安装和登录。Nexus 不包含模型订阅或 API
+额度，也不会替你安装这些 CLI。先确保宿主机终端中对应的 `claude --version`
+或 `codex --version` 可用。
+
+## 2. 安装二进制包（推荐）
+
+从 [Releases](https://github.com/Jiang0977/nexus/releases) 下载：
+
+- `nexus-4.5.0-linux-x86_64.tar.gz`
+- `SHA256SUMS`
+
+在下载目录执行。只在校验通过后继续；这组命令用于全新安装，升级见部署手册。
 
 ```bash
-cp .env.example .env
+sha256sum --ignore-missing -c SHA256SUMS
+mkdir -p "$HOME/.local/lib/nexus"
+tar -xzf nexus-4.5.0-linux-x86_64.tar.gz -C "$HOME/.local/lib/nexus" --strip-components=1
+cd "$HOME/.local/lib/nexus"
 ./setup.sh
 ```
 
-`./setup.sh` 会做这些事：
+不需要 Node、npm 或 Rust。安装器生成 `.env`，显示随机登录密码，并安装三个
+`systemd --user` 服务。**保存显示的密码**：没有通用默认密码。不要把安装日志
+或 `.env` 上传到 GitHub。安装目录是运行目录，服务会继续从这里读取程序。
 
-1. 检查 tmux
-2. 检查 `systemd --user`
-3. 创建 `.env`
-4. 校验 `frontend/dist/index.html`
-5. 写入并启动 `nexus.service` / `nexus-tmux.service` / `nexus-native-pty.service`
-6. 确保 tmux `main` session 存在
-7. 安装 `~/.local/bin/nexus-native-session` symlink
+如果安装中途失败，先保存已经显示的密码，再查看报错。重跑安装器会保留现有
+自定义凭据；忘记密码可按第 7 节重置。
 
-如果你只想前台直接跑：
+## 3. 或者从源码安装
+
+先安装 Rust stable（[官方安装说明](https://www.rust-lang.org/tools/install)）及编译依赖：
 
 ```bash
-cp .env.example .env
+sudo apt install -y build-essential cmake pkg-config
+git clone https://github.com/Jiang0977/nexus.git
+cd nexus
+cargo --version
+./setup.sh
+```
+
+安装脚本构建全部 Rust binaries，包括安装器和 native session CLI。首次编译
+可能耗时较长。仓库包含 `frontend/dist/`，仅运行无需重新构建前端。
+
+无 systemd 或只想前台运行时：
+
+```bash
+./setup.sh --configure-only
 bash start.sh
 ```
 
-访问：
+`--configure-only` 生成安全凭据，不安装或启动服务。用 Ctrl+C 停止前台服务。
+此模式不提供独立 systemd 守护的重启保证；native 模式还需要另行运行 supervisor。
 
-```text
-http://localhost:59000
-```
+## 4. 登录并创建第一个项目
 
-## 第三步：确认服务状态
+1. 在安装机器打开 `http://127.0.0.1:59000`，输入安装器显示的密码。
+2. 根据首次设置提示选择 agent 配置；暂时没有 CLI 时可稍后设置。
+3. 检查安装目录 `.env` 中的 `WORKSPACE_ROOT`。建议改为自己的项目根目录，
+   例如 `/home/demo/projects`；目录需要存在，并允许运行 Nexus 的账户访问。
+4. 修改 `.env` 后执行 `systemctl --user restart nexus`。
+5. 在项目列表点击新增项目，选择根目录下的一个项目目录。
+6. 在项目中新建频道。先选择 Bash 等普通 shell，运行 `pwd` 验证工作目录。
+7. 新建 Claude/Codex 频道；相应 CLI 必须已在宿主机安装并完成登录，或配置了
+   可用的 provider profile。已有终端不会因为切换 profile 自动重新启动。
 
-如果使用 `./setup.sh`：
+项目对应目录，频道对应该目录中的一个终端会话。关闭网页不会删除频道。
+电脑端可在布局控件中选择分屏，然后为各窗格选择频道。提示词库插入只填写
+当前终端，仍需要你按 Enter 发送。删除频道会结束相应运行进程。
+
+## 5. Agent 登录与 Profile
+
+优先先在宿主机终端完成 CLI 登录，并用简单指令验证能正常运行，再在 Nexus
+创建对应频道。NVM/Volta 安装的 CLI 会由启动脚本尝试发现；仍找不到时检查
+服务日志和 CLI 路径。
+
+Profile 可在界面的 agent 设置中管理。持久化目录为：
+
+- Claude：`data/configs/`
+- Codex：`data/codex-configs/`
+
+这些文件可能含 API key，不应提交或分享。不同供应商的模型名、API 地址和
+认证字段应以供应商说明为准；不要把示例值当作有效凭据。Codex 历史来自对应
+CLI 的本地会话记录；没有历史时面板为空属于正常情况。
+
+**权限提醒：**终端以 Nexus 系统账户运行。Claude/Codex 启动器默认跳过权限
+确认，Codex 也跳过自身沙箱。`WORKSPACE_ROOT` 仅限定工作区浏览等功能，不是
+对 shell 命令的隔离。完整说明见 [SECURITY.md](../SECURITY.md)。
+
+## 6. 从手机访问
+
+手机的 `127.0.0.1` 指向手机自身。远程接入需要让手机访问运行 Nexus 的电脑。
+推荐使用私有 Tailscale 网络：两端登录自己的 tailnet，确认电脑在线，然后按
+[Tailscale Serve 文档](https://tailscale.com/kb/1242/tailscale-serve)将本机
+`http://127.0.0.1:59000` 发布为 tailnet 内的 HTTPS 服务。不要启用面向公网的 Funnel。
+
+复制 Serve 显示的 HTTPS 地址到手机浏览器，使用 Nexus 密码登录。Android 可在
+浏览器菜单安装 PWA；iPhone 可从 Safari 分享菜单添加到主屏幕。电脑休眠或关机
+时无法继续远程访问。PWA 不能替代服务器连接。
+
+如果使用其他反向代理，配置 HTTPS、WebSocket 转发和额外的访问控制，并隐藏
+访问日志中的 query token。不要仅因为使用了隧道就取消访问限制。
+
+## 7. 密码、状态与故障排查
+
+重置密码和 JWT（会使旧登录 token 失效）：
 
 ```bash
-systemctl --user status nexus --no-pager
-journalctl --user -u nexus -n 30 --no-pager
+cd "$HOME/.local/lib/nexus"  # 源码安装改为实际仓库目录
+./setup.sh --configure-only --reset-password
+systemctl --user restart nexus
 ```
 
-成功标准：
+保存新密码；前台模式改为停止并重新运行 `bash start.sh`。
 
-- `nexus` 为 `active (running)`
-- 日志里出现 `启动 Nexus Rust server`
-- 浏览器打开首页返回 `200`
+检查服务：
 
-## 第四步：最小配置
+```bash
+systemctl --user status nexus nexus-tmux nexus-native-pty --no-pager
+journalctl --user -u nexus -n 50 --no-pager
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:59000/api/version
+```
 
-`.env.example` 已带默认值。复制后通常可以直接启动。
+未登录请求 `/api/version` 返回 **401** 是正常的鉴权保护信号；首页应返回 200。
 
-建议至少检查这些项：
-
-| 配置项 | 说明 |
+| 现象 | 处理 |
 |---|---|
-| `JWT_SECRET` | JWT 签名密钥 |
-| `ACC_PASSWORD_HASH` | 登录密码的 bcrypt hash，默认密码是 `nexus123` |
-| `WORKSPACE_ROOT` | Nexus 允许访问的目录根 |
-| `NEXUS_SESSION_BACKEND` | 默认 `tmux`；如需试用 native backend，可设为 `native` |
-| `NEXUS_DATA_DIR` | 默认 `data/`；多实例或独立部署时可显式指定 |
-| `NEXUS_WS_HEARTBEAT_MS` | 终端 WebSocket 服务端心跳间隔，单位毫秒；默认 `10000`，只接受正数 |
-| `PORT` | 默认 `59000` |
-| `GITHUB_REPO` | 默认 `Jiang0977/nexus`，用于版本检查 |
+| `JWT_SECRET must be set` | 在安装目录执行 `./setup.sh --configure-only`，不要直接使用空示例配置 |
+| `Failed to connect to bus` | 启用用户 systemd；或使用前台模式 |
+| `GLIBC_x.y not found` | 使用受支持系统，或在当前机器从源码构建 |
+| 找不到 `cargo` | 二进制包无需 cargo；源码安装需先安装 Rust 并加载其 PATH |
+| 找不到 agent CLI | 先在宿主机验证 CLI；重启 Nexus/tmux 服务会影响已有会话，应先保存工作 |
+| 前端修改没有生效 | 安装前端依赖并重建 `frontend/dist/`，再按部署手册更新 |
+| 本地能访问，手机不能 | 检查电脑在线、VPN/代理状态，以及手机使用的是否为电脑的 HTTPS 地址 |
 
-如果只是本机试跑，可以先保留默认密码；正式使用前再换。
+## 8. 开发与验证
 
-## 第五步：创建 Profile
-
-Nexus 通过 `data/configs/*.json` 和 `data/codex-configs/*.json` 管理不同 agent profile。
-
-Claude 示例：
+需要 Node.js 22.13+、npm、Rust stable 和运行依赖：
 
 ```bash
-mkdir -p data/configs
+npm ci
+npm --prefix frontend ci
+npx playwright install --with-deps chromium
+npm run check
+cargo fmt --manifest-path rust-runtime/Cargo.toml --check
+cargo clippy --manifest-path rust-runtime/Cargo.toml --all-targets --all-features -- -D warnings
 ```
 
-创建 `data/configs/anthropic.json`：
+`npm run check` 包含 Rust/Node 测试、前端构建和已提交产物一致性检查。
+前端有意修改后，先执行 `npm run build:frontend` 并将新产物纳入变更。
 
-```json
-{
-  "label": "Anthropic Claude",
-  "BASE_URL": "",
-  "AUTH_TOKEN": "",
-  "API_KEY": "",
-  "DEFAULT_MODEL": "claude-sonnet-4-6",
-  "THINK_MODEL": "claude-opus-4-6",
-  "LONG_CONTEXT_MODEL": "claude-opus-4-6",
-  "DEFAULT_HAIKU_MODEL": "claude-haiku-4-5-20251001",
-  "API_TIMEOUT_MS": "3000000"
-}
-```
+真实登录上传 smoke 需要本机 `.context/secrets/e2e.env`，内容为
+`NEXUS_E2E_PASSWORD=<当前密码>`，权限设为 600。执行 `npm run smoke:login-upload`。
+它会上传临时 CSV、验证终端 WebSocket 输入并清理上传；运行前选择可接受测试
+输入的频道。可用 `NEXUS_E2E_BASE_URL`、`NEXUS_E2E_SESSION`、`NEXUS_E2E_WINDOW`
+覆盖目标。不要将密码粘贴到公开 Issue。
 
-## 常见问题
+## 9. 可选 native 后端
 
-### 1. `frontend/dist/index.html` 缺失
-
-结论：仓库内容不完整。即使仓库里有前端源码，运行时仍要求 `frontend/dist/` 存在。
-
-### 2. `systemctl --user` 不可用
-
-可以先用：
-
-```bash
-bash start.sh
-```
-
-但 `./setup.sh` 和用户级守护启动会失败。需要先启用 `systemd --user`。
-
-### 3. 改了 Rust 代码但服务没更新
-
-`bash start.sh` 只会补构建“缺失”的 release binary，不会强制重建现有产物。代码变更后显式重建：
-
-```bash
-cargo build --manifest-path rust-runtime/Cargo.toml --release \
-  --bin nexus-server \
-  --bin nexus-pty-runtime \
-  --bin nexus-native-pty-supervisor \
-  --bin nexus-native-session \
-  --bin nexus-window-launch-runtime \
-  --bin nexus-session-runtime \
-  --bin nexus-codex-home
-```
-
-然后重启服务。
-
-### 4. 切换到 native 终端后端
-
-默认 backend 是 `tmux`。native backend 已经可 opt-in，但仍是 staging 路径，不建议直接当成无回滚准备的生产默认。
-
-可以通过 UI 切换：
-
-```text
-Settings -> Terminal Backend -> native -> Save
-```
-
-保存后重启 `nexus`：
+默认 tmux 是稳定路径。native 仍为 opt-in/staging，请先保存工作，并保留回退能力。
+在设置中选择 Terminal Backend → native 并保存，再重启 Nexus。确认
+`nexus-native-pty.service` 正常运行。显式 `.env` 中的 `NEXUS_SESSION_BACKEND`
+优先于 UI 保存值，因此排查切换失败时也要检查该变量。
 
 ```bash
 systemctl --user restart nexus
-```
-
-也可以直接在 `.env` 中设置：
-
-```bash
-NEXUS_SESSION_BACKEND=native
-```
-
-或者写入：
-
-```bash
-mkdir -p data
-printf '{"session_backend":"native"}\n' > data/session-backend.json
-systemctl --user restart nexus
-```
-
-确认 native supervisor 服务在运行：
-
-```bash
-systemctl --user status nexus-native-pty
-test -S data/native-sessions/supervisor.sock
-```
-
-如果使用了 `NEXUS_DATA_DIR`，socket 会在该数据目录下。
-
-### 5. native 模式下从另一个终端进入会话
-
-native 后端仍是 opt-in。启用后确认 supervisor 服务在运行：
-
-```bash
-systemctl --user status nexus-native-pty
-```
-
-另一个终端可以直接列出并进入 native 会话：
-
-```bash
+systemctl --user status nexus-native-pty --no-pager
 nexus-native-session list
 nexus-native-session attach <project> <channel-index>
 ```
 
-如果 shell 提示 `nexus-native-session: command not found`，先确认 `~/.local/bin` 在当前终端的 `PATH` 中，或临时使用完整路径 `rust-runtime/target/release/nexus-native-session`。
+将 `~/.local/bin` 加入 PATH 后可直接使用 CLI。回退时在设置选择 tmux，移除
+冲突的 `.env` 覆盖并重启 Nexus；这不会把 native 会话转换为 tmux 会话。
+不要在有重要 native 进程运行时重启 supervisor。
 
-### 6. 如何改密码
-
-把 `.env` 里的 `ACC_PASSWORD_HASH` 改成新的 bcrypt hash。仓库当前不内置密码生成工具，使用你现有的 bcrypt 工具生成即可。
-
-### 7. 如何重建前端
-
-如果你改了 `frontend/src/*`：
-
-```bash
-npm install
-npm run build:frontend
-```
-
-构建会把新产物写回 `frontend/dist/`，Rust server 会继续直接伺服这个目录。
-
-如果你想在本地一次性验证 Rust、Node 测试和 `frontend/dist` 漂移保护：
-
-```bash
-npm run check
-```
-
-### 8. 如何给 AI 助手提供本地登录测试能力
-
-不要把真实密码写进仓库，也不要每次在聊天里重复粘贴密码。推荐在本机创建一个被 git 忽略的本地 secret 文件：
-
-```bash
-mkdir -p .context/secrets
-printf 'NEXUS_E2E_PASSWORD=你的当前登录密码\n' > .context/secrets/e2e.env
-chmod 600 .context/secrets/e2e.env
-```
-
-之后 AI 助手或维护者可以直接运行真实登录页 smoke：
-
-```bash
-npm run smoke:login-upload
-```
-
-这个脚本会：
-
-- 从 `.context/secrets/e2e.env` 读取 `NEXUS_E2E_PASSWORD`
-- 通过真实登录页登录
-- 默认选择当前仓库路径对应的 Nexus 项目；找不到时退回到 active/首个有 channel 的项目
-- 上传临时 1px 图片
-- 验证上传返回路径已通过终端 WebSocket 发送
-- 清理临时上传文件
-
-如果你的默认项目名或 channel 不是脚本默认值，可以覆盖：
-
-```bash
-NEXUS_E2E_SESSION=<project-name> NEXUS_E2E_WINDOW=<channel-index> npm run smoke:login-upload
-```
-
-### 9. Nexus 内 `codex` 提示 wrapper 找不到真实二进制
-
-先检查宿主机上真实 CLI 是否存在：
-
-```bash
-codex --version
-which -a codex
-find "$HOME/.nvm/versions/node" -maxdepth 3 \( -type f -o -type l \) -path '*/bin/codex' 2>/dev/null
-```
-
-如果机器上本来就装了 Codex，再重启服务：
-
-```bash
-sudo systemctl restart nexus-tmux
-sudo systemctl restart nexus
-```
-
-然后确认服务 PATH 已带上真实 CLI 目录：
-
-```bash
-server_pid="$(systemctl show -p MainPID --value nexus)"
-tr '\0' '\n' < "/proc/${server_pid}/environ" | rg '^PATH='
-```
-
-## 下一步
-
-- 架构和模块边界：见 [ARCHITECTURE.md](ARCHITECTURE.md)
-- 上线、重启、回滚：见 [DEPLOYMENT-RUNBOOK.md](DEPLOYMENT-RUNBOOK.md)
+更新、备份、回滚和卸载见[部署手册](DEPLOYMENT-RUNBOOK.md)。

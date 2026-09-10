@@ -16,6 +16,7 @@ import { DatabaseSync } from 'node:sqlite'
 
 const root = resolve(import.meta.dirname, '..')
 const live = process.argv.includes('--live')
+if (live && !process.env.NEXUS_ACCEPTANCE_NATIVE_DB) throw new Error('Set NEXUS_ACCEPTANCE_NATIVE_DB to the live native session database path')
 const evidence = mkdtempSync(join(tmpdir(), 'nexus-native-acceptance-'))
 const workspaceParent = live ? join(root, '.context/tasks/native-final-acceptance') : evidence
 mkdirSync(workspaceParent, { recursive: true })
@@ -23,7 +24,7 @@ const workspace = mkdtempSync(join(workspaceParent, 'native-acceptance-'))
 const password = live
   ? readFileSync(join(root, '.context/secrets/e2e.env'), 'utf8').split(/\r?\n/).find(line => line.startsWith('NEXUS_E2E_PASSWORD=')).slice(19).trim().replace(/^(['"])(.*)\1$/, '$2')
   : randomBytes(24).toString('hex')
-let base = process.env.NEXUS_E2E_BASE_URL || 'https://nexus.example.com:8443'
+let base = process.env.NEXUS_E2E_BASE_URL || 'http://127.0.0.1:59000'
 let server, supervisor, browser, project, client, env, auth
 const checks = []
 const pageErrors = []
@@ -58,7 +59,7 @@ const dismissSetup = async page => {
   if (await later.isVisible()) await later.click()
 }
 const processPid = () => {
-  const path = live ? (process.env.NEXUS_ACCEPTANCE_NATIVE_DB || '/home/demo/.local/lib/nexus/data/native-sessions/session.db') : env.NEXUS_NATIVE_SESSION_DB
+  const path = live ? process.env.NEXUS_ACCEPTANCE_NATIVE_DB : env.NEXUS_NATIVE_SESSION_DB
   const db = new DatabaseSync(path, { readOnly: true })
   try { return db.prepare('SELECT os_pid FROM process_instances WHERE project_name = ? AND channel_index = 0 AND status = ? ORDER BY id DESC LIMIT 1').get(project, 'running')?.os_pid }
   finally { db.close() }
@@ -116,7 +117,7 @@ try {
   assert.ok(originalPid > 0)
   await delay(500)
   client.send(`${quote(process.execPath)} ${quote(join(root, 'tests/fixtures/native-tui-state.cjs'))}\r`)
-  browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true })
+  browser = await chromium.launch({ ...(process.env.NEXUS_BROWSER_EXECUTABLE ? { executablePath: process.env.NEXUS_BROWSER_EXECUTABLE } : {}), headless: true })
   async function openPage(mobile) {
     const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 950 }, isMobile: mobile, hasTouch: mobile, serviceWorkers: 'block' })
     let layout = { version: 1, mode: 'vertical', focusedPaneId: 'pane-1', panes: [{ id: 'pane-1', target: { session: project, windowIndex: 0 } }, { id: 'pane-2', target: { session: project, windowIndex: 0 } }], updatedAt: new Date().toISOString() }

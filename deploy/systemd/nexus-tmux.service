@@ -1,3 +1,4 @@
+# System-service example. Edit User, Group, HOME, PATH and installation paths before use.
 [Unit]
 Description=Persistent tmux server for Nexus
 After=network-online.target
@@ -5,18 +6,18 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=demo
-Group=demo
-WorkingDirectory=/home/demo/workspace/rust/nexus
-Environment=HOME=/home/demo
-Environment=USER=demo
+User=nexus
+Group=nexus
+WorkingDirectory=/opt/nexus
+Environment=HOME=/home/nexus
+Environment=USER=nexus
 Environment=SHELL=/bin/bash
 Environment=LANG=C.UTF-8
 Environment=LC_ALL=C.UTF-8
-Environment=PATH=/home/demo/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/bin/bash /home/demo/workspace/rust/nexus/scripts/nexus-tmux-service.sh start-foreground
-ExecStartPost=/usr/bin/bash /home/demo/workspace/rust/nexus/scripts/nexus-tmux-service.sh ensure-session
-ExecStop=/usr/bin/bash /home/demo/workspace/rust/nexus/scripts/nexus-tmux-service.sh stop
+Environment=PATH=/home/nexus/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/bash /opt/nexus/scripts/nexus-tmux-service.sh start-foreground
+ExecStartPost=/usr/bin/bash /opt/nexus/scripts/nexus-tmux-service.sh ensure-session
+ExecStop=/usr/bin/bash /opt/nexus/scripts/nexus-tmux-service.sh stop
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20

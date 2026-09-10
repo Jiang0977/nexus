@@ -1,62 +1,65 @@
 # Nexus
 
-自托管的本地 AI 编码工作台：用桌面、手机或浏览器终端管理运行在自己机器上的 coding agent。
+在电脑或手机浏览器里运行和管理你本机的 AI 编码助手。
 
-[![Rust](https://img.shields.io/badge/rust-stable-orange?style=flat-square)](https://www.rust-lang.org/)
-[![License: GPL v3 / 商业授权](https://img.shields.io/badge/license-GPL%20v3%20%2F%20商业授权-blue?style=flat-square)](LICENSE.md)
-[![GitHub stars](https://img.shields.io/github/stars/Jiang0977/nexus?style=flat-square)](https://github.com/Jiang0977/nexus/stargazers)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](CONTRIBUTING.md)
+[English](README.md) · [完整教程](docs/QUICKSTART.md) · [下载安装包](https://github.com/Jiang0977/nexus/releases) · [GPL-3.0-or-later](LICENSE.md)
 
-[English](README.md)
+Nexus 是单用户、自托管的编码工作台。打开一个项目，启动 Claude、Codex
+或普通 shell，关闭浏览器后再回来，仍可接续原来的终端会话。电脑端支持多终端
+分屏，手机端可以输入指令、上传文件和切换项目。
 
-## 这是什么
+本项目基于 [Nexus4CC](https://github.com/librae8226/nexus4cc)，由 Jiang0977
+独立维护修改版。感谢原作者 librae8226、faywong 和其他贡献者。本分支增加了
+Rust 运行时、终端状态恢复、可选 native PTY 后端和工作区工具。
+详见[版权说明](LICENSE.md)和[更新记录](CHANGELOG.md)。
 
-Nexus 是单用户、自托管的本地 AI agent 控制台。它运行在你自己的机器上，通过 PWA / 浏览器 UI 暴露终端、项目、频道、会话和文件管理能力；浏览器关掉后，底层 agent session 仍然继续运行。
+<p>
+  <img src="docs/images/desktop.png" alt="Nexus desktop terminal with a synthetic demo project" width="72%">
+  <img src="docs/images/mobile.png" alt="Nexus mobile terminal with the same demo project" width="24%">
+</p>
 
-当前运行形态：
+## 主要功能
 
-```text
-Browser / PWA
-  <-> Rust server (HTTP / WebSocket)
-  <-> Rust child runtimes
-  <-> session backend
-      - tmux：默认稳定路径
-      - native：opt-in Rust PTY 后端，仍在收敛
-```
+- 把目录组织为项目，每个项目下可运行多个 agent 或 shell 频道。
+- 电脑端支持单窗格、左右分屏、上下分屏、2×2 和 3×3 布局。
+- 浏览、编辑、上传、下载、重命名、移动和复制工作区文件。
+- 保存、搜索、拖动排序和插入提示词，插入时不会自动发送。
+- 配置 Claude/Codex profile，浏览和恢复 Codex 历史会话。
+- 深色/浅色主题，通过 HTTPS 安装为 PWA。
 
-## 功能
+默认使用 **tmux**：浏览器断线或 Nexus 服务重启后可以重新连接原会话。
+**native** Rust PTY 后端仍为可选实验路径。这两种模式都不保证电脑重启后
+恢复原来运行中的进程；PWA 也不能在服务器离线时继续操作终端。
 
-- 基于 xterm.js 的浏览器终端：移动端触控、scrollback、上传、可配置工具栏。
-- 项目与频道管理：项目对应目录，每个项目下有多个终端频道。
-- PC split view：single / vertical / horizontal / 2x2 / 3x3 多 pane 终端。
-- 文件浏览器：浏览、编辑、上传、重命名、移动、复制、删除工作区文件；文件查看与下载使用 `Authorization: Bearer` fetch 与 Blob URL，JWT 不放入 URL query。
-- 提示词库：保存、编辑、搜索、复制提示词，并可在不自动提交的前提下插入当前终端。
-- Codex / Claude profile 启动器，包含 Codex history / resume 流程。
-- PWA、深色/浅色主题，页面启动时注册 `/sw.js` Service Worker。
-- Rust 优先运行链：`nexus-server` 直接伺服 `frontend/dist/`。
+## 安装
 
-## 终端后端
+当前支持 **Linux + systemd 用户服务**，包括已启用 systemd 的 WSL2。
+预编译包支持 **Linux x86_64、glibc 2.39+**（Ubuntu 24.04 及以上）。
+其他 Linux 环境可从源码构建。本次发行不支持 macOS 或原生 Windows 安装。
 
-| 后端 | 状态 | 说明 |
-|---|---|---|
-| `tmux` | 默认 / 稳定 | 生产路径。通过 `nexus-tmux.service` 保持会话，浏览器关闭或 `nexus` 服务重启后仍可接续。 |
-| `native` | opt-in / staging | Rust PTY 后端，包含 `nexus-native-pty-supervisor`、SQLite native session registry、有界 scrollback 和 `nexus-native-session` CLI attach。它还不是默认生产路径。 |
-
-切换方式：
-
-- UI：Settings -> Terminal Backend -> 保存 -> 重启 `nexus`。
-- 配置：在 `.env` 设置 `NEXUS_SESSION_BACKEND=native`，或写入 `data/session-backend.json`。
-- native 模式还需要 `nexus-native-pty.service` 正在运行。
-- 终端 WebSocket 默认由服务端每 10 秒发送一次心跳；仅在运维确有需要时，才在 `.env` 中把 `NEXUS_WS_HEARTBEAT_MS` 设置为其他正数。
-
-从另一个终端进入 native session：
+Ubuntu 先安装运行依赖：
 
 ```bash
-nexus-native-session list
-nexus-native-session attach <project> <channel-index>
+sudo apt update
+sudo apt install -y tmux zsh python3 curl git ca-certificates
 ```
 
-## 快速开始
+从 [Releases](https://github.com/Jiang0977/nexus/releases) 下载二进制压缩包及
+`SHA256SUMS`，在下载目录运行：
+
+```bash
+sha256sum --ignore-missing -c SHA256SUMS
+mkdir -p "$HOME/.local/lib/nexus"
+tar -xzf nexus-4.5.0-linux-x86_64.tar.gz -C "$HOME/.local/lib/nexus" --strip-components=1
+cd "$HOME/.local/lib/nexus"
+./setup.sh
+```
+
+保存安装器显示的随机密码，打开 **http://127.0.0.1:59000**。
+安装器创建 `.env` 和三个用户服务：Nexus、tmux、native supervisor；使用
+默认 tmux 后端时，native supervisor 保持空闲。安装完成后不要移动目录。
+
+从源码安装需另装 Rust stable、C/C++ 编译工具链和 CMake：
 
 ```bash
 git clone https://github.com/Jiang0977/nexus.git
@@ -64,111 +67,48 @@ cd nexus
 ./setup.sh
 ```
 
-打开：
+仓库包含前端构建产物，单纯运行不需要 Node。源码安装会编译全部 Rust
+程序，耗时取决于机器。前台模式使用 `./setup.sh --configure-only`，然后
+`bash start.sh`。首次登录、创建频道、配置 agent 和手机接入见[完整教程](docs/QUICKSTART.md)。
 
-```text
-http://127.0.0.1:59000
-```
+## 权限与安全
 
-`./setup.sh` 会自动生成安全凭据（并在终端展示一次性随机密码）、写入 `.env`、安装 `systemd --user` unit、安装 native session CLI symlink，并启动：
+**登录后的终端拥有运行 Nexus 的系统账户权限。** `WORKSPACE_ROOT` 不是
+shell 沙箱。Claude/Codex 启动器目前跳过权限确认，Codex 还跳过自身沙箱。
+连接敏感项目之前，请阅读 [SECURITY.md](SECURITY.md)。
 
-- `nexus.service`
-- `nexus-tmux.service`
-- `nexus-native-pty.service`（未启用 native backend 时保持空闲）
+服务默认只监听本机回环地址。远程访问使用私有 VPN 或带身份验证的 HTTPS
+反向代理，不要把服务直接暴露到公网。不要公开 `.env`、`data/`、终端历史或
+profile 凭据。
 
-直接前台启动：
+## 开发与更新
 
-```bash
-bash start.sh
-```
-
-完整配置指南见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
-
-## 开发
-
-关键约束：
-
-- 运行时伺服 `frontend/dist/`；`frontend/src/` 是源码，不是生产入口。
-- 改前端源码后必须重建 `frontend/dist/`。
-- Rust release binary 是部署产物。
-- 仓库级验证入口是 `npm run check`。
-
-常用命令：
+开发需要 Node.js 22.13+（或更新的受支持 LTS）、npm、Rust stable 及前述运行依赖。
 
 ```bash
+npm ci
+npm --prefix frontend ci
+npx playwright install --with-deps chromium
 npm run check
-npm run build:frontend
-npm run build:rust-runtimes
-npm run smoke:login-upload
 ```
 
-登录/上传 smoke 会读取 `.context/secrets/e2e.env`：
-
-```text
-NEXUS_E2E_PASSWORD=<当前 Nexus 登录密码>
-```
-
-## 部署
-
-部署权威说明见 [docs/DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md)。
-
-常规部署：
-
-```bash
-npm run deploy:service
-```
-
-如果改了前端源码：
-
-```bash
-npm run deploy:service -- --frontend
-```
-
-如果可以中断 native sessions，且需要刷新 native supervisor binary：
-
-```bash
-npm run deploy:service -- --restart-native-pty
-```
-
-部署脚本会自动解析运行时安装树：优先 `NEXUS_INSTALL_ROOT`，否则通过 `systemctl show nexus.service -p WorkingDirectory` 自动发现，最后才回退到当前 checkout——并在构建后把新 binaries 和 `frontend/dist` 同步进安装树。release binary 使用同目录 rename 切换，文件级别是 atomic。`frontend/dist` 使用 staged 两次 rename 切换：`dist/` 会有一个极短的不存在窗口，但读者不会看到半复制目录。任意 build / sync / restart / healthcheck 失败都会先回滚 checkout 与安装树到部署前快照，再调用 restart helper。CLI symlink（`~/.local/bin/nexus-native-session`）指向安装树里的 binary，不再指向 checkout。
-
-建议通过 Cloudflare Tunnel、Tailscale 或内网访问，不要直接暴露到公网。
-
-## 环境要求
-
-| 依赖 | 说明 |
-|---|---|
-| Rust stable toolchain | 构建 `nexus-server`、child runtimes、setup 和 native PTY binaries。 |
-| tmux | 默认后端需要。 |
-| systemd user services | `./setup.sh` 需要；`bash start.sh` 前台运行不需要。 |
-| Node.js + npm | 前端开发、测试和 `npm run check` 需要。 |
-| Linux / WSL2 | 当前主要部署目标。native backend 的更广平台支持仍在硬化。 |
-| Claude / Codex CLI | 可选；只有在 Nexus 内启动对应 agent 时才需要。 |
-
-## 安全
-
-Nexus 是单用户工具，不是多租户平台。
-
-- bcrypt 密码哈希 + 30 天 JWT。
-- WebSocket token 通过 query string 传递；生产环境必须配 TLS。
-- 放在防火墙、VPN 或 tunnel 后面运行。
-- 浏览器终端等价于对 `WORKSPACE_ROOT` 的本地 shell 访问。
+生产服务使用 `frontend/dist/`；修改前端后执行 `npm run build:frontend`。
+源码部署使用 `npm run deploy:service -- --frontend`，会自动识别用户级或
+系统级服务。两者同时存在时明确设置 `NEXUS_SERVICE_SCOPE=user` 或 `system`。
+更新前阅读[部署手册](docs/DEPLOYMENT-RUNBOOK.md)，其中包含备份、回滚和卸载步骤。
 
 ## 文档
 
 | 文档 | 用途 |
 |---|---|
-| [QUICKSTART.md](docs/QUICKSTART.md) | 安装、配置、profile、native backend、smoke test。 |
-| [DEPLOYMENT-RUNBOOK.md](docs/DEPLOYMENT-RUNBOOK.md) | 更新、重启、验证、回滚。 |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 当前运行架构与模块边界。 |
-| [CURRENT-ROADMAP.md](docs/CURRENT-ROADMAP.md) | 当前执行状态与文档权威顺序。 |
-| [NORTH-STAR.md](docs/NORTH-STAR.md) | 产品边界和非目标。 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 本地开发和贡献规则。 |
-
-## 贡献
-
-欢迎 PR 和 Issue。保持改动范围单一，提交前运行 `npm run check`；运行时行为变化必须同步文档。
+| [中文教程](docs/QUICKSTART.md) / [English tutorial](docs/QUICKSTART_EN.md) | 从安装到第一个 agent 会话 |
+| [部署手册](docs/DEPLOYMENT-RUNBOOK.md) | 更新、备份、回滚和卸载 |
+| [架构](docs/ARCHITECTURE.md) / [源码导览](docs/code.md) | 运行结构与模块边界 |
+| [当前路线图](docs/CURRENT-ROADMAP.md) | 当前边界与剩余工作 |
+| [贡献指南](CONTRIBUTING.md) | 检查、问题反馈与 PR |
+| [安全说明](SECURITY.md) | 权限边界和私密漏洞报告 |
 
 ## 许可证
 
-双重授权：[GPL v3](LICENSE.md) 用于开源使用，商业 / SaaS 使用可联系获取商业授权。
+本修改版按 **GPL-3.0-or-later** 发布，保留原作者版权与第三方声明。
+详见 [LICENSE.md](LICENSE.md)、[COPYING](COPYING) 和 [THIRD_PARTY.md](THIRD_PARTY.md)。

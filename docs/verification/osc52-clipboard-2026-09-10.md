@@ -1,5 +1,7 @@
 # OSC 52 浏览器剪贴板验收（2026-09-10）
 
+> Historical environment-specific evidence. Personal paths, project names and addresses have been anonymized; examples are not executable deployment targets.
+
 ## 实现
 
 - 桌面分屏、单终端/移动视图共用 `terminalOsc52.ts`，通过 xterm 公共 OSC handler 接收应用复制请求，严格解码 Base64/UTF-8，保留中文、emoji、组合字符、空白和换行。上限 128 KiB；支持剪贴板/默认选择，不将 X11 PRIMARY 或 cut buffer 单独映射到浏览器剪贴板。
@@ -22,7 +24,7 @@
 ## 部署结果
 
 - `npm run deploy:service -- --frontend --restart-native-pty` 成功。2026-09-10 **15:55:15 CST** 重启 `nexus.service`（PID **398533**）和 `nexus-native-pty.service`（PID **398498**），均 active，`NRestarts=0`；健康检查 `/api/version` 返回预期的未认证 **401**。
-- 从 `https://nexus.example.com:8443/` 回读 **16 个前端文件**，与仓库构建、安装树哈希一致；**7 个 release 二进制**一致，两个服务实际加载的 `/proc/PID/exe` 也与新安装二进制一致。认证后确认配置与实际 backend 都是 `native`。证据 `/tmp/nexus-osc52-install-parity.json`。
+- 从 `https://nexus.example.com` 回读 **16 个前端文件**，与仓库构建、安装树哈希一致；**7 个 release 二进制**一致，两个服务实际加载的 `/proc/PID/exe` 也与新安装二进制一致。认证后确认配置与实际 backend 都是 `native`。证据 `/tmp/nexus-osc52-install-parity.json`。
 - `npm run smoke:native -- --live --clipboard-smoke --cli-smoke` **13 项通过**，证据目录 `/tmp/nexus-native-acceptance-ytC7gI`，日志 `/tmp/nexus-osc52-live.log`。包含真实 HTTPS 登录/上传、桌面分屏/移动显示、刷新/断线恢复、60 次握手、旧协议拒绝、长文本浏览器复制及不重复复制、Codex/Grok 启动与重连、实际 Grok 点击字段到浏览器剪贴板。页面错误为零；无模型推理请求。
 - Grok 实测同时校验浏览器 `writeText` 调用和读回内容，且只有焦点窗格自动写入一次；截图 `grok-osc52-copy.png` 已人工查看。测试通过 `GROK_COPY_FILE` 将 Grok 文件备份限定在验收目录，不修改 Grok API 或用户配置。
 - 验收结束后临时项目残留 **0**、测试 PTY 进程已退出、临时上传已删除；两个服务仍 active、无自动重启，发布后 error 级日志 **0**。再次核验 7 个二进制、16 个线上文件和实际加载进程一致。

@@ -1,45 +1,39 @@
-Nexus Authors: librae8226, faywong
+# License and attribution
 
-This software is dual-licensed. You may choose either license below.
+This modified version of Nexus is distributed under the GNU General Public
+License, version 3 or (at your option) any later version (`GPL-3.0-or-later`).
+The complete license is in [COPYING](COPYING).
 
---------------------------------------------------------------------------------
+Copyright (C) 2026 librae8226, faywong — original Nexus / Nexus4CC contributors.
+Modifications maintained by Jiang0977 and contributors.
 
-Option 1: GNU General Public License v3.0
+Nexus is derived from [Nexus4CC](https://github.com/librae8226/nexus4cc).
+The upstream GPL licensing commit is
+[3800d62](https://github.com/librae8226/nexus4cc/commit/3800d62f045497b72a8ed4547053d03128167f1b).
+This repository's modifications include the Rust runtime, native PTY backend,
+terminal recovery, split view, and installation and documentation changes.
+Modification dates and details are recorded in Git history and [CHANGELOG.md](CHANGELOG.md).
 
---------------------------------------------------------------------------------
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later version.
 
-GNU GENERAL PUBLIC LICENSE
-Version 3, 29 June 2007
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-Copyright (C) 2026 librae8226, faywong
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+## Upstream commercial licensing
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
+Upstream separately advertises commercial licensing from librae8226 and faywong.
+That offer is not an offer by this fork and does not automatically cover this
+fork's modifications. This fork does not grant an alternative proprietary license.
+GPL-compliant commercial use and distribution are permitted by the GPL.
 
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <https://www.gnu.org/licenses/>.
+## Third-party components
 
-The full text of the GNU General Public License v3.0 is available at:
-https://www.gnu.org/licenses/gpl-3.0.txt
-
-================================================================================
-
-Option 2: Commercial License
-
-================================================================================
-
-For use cases not covered by the GPL v3 — such as embedding Nexus in a
-proprietary product, SaaS offering, or any scenario where you prefer not to
-be subject to the copyleft requirements — a commercial license is available.
-
-To obtain a commercial license, please contact the copyright holders:
-
-  librae8226 — https://github.com/librae8226
-  faywong    — https://github.com/faywong
+Third-party components retain their own copyrights and licenses. In particular,
+the modified `avt` terminal state engine retains its MIT license and XTerm notice
+under `rust-runtime/vendor/avt/`. See [THIRD_PARTY.md](THIRD_PARTY.md).
