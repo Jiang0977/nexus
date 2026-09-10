@@ -93,9 +93,11 @@ try {
   const backend = await api('/api/config')
   assert.equal(backend.sessionBackend, 'native')
   checks.push('health_auth_native_backend')
+  const existingProjectNames = new Set((await api('/api/projects')).map(item => item.name))
   const created = await api('/api/projects', 'POST', { path: relative(backend.workspaceRoot, workspace), shell_type: 'bash' })
+  assert.equal(resolve(created.path), workspace, 'acceptance project must point at the owned temporary directory')
+  assert.ok(created.name && !existingProjectNames.has(created.name), 'acceptance must create a new project, never reuse an existing one')
   project = created.name
-  assert.ok(project && project.includes('native-acceptance'), 'only acceptance project is in scope')
   const url = new URL('/ws', base.replace(/^http/, 'ws'))
   url.search = new URLSearchParams({ token: login.token, session: project, window: '0', terminalProtocol: '2', cols: '120', rows: '30' })
   client = new WebSocket(url)
