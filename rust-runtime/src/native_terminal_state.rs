@@ -163,7 +163,7 @@ impl vte::Perform for InputModes {
         if ignore {
             return;
         }
-        if intermediates == [b'?'] && matches!(action, 'h' | 'l') {
+        if intermediates == b"?" && matches!(action, 'h' | 'l') {
             for param in params {
                 if let [mode @ (9 | 66 | 1000 | 1002 | 1003 | 1004 | 1006 | 1016 | 2004 | 2026)] =
                     param
@@ -186,7 +186,7 @@ impl vte::Perform for InputModes {
                     }
                 }
             }
-        } else if intermediates == [b'!'] && action == 'p' {
+        } else if intermediates == b"!" && action == 'p' {
             // xterm soft reset resets CoreService input flags, not mouse service.
             self.dec
                 .retain(|mode| matches!(*mode, 9 | 1000 | 1002 | 1003 | 1006 | 1016));

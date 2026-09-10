@@ -15,15 +15,14 @@ impl Utf8StreamDecoder {
             return String::new();
         }
 
-        let buffer: &[u8];
         let combined: Vec<u8>;
-        if self.pending.is_empty() {
-            buffer = bytes;
+        let buffer: &[u8] = if self.pending.is_empty() {
+            bytes
         } else {
             combined = [&self.pending[..], bytes].concat();
             self.pending.clear();
-            buffer = &combined;
-        }
+            &combined
+        };
 
         let mut out = String::new();
         let mut start = 0;

@@ -202,7 +202,7 @@ pub(super) async fn api_upload_workspace_file(
 
     let payload = match parse_upload_multipart(multipart).await {
         Ok(payload) => payload,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Some(file) = payload.file else {
         return json_error(StatusCode::BAD_REQUEST, "no file");
@@ -240,7 +240,7 @@ pub(super) async fn api_upload_managed_file(
 
     let payload = match parse_upload_multipart(multipart).await {
         Ok(payload) => payload,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Some(file) = payload.file else {
         return json_error(StatusCode::BAD_REQUEST, "no file");
@@ -786,7 +786,7 @@ pub(super) async fn move_workspace_entry(
 
 pub(super) async fn parse_upload_multipart(
     mut multipart: Multipart,
-) -> Result<UploadMultipartPayload, Response> {
+) -> Result<UploadMultipartPayload, Box<Response>> {
     let mut payload = UploadMultipartPayload {
         session_name: None,
         original_name: None,
@@ -798,7 +798,12 @@ pub(super) async fn parse_upload_multipart(
         let field = match next_field {
             Ok(Some(field)) => field,
             Ok(None) => break,
-            Err(error) => return Err(json_error(StatusCode::BAD_REQUEST, &error.to_string())),
+            Err(error) => {
+                return Err(Box::new(json_error(
+                    StatusCode::BAD_REQUEST,
+                    &error.to_string(),
+                )));
+            }
         };
 
         let field_name = field.name().unwrap_or_default().to_string();
@@ -807,7 +812,10 @@ pub(super) async fn parse_upload_multipart(
                 let value = match field.text().await {
                     Ok(value) => value,
                     Err(error) => {
-                        return Err(json_error(StatusCode::BAD_REQUEST, &error.to_string()));
+                        return Err(Box::new(json_error(
+                            StatusCode::BAD_REQUEST,
+                            &error.to_string(),
+                        )));
                     }
                 };
                 payload.session_name = Some(value);
@@ -816,7 +824,10 @@ pub(super) async fn parse_upload_multipart(
                 let value = match field.text().await {
                     Ok(value) => value,
                     Err(error) => {
-                        return Err(json_error(StatusCode::BAD_REQUEST, &error.to_string()));
+                        return Err(Box::new(json_error(
+                            StatusCode::BAD_REQUEST,
+                            &error.to_string(),
+                        )));
                     }
                 };
                 payload.original_name = Some(value);
@@ -826,7 +837,10 @@ pub(super) async fn parse_upload_multipart(
                 let bytes = match field.bytes().await {
                     Ok(bytes) => bytes,
                     Err(error) => {
-                        return Err(json_error(StatusCode::BAD_REQUEST, &error.to_string()));
+                        return Err(Box::new(json_error(
+                            StatusCode::BAD_REQUEST,
+                            &error.to_string(),
+                        )));
                     }
                 };
                 payload.file = Some(UploadMultipartFile {
@@ -837,7 +851,10 @@ pub(super) async fn parse_upload_multipart(
             }
             _ => {
                 if let Err(error) = field.bytes().await {
-                    return Err(json_error(StatusCode::BAD_REQUEST, &error.to_string()));
+                    return Err(Box::new(json_error(
+                        StatusCode::BAD_REQUEST,
+                        &error.to_string(),
+                    )));
                 }
             }
         }

@@ -1456,6 +1456,18 @@ test('rust nexus-server serves version and upload routes', async (t) => {
     url: `${latestRepo}#v4.6.0`,
   })
 
+  for (const route of ['/api/upload', '/api/files/upload']) {
+    const malformedResponse = await fetch(`http://127.0.0.1:${port}${route}`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'multipart/form-data; boundary=nexus-test' },
+      body: '--nexus-test\r\nContent-Disposition: form-data; name="file"; filename="bad.txt"\r\n\r\nincomplete',
+    })
+    assert.equal(malformedResponse.status, 400)
+    const malformedError = await malformedResponse.json()
+    assert.equal(typeof malformedError.error, 'string')
+    assert.ok(malformedError.error.length > 0)
+  }
+
   const workspaceUploadForm = new FormData()
   workspaceUploadForm.set('session_name', 'review')
   workspaceUploadForm.set('file', new Blob(['workspace-bytes']), 'report?.txt')
