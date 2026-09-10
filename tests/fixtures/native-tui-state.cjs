@@ -10,6 +10,7 @@ process.stdin.on('data', data => {
     if (byte === 107) process.stdout.write('\u0301_JOINED')
     if (byte === 105) process.stdout.write('\x1b[9;1HINSERT_TAIL\x1b[9;1H\x1b[1m\x1b[4h中')
     if (byte === 111) process.stdout.write('\x1b[4l\x1b[0m')
+    if (byte === 98) process.stdout.write('\x1b]52;c;' + Buffer.from('Clipboard 中文🙂 e\u0301\n'.repeat(400)).toString('base64') + '\x07')
     if (byte === 120) process.exit(0)
   }
 })

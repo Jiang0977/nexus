@@ -1,5 +1,4 @@
 import test from 'node:test'
-import { stripVTControlCharacters } from 'node:util'
 import assert from 'node:assert/strict'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -531,12 +530,16 @@ test('real rust pty runtime gives native PTYs an xterm UTF-8 environment', { ski
 
   const baseDir = mkdtempSync(join(tmpdir(), 'nexus-native-pty-env-'))
   const scriptPath = join(baseDir, 'print-env.sh')
+  const environmentPath = join(baseDir, 'environment.txt')
   writeFileSync(scriptPath, `#!/bin/sh
+{
 printf 'TERM=%s\\n' "$TERM"
 printf 'COLORTERM=%s\\n' "$COLORTERM"
 printf 'LANG=%s\\n' "$LANG"
 printf 'LC_ALL=%s\\n' "$LC_ALL"
 printf 'LC_CTYPE=%s\\n' "$LC_CTYPE"
+} > '${environmentPath}'
+cat '${environmentPath}'
 `, { mode: 0o755 })
 
   const client = createPtyBrokerRustClient({
@@ -583,7 +586,11 @@ printf 'LC_CTYPE=%s\\n' "$LC_CTYPE"
     await delay(20)
   }
 
-  output = stripVTControlCharacters(output).split('\n').map(line => line.trimEnd()).join('\n')
+  // The PTY may already have exited before attach, yielding an ANSI checkpoint
+  // with REP rather than raw lines. This test verifies the child's environment,
+  // not rendering; a control-stripper cannot decode REP. Chrome covers rendering.
+  assert.ok(output.includes('LC_CTYPE='), 'child output reached the terminal')
+  output = readFileSync(environmentPath, 'utf8')
   assert.match(output, /^TERM=xterm-256color\r?$/m)
   assert.match(output, /^COLORTERM=truecolor\r?$/m)
   assert.match(output, /^LANG=C\.UTF-8\r?$/m)

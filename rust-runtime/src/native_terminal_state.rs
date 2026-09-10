@@ -2,7 +2,7 @@
 //! both buffers, saved cursor, margins, tabs, attributes and parser continuation.
 //! avt deliberately excludes input handling, so negotiated input modes are
 //! observed separately with vte (never application names or output keywords).
-use std::collections::BTreeSet;
+use std::{borrow::Cow, collections::BTreeSet};
 
 pub(crate) const MAX_COLS: u16 = 500;
 pub(crate) const MAX_ROWS: u16 = 200;
@@ -30,15 +30,42 @@ impl NativeTerminalState {
         if self.modes.overflow {
             return;
         }
-        for byte in data.bytes() {
-            if byte == 0x1b || (!self.modes.pending.is_empty() && byte >= 0x20) {
+        // vte consumes UTF-8 bytes while avt/xterm also recognize Unicode C1
+        // OSC/ST characters. Normalize only for the side-effect observer.
+        let observed = if data.contains(['\u{9d}', '\u{9c}']) {
+            Cow::Owned(data.replace('\u{9d}', "\x1b]").replace('\u{9c}', "\x1b\\"))
+        } else {
+            Cow::Borrowed(data)
+        };
+        for byte in observed.bytes() {
+            if byte == 0x1b {
+                self.modes.pending.clear();
+                self.modes.pending.push(byte);
+            } else if !self.modes.pending.is_empty()
+                && byte >= 0x20
+                && !self.modes.pending.starts_with(b"\x1b]52;")
+            {
                 if self.modes.pending.len() >= 4096 {
                     self.modes.overflow = true;
                     return;
                 }
                 self.modes.pending.push(byte);
+                if byte == b';'
+                    && let Some(id) = self.modes.pending.strip_prefix(b"\x1b]")
+                    && std::str::from_utf8(&id[..id.len() - 1])
+                        .ok()
+                        .and_then(|s| s.parse::<u16>().ok())
+                        == Some(52)
+                {
+                    self.modes.pending = b"\x1b]52;".to_vec();
+                }
             }
             self.parser.advance(&mut self.modes, &[byte]);
+            // ESC terminates OSC but also starts the next parser state. Keep
+            // that state if a PTY chunk stops halfway through the ST terminator.
+            if byte == 0x1b && self.modes.pending.is_empty() {
+                self.modes.pending.push(byte);
+            }
         }
         if !self.modes.overflow {
             self.terminal.feed_str(data);
@@ -76,7 +103,13 @@ impl NativeTerminalState {
             result.push('\x07');
         }
         result.push_str(&self.terminal.dump_screen());
-        result.push_str(&String::from_utf8_lossy(&self.modes.pending));
+        if self.modes.pending.starts_with(b"\x1b]52;") {
+            // Consume a live suffix after mid-copy attach, without retaining
+            // or replaying clipboard data. '!' makes it invalid base64.
+            result.push_str("\x1b]52;c;!");
+        } else {
+            result.push_str(&String::from_utf8_lossy(&self.modes.pending));
+        }
         if result.len() > 8 * 1024 * 1024 {
             return Err("Native terminal checkpoint exceeds 8 MiB; create a new channel".into());
         }
@@ -228,6 +261,41 @@ mod tests {
         assert!(snapshot.ends_with("\x1b]2;part"));
         state.feed("ial\x07");
         assert!(state.snapshot().unwrap().contains("\x1b]0;partial\x07"));
+    }
+
+    #[test]
+    fn clipboard_payload_is_transient_even_when_large_or_attached_mid_sequence() {
+        let mut state = NativeTerminalState::new(80, 24);
+        state.feed("before\x1b]52;c;");
+        state.feed(&"YQ==".repeat(20000));
+        let snapshot = state
+            .snapshot()
+            .expect("clipboard payload must not exhaust recovery state");
+        assert!(!snapshot.contains("YQ=="));
+        assert!(
+            snapshot.ends_with("\x1b]52;c;!"),
+            "mid-copy attach must consume, but never execute, the remaining clipboard payload"
+        );
+        state.feed("\x1b");
+        assert!(state.snapshot().unwrap().ends_with('\x1b'));
+        state.feed("\\after");
+        let snapshot = state.snapshot().unwrap();
+        assert!(!snapshot.contains("52;"));
+        assert!(snapshot.contains("beforeafter"));
+    }
+
+    #[test]
+    fn clipboard_c1_and_zero_padded_identifiers_are_not_replayed() {
+        for prefix in ["\u{9d}52;c;", "\x1b]052;c;"] {
+            let mut state = NativeTerminalState::new(80, 24);
+            state.feed(prefix);
+            state.feed(&"YQ==".repeat(20000));
+            assert!(state.snapshot().unwrap().ends_with("\x1b]52;c;!"));
+            state.feed("\u{9c}after");
+            let snapshot = state.snapshot().unwrap();
+            assert!(!snapshot.contains("52;"));
+            assert!(snapshot.contains("after"));
+        }
     }
 
     #[test]

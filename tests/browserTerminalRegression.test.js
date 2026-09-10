@@ -1736,6 +1736,86 @@ test('browser regression: closing a sidebar channel clears its split pane assign
   )
 })
 
+for (const mobile of [false, true]) {
+test(`browser regression: OSC52 ${mobile ? 'mobile' : 'desktop'} writes local clipboard, denies reads and offers permission fallback`, { timeout: 60000 }, async t => {
+  const { page, pageErrors, password, port } = await launchBrowserApp(t, { mobile })
+  await page.addInitScript(installWebSocketCapture)
+  await page.addInitScript(() => localStorage.setItem('nexus_sidebar_collapsed', 'false'))
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `http://127.0.0.1:${port}` })
+  await loginAndWaitForTerminal(page, port, password)
+  let windowIndex = 0
+  if (!mobile) {
+    await page.locator('[draggable="true"]').filter({ hasText: 'shell' }).first().dragTo(page.getByTestId('terminal-pane-pane-1'))
+    windowIndex = 1
+  }
+  const terminal = page.locator('.xterm-screen').first()
+  await terminal.waitFor()
+  await page.waitForFunction(() => window.__nexusWsInstances?.some(socket => socket.readyState === 1))
+  if (mobile) windowIndex = await page.evaluate(() => Number(new URL(window.__nexusWsInstances.find(socket => socket.readyState === 1).url).searchParams.get('window')))
+  await page.evaluate(() => {
+    window.__copyCalls = []
+    window.__clipboardReject = false
+    const write = navigator.clipboard.writeText.bind(navigator.clipboard)
+    navigator.clipboard.writeText = text => {
+      window.__copyCalls.push(text)
+      return window.__clipboardReject ? Promise.reject(new DOMException('denied', 'NotAllowedError')) : write(text)
+    }
+    navigator.clipboard.readText = new Proxy(navigator.clipboard.readText, { apply(target, receiver, args) {
+      window.__clipboardReads = (window.__clipboardReads || 0) + 1
+      return Reflect.apply(target, receiver, args)
+    } })
+  })
+  const box = await terminal.boundingBox()
+  await page.mouse.click(box.x + 20, box.y + 10)
+  const text = 'OSC52 中文🙂 e\u0301\n  preserve whitespace  '
+  const payload = Buffer.from(text).toString('base64')
+  await dispatchCapturedWebSocketMessages(page, `window=${windowIndex}`, ['\x1b]5', '2;c;', payload.slice(0, 7), payload.slice(7), '\x1b', '\\'])
+  if (mobile) await page.getByRole('button', { name: '点击复制', exact: true }).click()
+  await page.waitForFunction(() => window.__copyCalls.length === 1)
+  await page.getByText('已复制到本机剪贴板', { exact: true }).waitFor()
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), text)
+  const reads = await page.evaluate(() => window.__clipboardReads)
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await dispatchCapturedWebSocketMessages(page, `window=${windowIndex}`, ['\x1b]52;c;?\x07', '\x1b]52;c;!invalid\x07', '\x1b]52;p;YQ==\x07'])
+  assert.equal(await page.evaluate(() => window.__clipboardReads), reads)
+  assert.equal(await page.evaluate(() => window.__copyCalls.length), 1)
+  assert.equal(await page.evaluate(() => window.__nexusWsSends.some(({ data }) => String(data).includes('\x1b]52;'))), false)
+  await page.evaluate(() => { window.__clipboardReject = true })
+  await page.mouse.click(box.x + 20, box.y + 80)
+  await dispatchCapturedWebSocketMessage(page, `window=${windowIndex}`, '\x1b]52;c;ZmFsbGJhY2s=\x07')
+  await page.getByRole('button', { name: '点击复制', exact: true }).waitFor()
+  // Terminal output continues while permission is denied.
+  await dispatchCapturedWebSocketMessage(page, `window=${windowIndex}`, 'OSC52_OUTPUT_CONTINUES')
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('OSC52_OUTPUT_CONTINUES'))
+  await page.evaluate(() => { window.__clipboardReject = false })
+  await page.getByRole('button', { name: '点击复制', exact: true }).click()
+  await page.getByText('已复制到本机剪贴板', { exact: true }).waitFor()
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'fallback')
+  const beforeBackground = await page.evaluate(() => {
+    document.activeElement?.blur()
+    return window.__copyCalls.length
+  })
+  await dispatchCapturedWebSocketMessage(page, `window=${windowIndex}`, '\x1b]52;c;YmFja2dyb3VuZA==\x07')
+  await page.getByRole('button', { name: '点击复制', exact: true }).waitFor()
+  assert.equal(await page.evaluate(() => window.__copyCalls.length), beforeBackground, 'unfocused pane must not overwrite clipboard')
+  await page.evaluate(() => window.__nexusWsInstances.find(socket => socket.readyState === 1).close())
+  await page.getByRole('button', { name: '点击复制', exact: true }).waitFor({ state: 'hidden' })
+  await page.evaluate(() => {
+    navigator.clipboard.writeText = () => new Promise(resolve => { window.__finishClipboardWrite = resolve })
+  })
+  await page.mouse.click(box.x + 20, box.y + 80)
+  await dispatchCapturedWebSocketMessage(page, `window=${windowIndex}`, '\x1b]52;c;ZGVsYXllZA==\x07')
+  if (mobile) await page.getByRole('button', { name: '点击复制', exact: true }).click()
+  await page.waitForFunction(() => Boolean(window.__finishClipboardWrite))
+  const socketCount = await page.evaluate(() => window.__nexusWsInstances.length)
+  await page.evaluate(() => window.__nexusWsInstances.find(socket => socket.readyState === 1).close())
+  await page.waitForFunction(count => window.__nexusWsInstances.length > count, socketCount)
+  await page.evaluate(async () => { window.__finishClipboardWrite(); await new Promise(resolve => setTimeout(resolve, 0)) })
+  assert.equal(await page.locator('[data-terminal-clipboard]').count(), 0, 'late permission completion must not revive stale connection UI')
+  assert.deepEqual(pageErrors, [])
+})
+}
+
 test('browser regression: desktop split panes can copy selected terminal text', { timeout: 120000 }, async (t) => {
   const { getLogs, page, pageErrors, password, port } = await launchBrowserApp(t)
   await page.addInitScript(() => {

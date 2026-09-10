@@ -15,6 +15,7 @@ import { bindTerminalInput } from './terminalInput'
 import { bindTerminalViewportMetrics } from './terminalViewportMetrics'
 import { useTerminalScrollMode } from './useTerminalScrollMode'
 import { configureTerminalUnicode } from './terminalUnicode'
+import { bindTerminalOsc52 } from './terminalOsc52'
 import {
   createSgrWheelReport,
   shouldForwardTerminalWheelToApplication,
@@ -44,6 +45,7 @@ export function useTerminalPaneRuntime({
   const fitAddonRef = useRef<FitAddon | null>(null)
   const termRef = useRef<XTerm | null>(null)
   const wsRef = useRef<TerminalSocket | null>(null)
+  const clipboardRef = useRef<ReturnType<typeof bindTerminalOsc52> | null>(null)
   const userScrolledRef = useRef(false)
   const userScrollHoldUntilRef = useRef(0)
   const lastContainerSizeRef = useRef({ w: 0, h: 0 })
@@ -176,6 +178,8 @@ export function useTerminalPaneRuntime({
     termRef.current = term
     fitAddonRef.current = fitAddon
     term.open(container)
+    const clipboard = bindTerminalOsc52(term, container)
+    clipboardRef.current = clipboard
     const disposeViewportMetrics = bindTerminalViewportMetrics(term, container)
 
     const viewport = container.querySelector('.xterm-viewport') as HTMLElement | null
@@ -261,6 +265,8 @@ export function useTerminalPaneRuntime({
       containerEl.removeEventListener('copy', onCopy)
       disposeTerminalInput()
       disposeViewportMetrics()
+      clipboard.dispose()
+      clipboardRef.current = null
       term.dispose()
       termRef.current = null
       fitAddonRef.current = null
@@ -313,6 +319,7 @@ export function useTerminalPaneRuntime({
       loadingDelayMs: 250,
       session,
       setSocket: (socket) => {
+        clipboardRef.current?.reset()
         wsRef.current = socket
       },
       showLoadingImmediately: true,

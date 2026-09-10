@@ -228,6 +228,39 @@ try {
   writeFileSync(join(evidence, 'login-upload.log'), uploadOutput)
   assert.equal(uploadExit, 0, 'real login/upload/terminal path smoke')
   checks.push('real_login_upload_native_shell_websocket')
+  if (process.argv.includes('--clipboard-smoke')) {
+    await desktop.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base })
+    await desktop.bringToFront()
+    await desktop.evaluate(() => navigator.clipboard.writeText('NEXUS_CLIPBOARD_BEFORE_COPY'))
+    await desktop.evaluate(() => {
+      window.__osc52Writes = 0
+      const write = navigator.clipboard.writeText.bind(navigator.clipboard)
+      navigator.clipboard.writeText = text => { window.__osc52Writes++; return write(text) }
+    })
+    const box = await desktop.locator('.xterm-screen').first().boundingBox()
+    await desktop.mouse.click(box.x + 20, box.y + 20)
+    await desktop.keyboard.press('b')
+    const expected = 'Clipboard 中文🙂 e\u0301\n'.repeat(400)
+    await desktop.waitForFunction(async expected => await navigator.clipboard.readText() === expected, expected)
+    await desktop.waitForFunction(() => window.__osc52Writes > 0)
+    assert.equal(await desktop.evaluate(() => window.__osc52Writes), 1, 'only the locally focused pane may write automatically')
+    const before = await desktop.evaluate(() => window.__nativeSockets.length)
+    await desktop.evaluate(() => window.__nativeSockets.find(socket => socket.readyState === 1).close())
+    await desktop.waitForFunction(count => window.__nativeSockets.length > count && window.__nativeSockets.some(socket => socket.readyState === 1 && socket.__controls.some(control => control.replayPolicy === 'native-snapshot')), before)
+    await desktop.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('FRAME_READY_1'))
+    assert.equal(await desktop.evaluate(() => window.__osc52Writes), 1, 'native reconnect must not execute completed clipboard effects')
+    await desktop.evaluate(() => navigator.clipboard.writeText('NEXUS_CLIPBOARD_SENTINEL'))
+    await desktop.reload()
+    if (await desktop.locator('input[type=password]').isVisible()) {
+      await desktop.locator('input[type=password]').fill(password)
+      await desktop.locator('button[type=submit]').click()
+    }
+    await desktop.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('FRAME_READY_1'))
+    assert.equal(await desktop.evaluate(() => navigator.clipboard.readText()), 'NEXUS_CLIPBOARD_SENTINEL', 'refresh must not repeat history copies')
+    assert.equal(await desktop.locator('[data-terminal-clipboard]').count(), 0)
+    await dismissSetup(desktop)
+    checks.push('real_native_osc52_utf8_long_copy_no_replay_or_split_duplicate')
+  }
   if (process.argv.includes('--cli-smoke')) {
     // Startup/render only: no prompt, inference, login or provider mutation.
     await mobile.context().close()
@@ -240,20 +273,48 @@ try {
     await delay(1000)
     for (const cli of ['codex', 'grok']) {
       const marker = `NEXUS_${cli.toUpperCase()}_STARTUP_DONE`
-      await sendCliInput(`clear; timeout --signal=INT --kill-after=3s 25s ${cli}; printf '\\n${marker}\\n'\r`)
+      const command = cli === 'grok' ? `env GROK_COPY_FILE=${quote(join(evidence, 'grok-copy.txt'))} grok` : cli
+      await sendCliInput(`clear; timeout --signal=INT --kill-after=3s 60s ${command}; printf '\\n${marker}\\n'\r`)
       await desktop.waitForFunction(cli => {
         const text = document.querySelector('.xterm-rows')?.textContent || ''
         return cli === 'codex' ? /OpenAI Codex|Do you trust the contents/i.test(text) : /Grok Build|Welcome to Grok|grok[ -]1\./i.test(text)
       }, cli, { timeout: 20000 })
       await desktop.screenshot({ path: join(evidence, `${cli}-startup.png`), fullPage: true })
+      let copiedGrokId = null
+      if (cli === 'grok' && process.argv.includes('--clipboard-smoke')) {
+        await sendCliInput('/session-info\r')
+        await desktop.waitForFunction(() => /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(document.querySelector('.xterm-rows')?.textContent || ''))
+        const copiedId = await desktop.evaluate(() => document.querySelector('.xterm-rows').textContent.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)[0])
+        await desktop.evaluate(() => navigator.clipboard.writeText('NEXUS_BEFORE_GROK_COPY'))
+        await desktop.evaluate(() => {
+          window.__grokClipboardWrites = []
+          const write = navigator.clipboard.writeText.bind(navigator.clipboard)
+          navigator.clipboard.writeText = text => { window.__grokClipboardWrites.push(text); return write(text) }
+        })
+        const point = await desktop.evaluate(id => {
+          const row = [...document.querySelector('.xterm-rows').children].find(row => row.textContent.includes(id))
+          const box = row.getBoundingClientRect()
+          const cols = window.__nativeSockets.filter(socket => socket.readyState === 1).flatMap(socket => socket.__controls).filter(control => control.cols).at(-1).cols
+          return { x: box.x + (row.textContent.indexOf(id) + 4) * box.width / cols, y: box.y + box.height / 2 }
+        }, copiedId)
+        await desktop.mouse.click(point.x, point.y)
+        await desktop.waitForFunction(async id => await navigator.clipboard.readText() === id, copiedId, { timeout: 10000 })
+        await desktop.waitForFunction(() => window.__grokClipboardWrites.length > 0, null, { timeout: 10000 })
+        assert.deepEqual(await desktop.evaluate(() => window.__grokClipboardWrites), [copiedId], 'copy must pass through browser OSC52 handler, not the server OS clipboard')
+        await desktop.screenshot({ path: join(evidence, 'grok-osc52-copy.png'), fullPage: true })
+        checks.push('real_grok_session_info_mouse_copy_to_browser_clipboard')
+        copiedGrokId = copiedId
+      }
       const beforeCliReconnect = await desktop.evaluate(() => window.__nativeSockets.length)
       await desktop.evaluate(() => window.__nativeSockets.find(socket => socket.readyState === 1).close())
       await desktop.waitForFunction(count => window.__nativeSockets.length > count && window.__nativeSockets.some(socket => socket.readyState === 1 && socket.__controls.some(control => control.replayPolicy === 'native-snapshot')), beforeCliReconnect)
-      await desktop.waitForFunction(cli => {
+      await desktop.waitForFunction(({ cli, copiedGrokId }) => {
         const text = document.querySelector('.xterm-rows')?.textContent || ''
+        if (copiedGrokId) return text.includes(copiedGrokId)
         return cli === 'codex' ? /OpenAI Codex|Do you trust the contents/i.test(text) : /Grok Build|Welcome to Grok|grok[ -]1\./i.test(text)
-      }, cli)
-      await desktop.waitForFunction(marker => document.querySelector('.xterm-rows')?.textContent?.includes(marker), marker, { timeout: 35000 })
+      }, { cli, copiedGrokId })
+      await sendCliInput('\x03\x03')
+      await desktop.waitForFunction(marker => document.querySelector('.xterm-rows')?.textContent?.includes(marker), marker, { timeout: 65000 })
       checks.push(`${cli}_real_startup_screen_and_reconnect_without_inference`)
     }
   }

@@ -16,6 +16,7 @@ import { bindTerminalInput } from './terminalInput'
 import { bindTerminalViewportMetrics } from './terminalViewportMetrics'
 import { useTerminalScrollMode } from './useTerminalScrollMode'
 import { configureTerminalUnicode } from './terminalUnicode'
+import { bindTerminalOsc52 } from './terminalOsc52'
 import {
   createSgrWheelReport,
   shouldForwardTerminalWheelToApplication,
@@ -72,6 +73,7 @@ export function useTerminalRuntime({
   const containerRef = useRef<HTMLDivElement>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const wsRef = useRef<TerminalSocket | null>(null)
+  const clipboardRef = useRef<ReturnType<typeof bindTerminalOsc52> | null>(null)
   const userScrolledRef = useRef(false)
   const lastContainerSizeRef = useRef({ w: 0, h: 0 })
   const keyboardVisibleRef = useRef(false)
@@ -228,6 +230,8 @@ export function useTerminalRuntime({
     const containerEl: HTMLDivElement = maybeContainerEl
 
     term.open(containerEl)
+    const clipboard = bindTerminalOsc52(term, containerEl)
+    clipboardRef.current = clipboard
     const disposeViewportMetrics = bindTerminalViewportMetrics(term, containerEl)
     // Own terminal gestures; virtual xterm scrolling is not a browser pan.
     // Pinch zoom and horizontal channel swipes are handled below as well.
@@ -750,6 +754,8 @@ export function useTerminalRuntime({
       disposeTerminalInput()
       disposeViewportMetrics()
       scrollSubscription.dispose()
+      clipboard.dispose()
+      clipboardRef.current = null
       term.dispose()
       termRef.current = null
       fitAddonRef.current = null
@@ -810,6 +816,7 @@ export function useTerminalRuntime({
       loadingDelayMs: 300,
       session: activeTmuxSessionRef.current,
       setSocket: (socket) => {
+        clipboardRef.current?.reset()
         wsRef.current = socket
       },
       showLoadingImmediately: false,
