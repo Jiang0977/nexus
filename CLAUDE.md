@@ -12,9 +12,9 @@ Anchor: `docs/NORTH-STAR.md` — 修改任何文档前先对照锚点三原则
 | Backend | Rust `nexus-server` + Rust child runtimes |
 | Frontend | React / TypeScript source in `frontend/src/`; vendored static bundle in `frontend/dist/` |
 | Auth | JWT (30d) + bcrypt password hash |
-| Runtime | 宿主机（WSL2）直接运行，`start.sh` 默认拉起 Rust server |
+| Runtime | Linux 宿主机（含 WSL2）直接运行，`start.sh` 默认拉起 Rust server |
 | Config | `.env` 由 Rust `nexus-server` 读取 |
-| Persist | `./data/`（toolbar config、session configs、tasks、uploads、native registry） |
+| Persist | `./data/`（toolbar config、session configs、prompts、uploads、native registry） |
 
 ## Architecture Constraints
 
@@ -35,7 +35,7 @@ rust-runtime/src/bin/
   nexus-native-pty-supervisor.rs
   nexus-native-session.rs
 rust-runtime/tests/        # Rust integration tests for startup/setup/bundle paths
-data/                      # 持久化数据（toolbar、tasks、configs）
+data/                      # 持久化数据（toolbar、prompts、configs）
 public/
   sw.js                    # Service Worker（cache-first 静态资源）
   icon.svg                 # PWA 图标
@@ -50,9 +50,9 @@ docs/
 
 ## Agent Workflow Rules
 
-- **用 `/plan`**：涉及多文件改动、架构变更、新 API endpoint、PTY 行为变更
-- **用 `/tdd`**：新增工具栏按键逻辑、认证流程、API endpoint
-- **直接做**：单文件 UI 调整、样式修复、文档更新
+- 以 AGENTS.md 和当前用户授权为准；复杂或高风险改动先给简短计划。
+- 行为修复使用针对性复现/回归；普通文档修改不引入额外测试框架。
+- 验证与提交遵循 CONTRIBUTING.md；发布遵循 docs/RELEASING.md。
 
 ## Definition of Done
 
@@ -63,18 +63,10 @@ docs/
 
 ## Version Management
 
-**Source of truth: git tag**（`git describe --tags --abbrev=0`）
-
-发布流程：
-
-```bash
-git status
-git commit -am "chore: prepare release X.Y.Z"
-git tag vX.Y.Z
-git push && git push --tags
-```
-
-不要在代码、静态资源或文档里手工维护第二份版本号。
+发布步骤以 `docs/RELEASING.md` 为准。源码 checkout 通过 Git tag/status 报告版本；
+无 `.git` 的发行包通过生成的 `VERSION` 文件报告版本。打包前同步 root/frontend
+package.json 与 lockfile 版本，然后从经过检查的干净提交构建二进制及对应源码。
+不要用 `git commit -am` 遗漏新文件，也不要无差别推送所有历史标签。
 
 ## Git Commit Standard
 
@@ -84,12 +76,11 @@ type(scope): imperative subject ≤ 72 chars
 Body (optional, any language): explain why, not what.
 Bug fixes: explain root cause.
 
-Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
 Types: `feat` `fix` `docs` `refactor` `test` `chore` `style`
 
-Rules: English subject, imperative mood, no trailing period, blank line before body, **Co-Authored-By trailer required**.
+Rules: English subject, imperative mood, no trailing period, blank line before body, only add co-author trailers when they accurately describe the contribution.
 
 ## Code Standards
 

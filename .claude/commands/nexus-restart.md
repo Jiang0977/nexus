@@ -1,4 +1,1 @@
-Restart the Nexus systemd user service and show status.
-```bash
-systemctl --user restart nexus && systemctl --user status nexus --no-pager
-```
+After deployment authorization, run `bash scripts/restart-nexus-service.sh` from the actual installation. It detects user/system scope and checks HTTP reachability. If both scopes exist, set NEXUS_SERVICE_SCOPE explicitly. See docs/DEPLOYMENT-RUNBOOK.md.
