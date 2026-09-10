@@ -9,7 +9,7 @@ export function TerminalScrollModeSelect({ value, onChange }: Props) {
   return (
     <select
       aria-label="终端滚动模式"
-      title="标准鼠标模式始终优先；无标准模式的 TUI 可临时选择应用滚动。切换通道或刷新后恢复自动。"
+      title="标准鼠标模式优先，其次是服务端显式通道配置；未配置时可临时手动选择。临时选择在切换通道或刷新后重置。"
       className="h-7 max-w-[7rem] shrink-0 rounded border border-nexus-border bg-nexus-bg px-1 text-xs text-nexus-text-2 focus:border-nexus-accent"
       value={value}
       onClick={(event) => event.stopPropagation()}

@@ -6,6 +6,66 @@ const stateControl = (overrides = {}) => new TextEncoder().encode(JSON.stringify
   type: 'terminal-state', version: 1, replayPolicy: 'tmux-redraw', ...overrides,
 })).buffer
 
+const nativeControl = (overrides = {}) => stateControl({ type: 'native-state', replayPolicy: 'native-snapshot', unicodeVersion: '11', cols: 80, rows: 24, ...overrides })
+
+test('native checkpoints serialize geometry and snapshots behind pending writes', () => {
+  const h = createHarness(), socket = h.sockets[0]
+  socket.readyState = 1
+  socket.onopen()
+  socket.onmessage({ data: nativeControl() })
+  socket.onmessage({ data: '\x1bcsnapshot' })
+  socket.onmessage({ data: 'delta' })
+  socket.onmessage({ data: nativeControl({ cols: 60, rows: 20 }) })
+  socket.onmessage({ data: '\x1bcresized' })
+  assert.deepEqual(h.writes, ['\x1bcsnapshot'])
+  assert.deepEqual(h.states.filter(s => s[0] === 'dimensions'), [['dimensions', 80, 24]])
+  h.runWriteCallback(0)
+  assert.deepEqual(h.writes, ['\x1bcsnapshot', 'delta'])
+  h.runWriteCallback(1)
+  assert.deepEqual(h.writes, ['\x1bcsnapshot', 'delta', '\x1bcresized'])
+  assert.deepEqual(h.states.filter(s => s[0] === 'dimensions'), [['dimensions', 80, 24], ['dimensions', 60, 20]])
+  socket.onmessage({ data: 'stale queued output' })
+  socket.onclose({ code: 1006, reason: '' })
+  h.runWriteCallback(2)
+  assert.equal(h.writes.includes('stale queued output'), false)
+  h.connection.dispose()
+})
+
+test('invalid, duplicate pending and mixed native controls fail closed', () => {
+  for (const frames of [[nativeControl({ unicodeVersion: '6' })], [nativeControl({ cols: 501 })], [nativeControl({ rows: 0 })], [nativeControl(), nativeControl()], [stateControl(), nativeControl()], ['text', nativeControl()]]) {
+    const h = createHarness(), socket = h.sockets[0]
+    socket.readyState = 1
+    socket.onopen()
+    frames.forEach(data => socket.onmessage({ data }))
+    assert.equal(socket.closeCode, 4002)
+    h.connection.dispose()
+  }
+})
+
+test('native render overload is bounded and stale queued output is discarded', () => {
+  const h = createHarness(), socket = h.sockets[0]
+  socket.readyState = 1
+  socket.onopen()
+  socket.onmessage({ data: nativeControl({ scrollProfile: 'application-sgr' }) })
+  socket.onmessage({ data: 'pending' })
+  socket.onmessage({ data: 'x'.repeat(32 * 1024 * 1024) })
+  assert.equal(socket.closeCode, 1013)
+  socket.onmessage({ data: 'must be discarded' })
+  h.runWriteCallback(0)
+  assert.deepEqual(h.writes, ['pending'])
+  assert.ok(h.states.some(state => state[0] === 'profile' && state[1] === 'application-sgr'))
+  h.connection.dispose()
+})
+
+test('unknown channel capability is rejected rather than guessed', () => {
+  const h = createHarness(), socket = h.sockets[0]
+  socket.readyState = 1
+  socket.onopen()
+  socket.onmessage({ data: nativeControl({ scrollProfile: 'grok' }) })
+  assert.equal(socket.closeCode, 4002)
+  h.connection.dispose()
+})
+
 test('tmux reconnect resets before redraw, preserves JSON-looking output and rejects stale metadata', () => {
   let geometry = { cols: 100, rows: 36 }
   const harness = createHarness({ dimensions: () => geometry })
@@ -136,6 +196,12 @@ function createHarness({ dimensions = () => ({ cols: 120, rows: 30 }) } = {}) {
     },
     reset() {
       states.push(['reset'])
+    },
+    restoreDimensions(cols, rows) {
+      states.push(['dimensions', cols, rows])
+    },
+    setScrollProfile(profile) {
+      if (profile) states.push(['profile', profile])
     },
     fit() {},
     dimensions,

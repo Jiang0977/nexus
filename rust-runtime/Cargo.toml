@@ -35,6 +35,8 @@ name = "nexus-setup"
 path = "src/bin/nexus-setup.rs"
 
 [dependencies]
+avt = { path = "vendor/avt" }
+vte = { version = "0.15", default-features = false }
 getrandom = "0.2"
 anyhow = "1"
 axum = { version = "0.8", features = ["json", "http1", "multipart", "ws"] }

@@ -24,6 +24,8 @@
 - Codex profile channel 依赖 `rust-runtime/target/release/nexus-codex-home` 物化隔离 HOME；它和 server/runtime binaries 一样属于部署必构建产物。
 - native backend 依赖 `nexus-native-pty-supervisor`、`nexus-native-session`、`data/native-sessions/` 和 `nexus-native-pty.service`；部署脚本默认构建 native binaries 并安装 `~/.local/bin/nexus-native-session`。
 - 部署脚本默认不重启正在运行的 `nexus-native-pty.service`，以免中断 native sessions；需要刷新 supervisor 进程时显式传 `--restart-native-pty`。
+- Native checkpoint / Unicode 策略更新必须同时更新浏览器与 supervisor：先运行 `npm run smoke:native`，确认可中断 native 程序后执行 `npm run deploy:service -- --frontend --restart-native-pty`。仅重启 nexus 不会刷新旧 supervisor 内存中的状态引擎。
+- 部署后运行 `npm run smoke:native -- --live`，使用真实 HTTPS、现有本地登录 secret 和自建临时项目验证、清理。可加 `--cli-smoke` 验证本机 Codex/Grok 启动与重连，不发送推理请求。详情及限制见 [Native checkpoint 设计](designs/native-terminal-checkpoint.md)。
 - 所以发布前仍建议显式重建 Rust release binary，并确认 `frontend/dist/` 仍存在。
 
 终端 WebSocket 默认由 server 每 10 秒发送 Ping，以维持经过反向代理、Tailscale Serve 或移动网络的空闲连接。可在 `.env` 设置其他正数毫秒值：

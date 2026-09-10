@@ -162,7 +162,7 @@
 3. `session_ws.rs` 默认每 10 秒发送 Ping，并处理浏览器 Close 握手
 4. `nexus-server` 把请求转给 `nexus-pty-runtime`
 5. PTY runtime attach 到目标 project/channel
-6. tmux backend 每连接创建独立 client PTY/grouped session 链接原 `session:window`，由 tmux 完整重绘而不是重放输出尾部；native backend 下连接 Rust PTY/supervisor，完整状态恢复仍待实现
+6. tmux backend 每连接创建独立 client PTY/grouped session 链接原 `session:window`，由 tmux 完整重绘而不是重放输出尾部；native backend 连接 Rust PTY/supervisor，通过有界状态引擎及 `native-state` 几何握手恢复 checkpoint，详见 [native 设计](designs/native-terminal-checkpoint.md)
 7. stdio child 与 supervisor socket 都使用 `child_runtime_protocol` 的 JSON-line contract
 8. 浏览器和后端 PTY 双向 I/O；全屏 TUI 的滚轮或触摸滑动可由 `terminalApplicationScroll.ts` 编码回应用
 9. tmux 客户端 EOF 和广播丢包使对应 WebSocket 以可重试状态关闭并清理；新连接先收版本化二进制 `terminal-state` 再收文本重绘，旧客户端/native 保持兼容

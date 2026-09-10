@@ -8,6 +8,8 @@ export interface TerminalConnectionAdapter {
   setLive(): void
   setError(message: string): void
   reset(): void
+  restoreDimensions(cols: number, rows: number): void
+  setScrollProfile(profile: 'auto' | 'application-sgr' | null): void
   fit(): void
   dimensions(): { cols: number; rows: number } | null
   write(data: string, callback?: () => void): void
@@ -117,9 +119,16 @@ export function connectTerminal({
   }
 
   function createSocket() {
+    adapter.setScrollProfile(null)
     let closed = false
     let receivedOutput = false
     let receivedState = false
+    let nativeMode = false
+    let pendingNative: { cols: number; rows: number } | null = null
+    const nativeWrites: { data: string; geometry: { cols: number; rows: number } | null }[] = []
+    let writingNative = false
+    let queuedChars = 0
+    let renderOverflow = false
     let lastResize: { cols: number; rows: number } | null = null
     adapter.fit()
     const dimensions = adapter.dimensions()
@@ -129,6 +138,22 @@ export function connectTerminal({
     nextSocket.binaryType = 'arraybuffer'
     socket = nextSocket
     setSocket(nextSocket)
+
+    function drainNativeWrites() {
+      if (writingNative || renderOverflow || !isActiveSocket(nextSocket, closed)) return
+      const next = nativeWrites.shift()
+      if (!next) return
+      writingNative = true
+      if (next.geometry) adapter.restoreDimensions(next.geometry.cols, next.geometry.rows)
+      const autoScroll = adapter.shouldAutoScroll()
+      adapter.write(next.data, () => {
+        queuedChars -= next.data.length
+        writingNative = false
+        if (!isActiveSocket(nextSocket, closed)) return
+        if (autoScroll && adapter.shouldAutoScroll()) adapter.scrollToBottom()
+        drainNativeWrites()
+      })
+    }
 
     nextSocket.onopen = () => {
       if (!isActiveSocket(nextSocket, closed) || nextSocket.readyState !== environment.openReadyState) return
@@ -145,6 +170,9 @@ export function connectTerminal({
       lastResize = sendResize(nextSocket, adapter.dimensions(), lastResize)
       environment.requestFrame(() => {
         if (!isActiveSocket(nextSocket, closed)) return
+        // A shared native PTY may be smaller than this view. Its checkpoint
+        // already supplied authoritative dimensions; don't undo them here.
+        if (nativeMode) return
         adapter.fit()
         if (socket?.readyState === environment.openReadyState) {
           lastResize = sendResize(socket, adapter.dimensions(), lastResize)
@@ -153,14 +181,28 @@ export function connectTerminal({
     }
 
     nextSocket.onmessage = (event) => {
-      if (!isActiveSocket(nextSocket, closed)) return
+      if (renderOverflow || !isActiveSocket(nextSocket, closed)) return
       if (typeof event.data !== 'string') {
         try {
           if (!(event.data instanceof ArrayBuffer) || event.data.byteLength > 1024) throw new Error('invalid control')
           const control = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(event.data))
+          const scrollProfile = control?.scrollProfile ?? null
+          if (scrollProfile !== null && scrollProfile !== 'auto' && scrollProfile !== 'application-sgr') throw new Error('invalid scroll profile')
+          if (control?.type === 'native-state') {
+            if (control.version !== 1 || control.replayPolicy !== 'native-snapshot'
+              || control.unicodeVersion !== '11'
+              || !validDimensions(control) || control.cols > 500 || control.rows > 200
+              || pendingNative || (receivedState && !nativeMode) || (receivedOutput && !nativeMode)) throw new Error('invalid native state')
+            nativeMode = true
+            receivedState = true
+            pendingNative = { cols: control.cols, rows: control.rows }
+            adapter.setScrollProfile(scrollProfile)
+            return
+          }
           if (receivedState || receivedOutput || control?.type !== 'terminal-state'
             || control.version !== 1 || control.replayPolicy !== 'tmux-redraw') throw new Error('unsupported control')
           receivedState = true
+          adapter.setScrollProfile(scrollProfile)
           adapter.reset()
         } catch {
           closed = true
@@ -170,6 +212,19 @@ export function connectTerminal({
         return
       }
       receivedOutput = true
+      if (nativeMode) {
+        queuedChars += event.data.length
+        if (queuedChars > 32 * 1024 * 1024) {
+          renderOverflow = true
+          nativeWrites.length = 0
+          nextSocket.close(1013, 'terminal render queue full')
+          return
+        }
+        nativeWrites.push({ data: event.data, geometry: pendingNative })
+        pendingNative = null
+        drainNativeWrites()
+        return
+      }
       const autoScroll = adapter.shouldAutoScroll()
       adapter.write(event.data, () => {
         if (!isActiveSocket(nextSocket, closed)) return
@@ -180,6 +235,7 @@ export function connectTerminal({
     nextSocket.onclose = (event) => {
       if (closed || socket !== nextSocket) return
       closed = true
+      nativeWrites.length = 0
       if (intentionalClose) return
       if (event.code === 4001) {
         stopConnecting('认证失败，请刷新重新登录')

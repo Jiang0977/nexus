@@ -175,11 +175,11 @@ bash start.sh
 - 浏览器关闭连接时，server 参与标准关闭握手；非预期断开由 `terminalConnection.ts` 走指数退避重连，最多 8 次。
 - xterm 6 的历史位置以公开的 `buffer.active.viewportY/baseY` 为准，不读取旧 `.xterm-viewport.scrollTop`。移动端纵向拖动由单一手势处理器调用 `scrollLines`，禁止浏览器同时 pan；pinch 与横向切换仍由终端手势处理器负责。标准 mouse tracking 开启时，触摸转换为 wheel 事件交给 xterm 按已协商协议编码；关闭后恢复普通历史滚动。
 - `terminalInput.ts` 在单窗和 split pane 同时绑定 `onData` 与 `onBinary`，二进制输入经 WebSocket Binary → broker `rawBytes` → PTY 原样写入；旧 `rawMessage` 字段仍兼容。PTY 输出使用每个 reader 独立的增量 UTF-8 解码器，跨 read 的半个字符不会被提前替换。
-- tmux 每个浏览器连接独占一个 client PTY/grouped session，共享原窗口中的应用进程；首次 attach 带真实尺寸，reader 启动前注册 client，禁止尾片段 replay。窗口级 snapshot 聚合连接数，断开只回收自己的 client/group。共享 pane 逻辑尺寸仍由 tmux window-size 策略决定。native 保留旧生命周期与 replay，完整恢复尚未实现。
-- 新网页声明 `terminalProtocol=2`；tmux attach 返回 `replayPolicy=tmux-redraw` 时，server 在所有文本前发版本 1 的二进制 `terminal-state` JSON。浏览器排队写 RIS 再接收 tmux 完整重绘；文本 JSON 不作为控制帧。未知控制失败关闭；广播 lag 关闭 1013、client EOF 关闭 1011，清理后重连获取新重绘。旧客户端和 native 不接收新控制帧。
+- tmux 每个浏览器连接独占一个 client PTY/grouped session，共享原窗口中的应用进程；首次 attach 带真实尺寸，reader 启动前注册 client，禁止尾片段 replay。窗口级 snapshot 聚合连接数，断开只回收自己的 client/group。共享 pane 逻辑尺寸仍由 tmux window-size 策略决定。native 由 supervisor 维护有界终端状态，attach 使用完整 ANSI checkpoint，不再依赖最近 2000 字节；共享逻辑尺寸取在线客户端的最小行列，详见 [native checkpoint](designs/native-terminal-checkpoint.md)。
+- 新网页声明 `terminalProtocol=2`；tmux attach 返回 `replayPolicy=tmux-redraw` 时，server 在所有文本前发版本 1 的二进制 `terminal-state` JSON。native 使用带逻辑尺寸的 `native-state` 控制帧，下一文本帧为 checkpoint；尺寸与写入按队列排序。native 旧协议拒绝并提示刷新。文本 JSON 不作为控制帧。未知控制失败关闭；广播 lag 关闭 1013、client EOF 关闭 1011，清理后重连获取新状态。
 - 连接错误显示在终端外的状态 UI 中，不向 PTY 内容插入 Nexus 状态 ANSI；旧 socket、定时器与写入回调在连接替换/销毁后不再更新当前界面。初次 resize 发送真实行列，不再使用临时少一行的尺寸。
 - xterm scrollback 只负责普通终端历史。默认“自动滚动”只遵循公开终端模式，不依据 Grok 等标题、正文、2026 或 alternate screen 猜测应用能力。没有标准鼠标模式的 TUI 可在当前视图临时选择“应用滚动 (SGR)”，把滚轮或手机纵向滑动编码后发回应用；退出该应用后应切回自动，避免把鼠标输入送入普通 shell。
-- 标准鼠标模式始终优先，避免手动补偿重复发包；Ctrl+wheel 不作为应用输入。临时选择不触发重连，不跨 pane 共享；同目标断线重连保留，切换目标或刷新重置。私有 capability/launch profile 仍未实现。
+- 标准鼠标模式始终优先，避免补偿重复发包；其次读取 `data/terminal-profiles.json` 的显式会话/通道配置，未配置时才使用窗格临时选择。配置跨刷新/设备恢复，不按应用名称猜测。Ctrl+wheel 不作为应用输入。临时选择不触发重连，不跨 pane 共享；同目标断线重连保留，切换目标或刷新重置。
 
 ## 数据落点
 

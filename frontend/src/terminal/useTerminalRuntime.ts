@@ -15,6 +15,7 @@ import { connectTerminal, type TerminalSocket } from './terminalConnection'
 import { bindTerminalInput } from './terminalInput'
 import { bindTerminalViewportMetrics } from './terminalViewportMetrics'
 import { useTerminalScrollMode } from './useTerminalScrollMode'
+import { configureTerminalUnicode } from './terminalUnicode'
 import {
   createSgrWheelReport,
   shouldForwardTerminalWheelToApplication,
@@ -76,7 +77,7 @@ export function useTerminalRuntime({
   const keyboardVisibleRef = useRef(false)
   const isComposingRef = useRef(false)
   const overlayOpenRef = useRef(overlayOpen)
-  const { scrollMode, scrollModeRef, setScrollMode } = useTerminalScrollMode(JSON.stringify([enabled, activeTmuxSession, activeWindowIndex]))
+  const { scrollMode, scrollModeRef, setScrollMode, setScrollProfile } = useTerminalScrollMode(JSON.stringify([enabled, activeTmuxSession, activeWindowIndex]))
   const [isConnecting, setIsConnecting] = useState(false)
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
@@ -213,6 +214,7 @@ export function useTerminalRuntime({
     const webLinksAddon = new WebLinksAddon()
     term.loadAddon(fitAddon)
     term.loadAddon(webLinksAddon)
+    configureTerminalUnicode(term)
     termRef.current = term
     fitAddonRef.current = fitAddon
 
@@ -792,6 +794,8 @@ export function useTerminalRuntime({
           // Queue reset behind already pending writes and before the new redraw.
           termRef.current?.write('\x1bc')
         },
+        restoreDimensions: (cols, rows) => termRef.current?.resize(cols, rows),
+        setScrollProfile,
         fit: () => fitAddonRef.current?.fit(),
         dimensions: () => {
           const term = termRef.current

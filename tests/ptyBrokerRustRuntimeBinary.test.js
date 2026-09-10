@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { stripVTControlCharacters } from 'node:util'
 import assert from 'node:assert/strict'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -441,7 +442,7 @@ test('real rust pty runtime can attach to an opt-in native foreground PTY', { sk
     session: 'native-project',
     windowIndex: 0,
   })
-  assert.deepEqual(first, { key: 'native-project:0' })
+  assert.deepEqual(first, { key: 'native-project:0', replayPolicy: 'native-snapshot' })
 
   client.handleConnectionMessage({
     connectionId: 'native-conn-1',
@@ -470,7 +471,7 @@ test('real rust pty runtime can attach to an opt-in native foreground PTY', { sk
     session: 'native-project',
     windowIndex: 0,
   })
-  assert.deepEqual(second, { key: 'native-project:0' })
+  assert.deepEqual(second, { key: 'native-project:0', replayPolicy: 'native-snapshot' })
 
   let replay = ''
   for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -481,7 +482,8 @@ test('real rust pty runtime can attach to an opt-in native foreground PTY', { sk
     if (replay.includes('native one')) break
     await delay(20)
   }
-  assert.match(replay, /native one\r?\n/)
+  assert.match(replay, /native one/)
+  assert.ok(events.some(event => event.connectionId === 'native-conn-2' && event.nativeState?.cols === 120))
 
   client.handleConnectionMessage({
     connectionId: 'native-conn-1',
@@ -569,7 +571,7 @@ printf 'LC_CTYPE=%s\\n' "$LC_CTYPE"
     session: 'native-env-project',
     windowIndex: 0,
   })
-  assert.deepEqual(attached, { key: 'native-env-project:0' })
+  assert.deepEqual(attached, { key: 'native-env-project:0', replayPolicy: 'native-snapshot' })
 
   let output = ''
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -581,6 +583,7 @@ printf 'LC_CTYPE=%s\\n' "$LC_CTYPE"
     await delay(20)
   }
 
+  output = stripVTControlCharacters(output).split('\n').map(line => line.trimEnd()).join('\n')
   assert.match(output, /^TERM=xterm-256color\r?$/m)
   assert.match(output, /^COLORTERM=truecolor\r?$/m)
   assert.match(output, /^LANG=C\.UTF-8\r?$/m)
@@ -638,7 +641,7 @@ test('real rust pty runtime launches an opt-in native channel from the session r
     session: 'native-registry-project',
     windowIndex: 0,
   })
-  assert.deepEqual(attached, { key: 'native-registry-project:0' })
+  assert.deepEqual(attached, { key: 'native-registry-project:0', replayPolicy: 'native-snapshot' })
 
   ptyClient.handleConnectionMessage({
     connectionId: 'native-registry-conn',
@@ -709,7 +712,7 @@ test('real rust pty runtime detaches native registry channels without exiting th
     connectionId: 'native-detach-conn-1',
     session: 'native-detach-project',
     windowIndex: 0,
-  }), { key: 'native-detach-project:0' })
+  }), { key: 'native-detach-project:0', replayPolicy: 'native-snapshot' })
 
   ptyClient.closeConnection({
     connectionId: 'native-detach-conn-1',
@@ -730,7 +733,7 @@ test('real rust pty runtime detaches native registry channels without exiting th
     connectionId: 'native-detach-conn-2',
     session: 'native-detach-project',
     windowIndex: 0,
-  }), { key: 'native-detach-project:0' })
+  }), { key: 'native-detach-project:0', replayPolicy: 'native-snapshot' })
 })
 
 test('real rust pty runtime launches native channels from a structured launch plan', { skip: process.platform === 'win32' }, async (t) => {
@@ -875,7 +878,7 @@ test('real rust pty runtime records native process lifecycle in the registry', {
     session: 'native-process-project',
     windowIndex: 0,
   })
-  assert.deepEqual(reopened, { key: 'native-process-project:0' })
+  assert.deepEqual(reopened, { key: 'native-process-project:0', replayPolicy: 'native-snapshot' })
 
   let nextInstanceCount = 0
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -1018,7 +1021,7 @@ test('real rust pty runtime does not reuse an in-memory native entry after the c
     connectionId: 'native-recreate-old',
     session: 'native-recreate-entry',
     windowIndex: 1,
-  }), { key: 'native-recreate-entry:1' })
+  }), { key: 'native-recreate-entry:1', replayPolicy: 'native-snapshot' })
 
   const oldInstance = latestNativeProcessInstance(dbPath, 'native-recreate-entry', 1)
   assert.equal(oldInstance.status, 'running')
@@ -1041,7 +1044,7 @@ test('real rust pty runtime does not reuse an in-memory native entry after the c
     connectionId: 'native-recreate-new',
     session: 'native-recreate-entry',
     windowIndex: 1,
-  }), { key: 'native-recreate-entry:1' })
+  }), { key: 'native-recreate-entry:1', replayPolicy: 'native-snapshot' })
 
   const newInstance = latestNativeProcessInstance(dbPath, 'native-recreate-entry', 1)
   assert.equal(newInstance.status, 'running')
@@ -1097,7 +1100,7 @@ test('real rust pty runtime does not reuse a fallback native shell after a regis
     connectionId: 'native-fallback-old',
     session: 'native-fallback-reuse',
     windowIndex: 1,
-  }), { key: 'native-fallback-reuse:1' })
+  }), { key: 'native-fallback-reuse:1', replayPolicy: 'native-snapshot' })
   assert.equal(latestNativeProcessInstance(dbPath, 'native-fallback-reuse', 1), undefined)
 
   await sessionClient.createProjectChannel({
@@ -1113,7 +1116,7 @@ test('real rust pty runtime does not reuse a fallback native shell after a regis
     connectionId: 'native-fallback-new',
     session: 'native-fallback-reuse',
     windowIndex: 1,
-  }), { key: 'native-fallback-reuse:1' })
+  }), { key: 'native-fallback-reuse:1', replayPolicy: 'native-snapshot' })
 
   let instance = null
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -1196,7 +1199,7 @@ test('real rust pty runtime reconciles old native running processes on startup a
     session: 'native-reconcile',
     windowIndex: 0,
   })
-  assert.deepEqual(attached, { key: 'native-reconcile:0' })
+  assert.deepEqual(attached, { key: 'native-reconcile:0', replayPolicy: 'native-snapshot' })
 
   const latest = latestNativeProcessInstance(dbPath, 'native-reconcile', 0)
   assert.equal(latest.status, 'running')

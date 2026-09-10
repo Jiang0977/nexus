@@ -19,6 +19,7 @@ use crate::child_runtime_protocol::{
     StdioProtocol, dispatch_lines, parse_response, write_notify, write_request,
 };
 use crate::native_session_registry::{NativeChannelLaunch, NativeSessionRegistry};
+use crate::native_terminal_state::{MAX_COLS, MAX_ROWS, NativeTerminalState};
 use crate::sanitize::{clamp_output_snapshot_tail_chars, truncate_tail};
 
 const DEFAULT_COLS: u16 = 120;
@@ -110,6 +111,16 @@ struct SnapshotResult {
 struct OutputEvent {
     connection_id: String,
     data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_state: Option<NativeGeometry>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeGeometry {
+    cols: u16,
+    rows: u16,
+    unicode_version: &'static str,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -144,6 +155,8 @@ struct PtyEntry {
     tmux_channel_key: Option<String>,
     native_scrollback_path: Option<PathBuf>,
     registry_backed_native: bool,
+    // Serializes checkpoint+subscribe with reader output and resize snapshots.
+    native_state: Mutex<Option<NativeTerminalState>>,
 }
 
 impl PtyEntry {
@@ -155,6 +168,13 @@ impl PtyEntry {
         native_scrollback_path: Option<PathBuf>,
         registry_backed_native: bool,
     ) -> Self {
+        let native_state = native_scrollback_path.as_ref().map(|_| {
+            let size = master.get_size().ok();
+            NativeTerminalState::new(
+                size.map_or(DEFAULT_COLS, |s| s.cols),
+                size.map_or(DEFAULT_ROWS, |s| s.rows),
+            )
+        });
         Self {
             master: Mutex::new(master),
             writer: Mutex::new(writer),
@@ -167,6 +187,7 @@ impl PtyEntry {
             tmux_channel_key: None,
             native_scrollback_path,
             registry_backed_native,
+            native_state: Mutex::new(native_state),
         }
     }
 }
@@ -188,6 +209,7 @@ impl RuntimeOutput {
 
 trait OutputSink: Send + Sync {
     fn send_output(&self, connection_id: &str, data: String);
+    fn send_snapshot(&self, connection_id: &str, data: String, geometry: NativeGeometry);
     fn send_closed(&self, _connection_id: &str) {}
 }
 
@@ -215,6 +237,18 @@ impl OutputSink for ChannelOutputSink {
             OutputEvent {
                 connection_id: connection_id.to_string(),
                 data,
+                native_state: None,
+            },
+        );
+    }
+
+    fn send_snapshot(&self, connection_id: &str, data: String, geometry: NativeGeometry) {
+        self.output.event(
+            "output",
+            OutputEvent {
+                connection_id: connection_id.to_string(),
+                data,
+                native_state: Some(geometry),
             },
         );
     }
@@ -252,6 +286,25 @@ impl OutputSink for ConnectionRoutes {
                 OutputEvent {
                     connection_id: connection_id.to_string(),
                     data,
+                    native_state: None,
+                },
+            );
+        }
+    }
+
+    fn send_snapshot(&self, connection_id: &str, data: String, geometry: NativeGeometry) {
+        if let Some(output) = self
+            .routes
+            .lock()
+            .ok()
+            .and_then(|routes| routes.get(connection_id).cloned())
+        {
+            output.event(
+                "output",
+                OutputEvent {
+                    connection_id: connection_id.to_string(),
+                    data,
+                    native_state: Some(geometry),
                 },
             );
         }
@@ -1297,26 +1350,64 @@ fn kill_entry(entry: &Arc<PtyEntry>) {
     }
 }
 
-fn resize_entry(entry: &Arc<PtyEntry>, cols: u16, rows: u16) {
+fn resize_entry(state: &SharedState, entry: &Arc<PtyEntry>, cols: u16, rows: u16) {
+    let mut native = entry.native_state.lock().unwrap_or_else(|p| p.into_inner());
+    let (cols, rows) = if native.is_some() {
+        (cols.clamp(10, MAX_COLS), rows.clamp(5, MAX_ROWS))
+    } else {
+        (cols, rows)
+    };
+    if native
+        .as_ref()
+        .is_some_and(|screen| screen.size() == (cols, rows))
+    {
+        return;
+    }
     if let Ok(master) = entry.master.lock() {
-        let _ = master.resize(PtySize {
-            rows: if entry.tmux_channel_key.is_some() {
-                rows
-            } else {
-                rows.max(5)
-            },
-            cols: if entry.tmux_channel_key.is_some() {
-                cols
-            } else {
-                cols.max(10)
-            },
-            pixel_width: 0,
-            pixel_height: 0,
-        });
+        if master
+            .resize(PtySize {
+                rows: if entry.tmux_channel_key.is_some() {
+                    rows
+                } else {
+                    rows.max(5)
+                },
+                cols: if entry.tmux_channel_key.is_some() {
+                    cols
+                } else {
+                    cols.max(10)
+                },
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .is_err()
+        {
+            return;
+        }
+    } else {
+        return;
+    }
+    if let Some(screen) = native.as_mut() {
+        screen.resize(cols, rows);
+        let Ok(snapshot) = screen.snapshot() else {
+            return;
+        };
+        if let Ok(clients) = entry.clients.lock() {
+            for id in clients.iter() {
+                state.output.sink.send_snapshot(
+                    id,
+                    snapshot.clone(),
+                    NativeGeometry {
+                        cols,
+                        rows,
+                        unicode_version: "11",
+                    },
+                );
+            }
+        }
     }
 }
 
-fn recompute_remaining_size(entry: &Arc<PtyEntry>) {
+fn recompute_remaining_size(state: &SharedState, entry: &Arc<PtyEntry>) {
     let sizes = entry
         .client_sizes
         .lock()
@@ -1334,7 +1425,7 @@ fn recompute_remaining_size(entry: &Arc<PtyEntry>) {
     }
 
     if min_cols != u16::MAX && min_rows != u16::MAX {
-        resize_entry(entry, min_cols, min_rows);
+        resize_entry(state, entry, min_cols, min_rows);
     }
 }
 
@@ -1367,9 +1458,7 @@ fn start_pty_reader(state: SharedState, entry: Arc<PtyEntry>, mut reader: Box<dy
             }
         }
         // Preserve output/EOF order; the child waiter may run before the reader drains.
-        if entry.tmux_channel_key.is_some()
-            && let Ok(clients) = entry.clients.lock()
-        {
+        if let Ok(clients) = entry.clients.lock() {
             for connection_id in clients.iter() {
                 state.output.sink.send_closed(connection_id);
             }
@@ -1383,6 +1472,10 @@ fn start_pty_reader(state: SharedState, entry: Arc<PtyEntry>, mut reader: Box<dy
 fn emit_pty_output(data: &str, entry: &PtyEntry, state: &SharedState) {
     if data.is_empty() {
         return;
+    }
+    let mut native = entry.native_state.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(screen) = native.as_mut() {
+        screen.feed(data);
     }
     if let Ok(mut output) = entry.last_output.lock() {
         output.push_str(data);
@@ -1653,10 +1746,60 @@ fn attach_connection(
         params.rows,
     )?;
 
+    if entry.tmux_channel_key.is_none() {
+        let cols = params
+            .cols
+            .filter(|n| *n > 0)
+            .unwrap_or(DEFAULT_COLS)
+            .clamp(10, MAX_COLS);
+        let rows = params
+            .rows
+            .filter(|n| *n > 0)
+            .unwrap_or(DEFAULT_ROWS)
+            .clamp(5, MAX_ROWS);
+        if let Ok(mut sizes) = entry.client_sizes.lock() {
+            sizes.insert(params.connection_id.clone(), (cols, rows));
+        }
+        recompute_remaining_size(state, &entry);
+    }
+    let native = entry.native_state.lock().unwrap_or_else(|p| p.into_inner());
+    let snapshot = match native
+        .as_ref()
+        .map(NativeTerminalState::snapshot)
+        .transpose()
+    {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            if let Ok(mut sizes) = entry.client_sizes.lock() {
+                sizes.remove(&params.connection_id);
+            }
+            drop(native);
+            recompute_remaining_size(state, &entry);
+            return Err(error);
+        }
+    };
+
     if let Ok(mut clients) = entry.clients.lock() {
         clients.insert(params.connection_id.clone());
     }
     entry.last_activity_ms.store(now_ms(), Ordering::SeqCst);
+
+    if let Some(screen) = native.as_ref() {
+        let (cols, rows) = screen.size();
+        state.output.sink.send_snapshot(
+            &params.connection_id,
+            snapshot.expect("native screen has a checkpoint"),
+            NativeGeometry {
+                cols,
+                rows,
+                unicode_version: "11",
+            },
+        );
+        return Ok(AttachConnectionResult {
+            key,
+            replay_policy: Some("native-snapshot".to_string()),
+        });
+    }
 
     let replay_policy = entry
         .tmux_channel_key
@@ -1710,9 +1853,35 @@ fn handle_connection_message(state: &SharedState, params: ConnectionNotifyParams
             .filter(|value| *value > 0);
         if let (Some(cols), Some(rows)) = (cols, rows) {
             if let Ok(mut client_sizes) = entry.client_sizes.lock() {
-                client_sizes.insert(params.connection_id, (cols, rows));
+                client_sizes.insert(params.connection_id.clone(), (cols, rows));
             }
-            resize_entry(&entry, cols, rows);
+            if entry.tmux_channel_key.is_some() {
+                resize_entry(state, &entry, cols, rows);
+            } else {
+                let before = entry
+                    .native_state
+                    .lock()
+                    .ok()
+                    .and_then(|screen| screen.as_ref().map(NativeTerminalState::size));
+                recompute_remaining_size(state, &entry);
+                let native = entry.native_state.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(screen) = native.as_ref()
+                    && before == Some(screen.size())
+                {
+                    let (cols, rows) = screen.size();
+                    if let Ok(snapshot) = screen.snapshot() {
+                        state.output.sink.send_snapshot(
+                            &params.connection_id,
+                            snapshot,
+                            NativeGeometry {
+                                cols,
+                                rows,
+                                unicode_version: "11",
+                            },
+                        );
+                    }
+                }
+            }
         }
         // Invalid control frames must never become application input.
         entry.last_activity_ms.store(now_ms(), Ordering::SeqCst);
@@ -1754,7 +1923,7 @@ fn close_connection(state: &SharedState, params: ConnectionNotifyParams, policy:
         return;
     }
 
-    recompute_remaining_size(&entry);
+    recompute_remaining_size(state, &entry);
     entry.last_activity_ms.store(now_ms(), Ordering::SeqCst);
 }
 

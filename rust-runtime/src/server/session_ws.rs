@@ -2,6 +2,46 @@ use super::*;
 
 const DEFAULT_WS_HEARTBEAT_MS: u64 = 10_000;
 
+fn terminal_scroll_profile(bytes: &[u8], session: &str, window: u32) -> Option<&'static str> {
+    if bytes.len() > 65536 {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(bytes).ok()?;
+    if value.get("version")?.as_u64()? != 1 {
+        return None;
+    }
+    let entries = value.get("channels")?.as_array()?;
+    let mut matched = entries.iter().filter(|entry| {
+        entry.get("session").and_then(Value::as_str) == Some(session)
+            && entry.get("windowIndex").and_then(Value::as_u64) == Some(window.into())
+    });
+    let entry = matched.next()?;
+    if matched.next().is_some() {
+        return None;
+    }
+    match entry.get("scroll").and_then(Value::as_str)? {
+        "auto" => Some("auto"),
+        "application-sgr" => Some("application-sgr"),
+        _ => None,
+    }
+}
+
+async fn read_terminal_scroll_profile(
+    path: &Path,
+    session: &str,
+    window: u32,
+) -> Option<&'static str> {
+    use tokio::io::AsyncReadExt;
+    let metadata = tokio::fs::metadata(path).await.ok()?;
+    if !metadata.is_file() || metadata.len() > 65536 {
+        return None;
+    }
+    let file = tokio::fs::File::open(path).await.ok()?;
+    let mut bytes = Vec::new();
+    file.take(65537).read_to_end(&mut bytes).await.ok()?;
+    terminal_scroll_profile(&bytes, session, window)
+}
+
 fn websocket_heartbeat_interval() -> Duration {
     let milliseconds = env::var("NEXUS_WS_HEARTBEAT_MS")
         .ok()
@@ -31,6 +71,11 @@ pub(super) async fn handle_pty_websocket(
         .as_deref()
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(0);
+    let profile_path = state
+        .project_defaults_file
+        .with_file_name("terminal-profiles.json");
+    let scroll_profile =
+        read_terminal_scroll_profile(&profile_path, &session_name, window_index).await;
     let Some(mut event_receiver) = state.runtime_manager.pty_broker_subscribe_events().await else {
         let _ = send_websocket_close(
             &mut socket,
@@ -55,7 +100,7 @@ pub(super) async fn handle_pty_websocket(
         .as_deref()
         .and_then(|value| value.parse::<u16>().ok())
         .filter(|value| *value > 0);
-    let (key, tmux_redraw) = match state
+    let (key, tmux_redraw, native_snapshot) = match state
         .runtime_manager
         .pty_broker_request(
             "attachConnection",
@@ -73,6 +118,7 @@ pub(super) async fn handle_pty_websocket(
             Some(key) if !key.is_empty() => (
                 key.to_string(),
                 payload.get("replayPolicy").and_then(Value::as_str) == Some("tmux-redraw"),
+                payload.get("replayPolicy").and_then(Value::as_str) == Some("native-snapshot"),
             ),
             _ => {
                 let _ =
@@ -90,11 +136,31 @@ pub(super) async fn handle_pty_websocket(
         }
     };
 
+    if native_snapshot && query.terminal_protocol.as_deref() != Some("2") {
+        let _ = send_websocket_close(
+            &mut socket,
+            4002,
+            "native terminal requires protocol 2; refresh the page",
+        )
+        .await;
+        let _ = state
+            .runtime_manager
+            .pty_broker_notify(
+                "errorConnection",
+                json!({"connectionId": connection_id, "key": key}),
+            )
+            .await;
+        return;
+    }
+
     // Binary frames are protocol controls; text frames remain unmodified PTY data.
     // The event subscription predates attach, so this precedes all buffered redraw output.
     if tmux_redraw && query.terminal_protocol.as_deref() == Some("2") {
-        let control =
+        let mut control =
             json!({"type": "terminal-state", "version": 1, "replayPolicy": "tmux-redraw"});
+        if let Some(profile) = scroll_profile {
+            control["scrollProfile"] = json!(profile);
+        }
         if socket
             .send(Message::Binary(control.to_string().into_bytes().into()))
             .await
@@ -190,6 +256,15 @@ pub(super) async fn handle_pty_websocket(
                                 .and_then(Value::as_str)
                                 .unwrap_or_default()
                                 .to_string();
+                            if let Some(geometry) = event.params.get("nativeState")
+                                && query.terminal_protocol.as_deref() == Some("2")
+                            {
+                                let control = json!({"type": "native-state", "version": 1, "replayPolicy": "native-snapshot", "cols": geometry.get("cols"), "rows": geometry.get("rows"), "unicodeVersion": geometry.get("unicodeVersion"), "scrollProfile": scroll_profile});
+                                if socket.send(Message::Binary(control.to_string().into_bytes().into())).await.is_err() {
+                                    disconnect_notify = "errorConnection";
+                                    break;
+                                }
+                            }
                             if socket.send(Message::Text(data.into())).await.is_err() {
                                 disconnect_notify = "errorConnection";
                                 break;
@@ -241,4 +316,35 @@ pub(super) async fn handle_pty_websocket(
             }),
         )
         .await;
+}
+
+#[cfg(test)]
+mod terminal_profile_tests {
+    use super::terminal_scroll_profile;
+
+    #[test]
+    fn profile_requires_explicit_exact_channel_and_valid_schema() {
+        let config = br#"{"version":1,"channels":[{"session":"demo","windowIndex":2,"scroll":"application-sgr"}]}"#;
+        assert_eq!(
+            terminal_scroll_profile(config, "demo", 2),
+            Some("application-sgr")
+        );
+        assert_eq!(terminal_scroll_profile(config, "demo", 1), None);
+        assert_eq!(terminal_scroll_profile(config, "Grok demo", 2), None);
+        assert_eq!(
+            terminal_scroll_profile(br#"{"version":2,"channels":[]}"#, "demo", 2),
+            None
+        );
+        assert_eq!(terminal_scroll_profile(b"not json", "demo", 2), None);
+        assert_eq!(terminal_scroll_profile(&vec![b' '; 65537], "demo", 2), None);
+    }
+
+    #[test]
+    fn duplicate_or_unknown_profiles_do_not_guess_routing() {
+        let duplicate = br#"{"version":1,"channels":[{"session":"a","windowIndex":0,"scroll":"auto"},{"session":"a","windowIndex":0,"scroll":"application-sgr"}]}"#;
+        assert_eq!(terminal_scroll_profile(duplicate, "a", 0), None);
+        let unknown =
+            br#"{"version":1,"channels":[{"session":"a","windowIndex":0,"scroll":"grok"}]}"#;
+        assert_eq!(terminal_scroll_profile(unknown, "a", 0), None);
+    }
 }

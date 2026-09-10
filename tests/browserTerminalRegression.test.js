@@ -179,10 +179,11 @@ function createBrowserProjectFixture() {
   return { dataDir, projectRoot }
 }
 
-async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnapshots = {}, sessionWindows = [], ptyMode = 'normal', workspaceFiles = null } = {}) {
+async function launchBrowserApp(t, { extraChannels = [], mobile = false, ptySnapshots = {}, sessionWindows = [], ptyMode = 'normal', workspaceFiles = null, terminalProfiles = null } = {}) {
   ensureRustServerBuilt()
 
   const { dataDir, projectRoot } = createBrowserProjectFixture()
+  if (terminalProfiles) writeFileSync(join(dataDir, 'terminal-profiles.json'), JSON.stringify(terminalProfiles))
   if (workspaceFiles) {
     for (const [name, content] of Object.entries(workspaceFiles)) {
       assert.equal(name.includes('/'), false, 'fixture filenames must stay inside the temporary workspace')
@@ -2915,6 +2916,45 @@ test(`browser regression: mobile standard mouse tracking for ${application} fixt
   assert.deepEqual(pageErrors, [])
 })
 }
+
+test('browser regression: unused terminal viewport follows light and dark themes', { timeout: 60000 }, async t => {
+  const { page, password, port, pageErrors } = await launchBrowserApp(t, { mobile: true })
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('nexus_theme')) localStorage.setItem('nexus_theme', 'light')
+  })
+  for (const theme of ['light', 'dark']) {
+    if (theme === 'dark') { await page.evaluate(() => localStorage.setItem('nexus_theme', 'dark')); await page.reload() }
+    await loginAndWaitForTerminal(page, port, password)
+    await page.locator('.xterm-scrollable-element').first().waitFor()
+    const colors = await page.evaluate(() => ({ viewport: getComputedStyle(document.querySelector('.xterm-viewport')).backgroundColor, grid: getComputedStyle(document.querySelector('.xterm-scrollable-element')).backgroundColor }))
+    assert.equal(colors.viewport, colors.grid, `unused area must use ${theme} terminal background`)
+  }
+  assert.deepEqual(pageErrors, [])
+})
+
+test('browser regression: explicit channel scroll profile survives refresh and does not depend on application title', { timeout: 120000 }, async t => {
+  const { page, password, port, pageErrors } = await launchBrowserApp(t, {
+    mobile: true, ptyMode: 'tmux-redraw',
+    terminalProfiles: { version: 1, channels: [{ session: 'nexus-preview-rust', windowIndex: 0, scroll: 'application-sgr' }] },
+  })
+  await page.addInitScript(installWebSocketCapture)
+  await loginAndWaitForTerminal(page, port, password)
+  const selector = page.getByRole('combobox', { name: '终端滚动模式' })
+  await page.waitForFunction(() => document.querySelector('select[aria-label="终端滚动模式"]')?.value === 'application-sgr')
+  await dispatchCapturedWebSocketMessage(page, 'window=0', '\x1b]0;unrelated shell title\x07PROFILE_READY')
+  await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('PROFILE_READY'))
+  const box = await page.locator('.xterm-viewport').first().boundingBox()
+  const x = box.x + box.width / 2, y = box.y + box.height / 2
+  await page.evaluate(() => { window.__nexusWsSends = [] })
+  await dispatchSyntheticMobileSwipe(page, '.xterm-viewport', [[x, y], [x, y + 40]])
+  assert.equal(await page.evaluate(() => window.__nexusWsSends.filter(({ data }) => /^\x1b\[<64;/.test(String(data))).length), 1)
+  await selector.selectOption('auto')
+  assert.equal(await selector.inputValue(), 'application-sgr', 'explicit profile takes priority over temporary manual selection')
+  await page.reload()
+  await loginAndWaitForTerminal(page, port, password)
+  await page.waitForFunction(() => document.querySelector('select[aria-label="终端滚动模式"]')?.value === 'application-sgr')
+  assert.deepEqual(pageErrors, [])
+})
 
 test('browser regression: scroll override is pane scoped, survives reconnect and resets on target change or reload', { timeout: 120000 }, async (t) => {
   const { page, password, port, pageErrors } = await launchBrowserApp(t, {

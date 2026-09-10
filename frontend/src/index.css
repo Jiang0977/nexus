@@ -103,6 +103,11 @@ select {
   width: 100% !important;
   overflow-x: hidden !important;
 }
+.xterm .xterm-viewport {
+  /* Shared native grids may be smaller than their view. Fill the unused area
+     with the selected theme, not xterm.css's legacy black viewport default. */
+  background-color: var(--nexus-bg) !important;
+}
 .xterm-screen {
   height: 100% !important;
   width: 100% !important;

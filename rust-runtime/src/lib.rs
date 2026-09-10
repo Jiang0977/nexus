@@ -5,6 +5,7 @@ pub mod codex_replay;
 pub mod config;
 pub mod native_session_cli;
 pub mod native_session_registry;
+mod native_terminal_state;
 pub mod path_utils;
 pub mod project_defaults;
 pub mod pty_runtime;

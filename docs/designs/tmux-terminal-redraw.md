@@ -1,6 +1,8 @@
 # tmux 终端刷新/重连恢复
 
-状态：2026-09-10 代码已部署；发现生产原配置为 native 后，经用户单独授权切换为 tmux 并重启 nexus。独立端口与生产主入口均已通过真实 tmux 验收，详见 [部署记录](../verification/tmux-deployment-2026-09-10.md)。既有 native supervisor 未重启，native 完整恢复另行推进。
+历史状态：2026-09-10 早期 tmux 代码已部署；当时经用户单独授权切换为 tmux 并完成真实 tmux 验收，详见 [部署记录](../verification/tmux-deployment-2026-09-10.md)。下文保留该阶段的范围与证据。
+
+后续 native 与显式 channel profile 的实现、恢复边界及验收入口以 [Native checkpoint 设计](native-terminal-checkpoint.md) 为准。本机部署已按用户后续选择改为 native；不能用这份历史 tmux 报告证明 native 验收通过。
 
 ## 已核实的问题与选择
 

@@ -14,6 +14,7 @@ import { connectTerminal, type TerminalSocket } from './terminalConnection'
 import { bindTerminalInput } from './terminalInput'
 import { bindTerminalViewportMetrics } from './terminalViewportMetrics'
 import { useTerminalScrollMode } from './useTerminalScrollMode'
+import { configureTerminalUnicode } from './terminalUnicode'
 import {
   createSgrWheelReport,
   shouldForwardTerminalWheelToApplication,
@@ -46,7 +47,7 @@ export function useTerminalPaneRuntime({
   const userScrolledRef = useRef(false)
   const userScrollHoldUntilRef = useRef(0)
   const lastContainerSizeRef = useRef({ w: 0, h: 0 })
-  const { scrollMode, scrollModeRef, setScrollMode } = useTerminalScrollMode(JSON.stringify([enabled, target?.session, target?.windowIndex]))
+  const { scrollMode, scrollModeRef, setScrollMode, setScrollProfile } = useTerminalScrollMode(JSON.stringify([enabled, target?.session, target?.windowIndex]))
   const [connectionState, setConnectionState] = useState<PaneConnectionState>(target ? 'loading' : 'empty')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
@@ -171,6 +172,7 @@ export function useTerminalPaneRuntime({
     const webLinksAddon = new WebLinksAddon()
     term.loadAddon(fitAddon)
     term.loadAddon(webLinksAddon)
+    configureTerminalUnicode(term)
     termRef.current = term
     fitAddonRef.current = fitAddon
     term.open(container)
@@ -295,6 +297,8 @@ export function useTerminalPaneRuntime({
           // Queue reset behind already pending writes and before the new redraw.
           termRef.current?.write('\x1bc')
         },
+        restoreDimensions: (cols, rows) => termRef.current?.resize(cols, rows),
+        setScrollProfile,
         fit: () => fitAddonRef.current?.fit(),
         dimensions: () => {
           const term = termRef.current

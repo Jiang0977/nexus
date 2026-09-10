@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c3e98926041a67aa93d5e4c7bd538da6bad0cead19baaac192dc93fb3a0573dc # shrinks to input = [' ', '\u{1b}', '[', '6', 'm', '\u{fe00}']
+cc 54b89b4402923f20ab4a9e25666b051344275f6d2d32ace55230cca668846273 # shrinks to input = ['\u{1b}', '[', '4', 'h', '\0', '\u{1b}', '[', '4', ';', '`', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '\u{1b}', 'M', ' ']
+cc 37d003b38768c7d8ccb48256214b1ab1e8c6f1b22d977a59801cfdddc179a70c # shrinks to input = ['\u{1b}', '[', '1', 'm', '\u{1b}', '[', '4', 'h', '⺀']

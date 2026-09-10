@@ -59,6 +59,7 @@ test('real tmux redraw restores a full TUI into fresh xterm clients without rest
   await page.setContent('<div id="a"></div><div id="b"></div><div id="c"></div>')
   await page.addStyleTag({ path: join(ROOT, 'frontend/node_modules/@xterm/xterm/css/xterm.css') })
   await page.addScriptTag({ path: join(ROOT, 'frontend/node_modules/@xterm/xterm/lib/xterm.js') })
+  await page.addScriptTag({ path: join(ROOT, 'frontend/node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js') })
   const keys = new Map()
   await page.exposeFunction('terminalInput', (id, data) => {
     const key = keys.get(id)
@@ -70,6 +71,8 @@ test('real tmux redraw restores a full TUI into fresh xterm clients without rest
       const element = document.getElementById(id)
       element.style.cssText = 'width:1000px;height:550px'
       const term = new window.Terminal({ cols: 100, rows: 36, fontSize: 10, allowProposedApi: true })
+      term.loadAddon(new window.Unicode11Addon.Unicode11Addon())
+      term.unicode.activeVersion = '11'
       term.open(element)
       term.onData((data) => window.terminalInput(id, data))
       window.terminals[id] = term

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{self, BufRead, BufReader, Write};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, SyncSender};
 use std::thread::{self, JoinHandle};
 
 #[derive(Debug, PartialEq)]
@@ -25,7 +25,7 @@ pub enum RuntimeControl {
 
 #[derive(Clone)]
 pub struct ProtocolOutput {
-    tx: Sender<String>,
+    tx: SyncSender<String>,
 }
 
 pub struct StdioProtocol {
@@ -159,7 +159,9 @@ impl JsonLineWriter {
     where
         W: Write + Send + 'static,
     {
-        let (tx, rx) = mpsc::channel::<String>();
+        // Backpressure the producer instead of accumulating an unbounded stream
+        // of native checkpoints when the pipe/socket consumer is slow.
+        let (tx, rx) = mpsc::sync_channel::<String>(16);
         let writer = thread::spawn(move || {
             while let Ok(line) = rx.recv() {
                 if write_line(&mut writer, &line).is_err() {
@@ -344,7 +346,7 @@ mod tests {
 
     #[test]
     fn output_serializes_shared_response_and_event_envelopes() {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(16);
         let output = ProtocolOutput { tx };
 
         output.success("1".to_string(), json!({ "ready": true }));
@@ -409,5 +411,43 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0]["kind"], "response");
         assert_eq!(lines[1]["kind"], "event");
+    }
+
+    #[test]
+    fn slow_transport_backpressures_after_sixteen_queued_messages() {
+        struct GatedWriter {
+            gate: Option<mpsc::Receiver<()>>,
+            started: mpsc::SyncSender<()>,
+        }
+        impl Write for GatedWriter {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                if let Some(gate) = self.gate.take() {
+                    let _ = self.started.send(());
+                    let _ = gate.recv();
+                }
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let (release, gate) = mpsc::sync_channel(1);
+        let (started, writing) = mpsc::sync_channel(1);
+        let (writer, output) = JsonLineWriter::start(GatedWriter {
+            gate: Some(gate),
+            started,
+        });
+        output.event("first", json!({}));
+        writing.recv().unwrap();
+        for _ in 0..16 {
+            output.tx.try_send("{}".into()).unwrap();
+        }
+        assert!(matches!(
+            output.tx.try_send("{}".into()),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+        release.send(()).unwrap();
+        drop(output);
+        writer.finish();
     }
 }

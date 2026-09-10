@@ -164,7 +164,7 @@ test('native pty supervisor keeps a native PTY alive across socket clients', { s
     connectionId: 'supervisor-client-1',
     session: 'native-supervisor-project',
     windowIndex: 0,
-  }), { key: 'native-supervisor-project:0' })
+  }), { key: 'native-supervisor-project:0', replayPolicy: 'native-snapshot' })
 
   first.handleConnectionMessage({
     connectionId: 'supervisor-client-1',
@@ -199,7 +199,7 @@ test('native pty supervisor keeps a native PTY alive across socket clients', { s
     connectionId: 'supervisor-client-2',
     session: 'native-supervisor-project',
     windowIndex: 0,
-  }), { key: 'native-supervisor-project:0' })
+  }), { key: 'native-supervisor-project:0', replayPolicy: 'native-snapshot' })
 
   let replay = ''
   for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -210,7 +210,8 @@ test('native pty supervisor keeps a native PTY alive across socket clients', { s
     if (replay.includes('supervisor one')) break
     await delay(20)
   }
-  assert.match(replay, /supervisor one\r?\n/)
+  assert.match(replay, /supervisor one/)
+  assert.ok(secondEvents.some(event => event.nativeState?.cols === 120))
 
   second.handleConnectionMessage({
     connectionId: 'supervisor-client-2',
@@ -273,7 +274,7 @@ test('pty runtime forwards native connections through the supervisor socket', { 
     connectionId: 'forward-client-1',
     session: 'forward-project',
     windowIndex: 0,
-  }), { key: 'forward-project:0' })
+  }), { key: 'forward-project:0', replayPolicy: 'native-snapshot' })
 
   firstRuntime.handleConnectionMessage({
     connectionId: 'forward-client-1',
@@ -309,7 +310,7 @@ test('pty runtime forwards native connections through the supervisor socket', { 
     connectionId: 'forward-client-2',
     session: 'forward-project',
     windowIndex: 0,
-  }), { key: 'forward-project:0' })
+  }), { key: 'forward-project:0', replayPolicy: 'native-snapshot' })
 
   const snapshotAfterReattach = await secondRuntime.getOutputSnapshot({
     session: 'forward-project',
@@ -326,7 +327,8 @@ test('pty runtime forwards native connections through the supervisor socket', { 
     if (replay.includes('forward one')) break
     await delay(20)
   }
-  assert.match(replay, /forward one\r?\n/)
+  assert.match(replay, /forward one/)
+  assert.ok(secondEvents.some(event => event.nativeState?.cols === 120))
 
   secondRuntime.handleConnectionMessage({
     connectionId: 'forward-client-2',
@@ -388,7 +390,7 @@ test('pty runtime discovers the default native supervisor socket when env is uns
     connectionId: 'default-socket-client',
     session: 'default-socket-project',
     windowIndex: 0,
-  }), { key: 'default-socket-project:0' })
+  }), { key: 'default-socket-project:0', replayPolicy: 'native-snapshot' })
 
   runtime.handleConnectionMessage({
     connectionId: 'default-socket-client',
@@ -539,7 +541,7 @@ test('native session CLI lists and attaches to supervisor sessions', { skip: pro
     connectionId: 'cli-seed',
     session: 'cli-project',
     windowIndex: 0,
-  }), { key: 'cli-project:0' })
+  }), { key: 'cli-project:0', replayPolicy: 'native-snapshot' })
   first.close()
 
   const list = spawnSync(NATIVE_SESSION_CLI, ['list'], {
@@ -736,6 +738,6 @@ test('native pty supervisor refuses a second owner for the same socket', { skip:
     connectionId: 'lock-client',
     session: 'lock-project',
     windowIndex: 0,
-  }), { key: 'lock-project:0' })
+  }), { key: 'lock-project:0', replayPolicy: 'native-snapshot' })
   assert.equal(first.exitCode, null, firstStderr)
 })
