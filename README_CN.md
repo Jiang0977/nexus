@@ -11,7 +11,7 @@ Nexus 是单用户、自托管的编码工作台。打开一个项目，启动 C
 本项目基于 [Nexus4CC](https://github.com/librae8226/nexus4cc)，由 Jiang0977
 独立维护修改版。感谢原作者 librae8226、faywong 和其他贡献者。本分支增加了
 Rust 运行时、终端状态恢复、可选 native PTY 后端和工作区工具。
-详见[版权说明](LICENSE.md)和[更新记录](CHANGELOG.md)。
+详见[版权说明](NOTICE.md)和[更新记录](CHANGELOG.md)。
 
 <p>
   <img src="docs/images/desktop.png" alt="Nexus desktop terminal with a synthetic demo project" width="72%">

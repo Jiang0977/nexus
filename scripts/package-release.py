@@ -98,7 +98,7 @@ def main():
         binary.mkdir()
         required = ['setup.sh', 'start.sh', 'nexus-run-claude.sh', 'nexus-run-codex.sh',
                     '.env.example', 'package.json', 'README.md', 'README_CN.md', 'LICENSE.md',
-                    'COPYING', 'SECURITY.md', 'THIRD_PARTY.md', 'CHANGELOG.md']
+                    'COPYING', 'NOTICE.md', 'SECURITY.md', 'THIRD_PARTY.md', 'CHANGELOG.md']
         for relative in required:
             shutil.copy2(ROOT / relative, binary / relative)
         for relative in ['frontend/dist', 'public', 'docs']:

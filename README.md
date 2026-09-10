@@ -13,7 +13,7 @@ This is an independently maintained derivative of
 [Nexus4CC](https://github.com/librae8226/nexus4cc), originally developed by
 librae8226, faywong and contributors. This fork adds a Rust runtime, terminal
 state recovery, an opt-in native PTY backend and expanded workspace tooling.
-See [attribution](LICENSE.md) and [changes](CHANGELOG.md).
+See [attribution](NOTICE.md) and [changes](CHANGELOG.md).
 
 <p>
   <img src="docs/images/desktop.png" alt="Nexus desktop terminal with a synthetic demo project" width="72%">

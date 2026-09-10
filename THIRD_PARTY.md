@@ -1,6 +1,6 @@
 # Third-party software
 
-Nexus is based on Nexus4CC by librae8226, faywong and contributors; see LICENSE.md.
+Nexus is based on Nexus4CC by librae8226, faywong and contributors; see NOTICE.md.
 The project also uses Rust crates and frontend packages under their respective
 licenses. Exact dependency versions are recorded in `rust-runtime/Cargo.lock`
 and `frontend/package-lock.json`.
