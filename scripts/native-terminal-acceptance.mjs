@@ -255,6 +255,7 @@ try {
       checks.push(`${cli}_real_startup_screen_and_reconnect_without_inference`)
     }
   }
+  assert.deepEqual(pageErrors, [], 'including optional CLI startup screens')
 } catch (error) {
   if (browser) {
     const pages = await Promise.all(browser.contexts().flatMap(context => context.pages()).map(async (page, i) => {
