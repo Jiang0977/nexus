@@ -102,7 +102,7 @@ impl NativeTerminalState {
             result.push_str(&self.modes.title);
             result.push('\x07');
         }
-        result.push_str(&self.terminal.dump_screen());
+        result.push_str(&self.terminal.dump_with_scrollback());
         if self.modes.pending.starts_with(b"\x1b]52;") {
             // Consume a live suffix after mid-copy attach, without retaining
             // or replaying clipboard data. '!' makes it invalid base64.
@@ -224,6 +224,30 @@ impl vte::Perform for InputModes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_preserves_bounded_history_with_a_blank_screen_and_alt_buffer() {
+        let mut state = NativeTerminalState::new(20, 5);
+        for index in 0..240 {
+            state.feed(&format!("\x1b[31mhistory-{index:03}\x1b[0m\r\n"));
+        }
+        state.feed("\r\n\r\n\r\n\r\n");
+        let expected = state.terminal.text();
+        assert_eq!(state.terminal.lines().count(), HISTORY_LINES + 5);
+        assert!(expected.iter().any(|line| line.contains("history-239")));
+        for alternate in [false, true] {
+            if alternate {
+                state.feed("\x1b[?1049hALT");
+            }
+            let mut restored = avt::Vt::new(20, 5);
+            restored.feed_str(&state.snapshot().unwrap());
+            if alternate {
+                restored.feed_str("\x1b[?1049l");
+            }
+            assert_eq!(restored.text(), expected);
+            assert_eq!(restored.lines().count(), HISTORY_LINES + 5);
+        }
+    }
 
     #[test]
     fn snapshot_restores_fragmented_parser_and_continuation() {

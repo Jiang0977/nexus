@@ -27,6 +27,7 @@ test('native full snapshot restores fresh xterm and saved-cursor continuation wi
   browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) })
   const page = await browser.newPage()
   await page.setContent('<div id="a"></div><div id="b"></div><div id="c"></div><div id="d"></div>')
+  await page.addStyleTag({ path: join(ROOT, 'frontend/node_modules/@xterm/xterm/css/xterm.css') })
   await page.addScriptTag({ path: join(ROOT, 'frontend/node_modules/@xterm/xterm/lib/xterm.js') })
   await page.addScriptTag({ path: join(ROOT, 'frontend/node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js') })
   await page.evaluate(() => {
@@ -123,6 +124,53 @@ test('native full snapshot restores fresh xterm and saved-cursor continuation wi
   await page.waitForFunction(() => ['b', 'c'].every(id => window.terminals[id].buffer.active.type === 'normal' && window.terminals[id].modes.mouseTrackingMode === 'none'))
   await queue
   assert.deepEqual(await snapshot('c'), await snapshot('b'))
+  assert.ifError(outputError)
+
+  // Codex-style normal-buffer output must remain scrollable after switching
+  // away/back (fresh attach) and after a geometry checkpoint during streaming.
+  broker.handleConnectionMessage({ connectionId: 'c', key: third.key, rawMessage: 'r' })
+  await page.waitForFunction(() => window.terminals.c.buffer.active.cursorY === 0
+    && window.terminals.c.buffer.active.getLine(0)?.translateToString(true) === '')
+  broker.handleConnectionMessage({ connectionId: 'c', key: third.key, rawMessage: 'hs' })
+  await page.waitForFunction(() => window.terminals.c.buffer.active.baseY > 100
+    && Array.from({ length: window.terminals.c.buffer.active.length }, (_, row) => window.terminals.c.buffer.active.getLine(row)?.translateToString()).some(line => line?.includes('WRAPPED_5_')))
+  await queue
+  const history = id => page.evaluate(id => {
+    const t = window.terminals[id], b = t.buffer.normal
+    return { baseY: b.baseY, cursor: [b.cursorX, b.cursorY], lines: Array.from({ length: b.length }, (_, row) => {
+      const line = b.getLine(row)
+      return { wrapped: line.isWrapped, cells: Array.from({ length: t.cols }, (_, col) => {
+        const cell = line.getCell(col)
+        const chars = cell.getChars() || ' '
+        return [chars, chars.trim() ? cell.getFgColor() : null, cell.getBgColor()]
+      }) }
+    }) }
+  }, id)
+  const beforeReconnect = await history('c')
+  const historyClient = await broker.attachConnection({ ...target, connectionId: 'd' })
+  await queue
+  assert.deepEqual(await history('d'), beforeReconnect, 'fresh attach restores scrollback, soft wrapping and colors as well as the screen')
+  const screen = page.locator('#d .xterm-screen')
+  await screen.scrollIntoViewIfNeeded()
+  await screen.hover()
+  await page.mouse.wheel(0, -400)
+  await page.waitForFunction(() => window.terminals.d.buffer.active.viewportY < window.terminals.d.buffer.active.baseY)
+  assert.equal(await page.locator('#d .scrollbar.vertical').evaluate(el => el.classList.contains('invisible')), false, 'restored history has a visible scrollbar')
+
+  broker.handleConnectionMessage({ connectionId: 'd', key: historyClient.key, rawMessage: JSON.stringify({ type: 'resize', cols: 80, rows: 20 }) })
+  await broker.getStatus()
+  await queue
+  assert.deepEqual(await history('d'), beforeReconnect, 'unchanged shared-size checkpoint must not erase history')
+  broker.handleConnectionMessage({ connectionId: 'd', key: historyClient.key, rawMessage: JSON.stringify({ type: 'resize', cols: 80, rows: 18 }) })
+  await page.waitForFunction(() => window.terminals.d.rows === 18 && window.terminals.c.rows === 18)
+  await queue
+  assert.ok((await history('d')).baseY >= beforeReconnect.baseY, 'resizing during output retains the history range')
+  assert.deepEqual(await history('d'), await history('c'))
+  const beforeMoreOutput = (await history('d')).baseY
+  broker.handleConnectionMessage({ connectionId: 'd', key: historyClient.key, rawMessage: 's' })
+  await page.waitForFunction(baseY => window.terminals.d.buffer.active.baseY > baseY, beforeMoreOutput)
+  await queue
+  assert.deepEqual(await history('d'), await history('c'), 'raw output continues consistently after restoring history')
   assert.ifError(outputError)
   broker.handleConnectionMessage({ connectionId: 'c', key: third.key, rawMessage: 'x' })
   for (let tries = 0; tries < 100 && !closed.has('c'); tries++) await new Promise(resolve => setTimeout(resolve, 20))

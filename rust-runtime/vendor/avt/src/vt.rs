@@ -83,6 +83,12 @@ impl Vt {
         parser::dump(&self.terminal.dump())
     }
 
+    /// Serialize terminal state including retained primary-buffer history.
+    /// Like `dump_screen`, leaves parser continuation to the caller.
+    pub fn dump_with_scrollback(&self) -> String {
+        parser::dump(&self.terminal.dump_with_scrollback())
+    }
+
     pub fn recovery_safe(&self) -> bool {
         !self.terminal.recovery_overflow
     }

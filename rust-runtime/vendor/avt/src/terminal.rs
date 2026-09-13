@@ -1360,6 +1360,14 @@ impl Terminal {
     }
 
     pub fn dump(&self) -> Vec<Function> {
+        self.dump_buffers(false)
+    }
+
+    pub fn dump_with_scrollback(&self) -> Vec<Function> {
+        self.dump_buffers(true)
+    }
+
+    fn dump_buffers(&self, include_scrollback: bool) -> Vec<Function> {
         let (primary_ctx, alternate_ctx): (&SavedCtx, &SavedCtx) = match self.active_buffer_type {
             BufferType::Primary => (&self.saved_ctx, &self.alternate_saved_ctx),
             BufferType::Alternate => (&self.alternate_saved_ctx, &self.saved_ctx),
@@ -1368,7 +1376,7 @@ impl Terminal {
         // 1. dump primary screen buffer
 
         let mut funs = Vec::new();
-        dump_buffer(self.primary_buffer(), &mut funs);
+        dump_buffer(self.primary_buffer(), &mut funs, include_scrollback);
 
         // 2. setup tab stops
 
@@ -1434,7 +1442,7 @@ impl Terminal {
             funs.push(Function::Cup(1, 1));
 
             // dump alternate buffer
-            dump_buffer(self.alternate_buffer(), &mut funs);
+            dump_buffer(self.alternate_buffer(), &mut funs, false);
         }
 
         // 5. configure saved context for alternate screen
@@ -1639,11 +1647,14 @@ impl Terminal {
     }
 }
 
-fn dump_buffer(buffer: &Buffer, funs: &mut Vec<Function>) {
+fn dump_buffer(buffer: &Buffer, funs: &mut Vec<Function>, include_scrollback: bool) {
+    let history = buffer.lines().count() - buffer.rows;
+    let skip = if include_scrollback { 0 } else { history };
+    let line_count = buffer.lines().count() - skip;
     let mut cutoff = 0;
     let mut wrapped = false;
 
-    for (i, line) in buffer.view().enumerate() {
+    for (i, line) in buffer.lines().skip(skip).enumerate() {
         if wrapped || line.wrapped || !line.is_blank() {
             cutoff = i + 1;
         }
@@ -1651,10 +1662,15 @@ fn dump_buffer(buffer: &Buffer, funs: &mut Vec<Function>) {
         wrapped = line.wrapped;
     }
 
-    let last = buffer.rows - 1;
+    // Even a blank viewport must push all preceding history above the screen.
+    // Omitting its trailing blank rows would leave history on the visible grid.
+    if include_scrollback && history > 0 {
+        cutoff = line_count;
+    }
+    let last = line_count - 1;
     let mut pen = Pen::default();
 
-    for (i, line) in buffer.view().take(cutoff).enumerate() {
+    for (i, line) in buffer.lines().skip(skip).take(cutoff).enumerate() {
         for cells in line.chunks(|c1, c2| c1.pen() != c2.pen()) {
             if cells[0].pen() != &pen {
                 if let Some(sgr) = to_sgr_diff(&pen, cells[0].pen()) {

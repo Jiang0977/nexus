@@ -100,8 +100,12 @@ testing the deployed local service with its existing local e2e secret.
 
 ### Other limits
 
-- The checkpoint retains 200 history rows; the existing bounded scrollback file
-  remains the history-view source. This is not unlimited session recording.
+- The checkpoint serializes up to 200 retained primary-buffer history rows,
+  including colors and soft wraps, before restoring the visible screen and
+  modes. Attach and resize checkpoints therefore preserve native xterm scrolling,
+  even with a blank screen or an active alternate buffer. The existing bounded
+  scrollback file remains the longer history-view source. This is not unlimited
+  session recording.
 - Control prefixes are limited to 4 KiB; combining runs to 256 characters and
   cell combining storage to 1 KiB. Exceeding recovery limits preserves the raw
   live stream but explicitly refuses subsequent checkpoint recovery; create a

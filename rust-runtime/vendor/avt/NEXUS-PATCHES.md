@@ -22,6 +22,10 @@ Local differences:
   wrapper, which rejects an unsafe checkpoint instead of silently truncating it.
 - Expose `dump_screen()` so Nexus can append its bounded incremental parser
   prefix, including OSC payloads that upstream's parser does not retain.
+- Add `dump_with_scrollback()` for native checkpoints: serialize retained primary
+  history with its colors and soft wraps, including when the alternate buffer is
+  active. Emit trailing blank viewport rows so history ends above the screen.
+  The upstream screen-only `dump()` / `dump_screen()` behavior stays compatible.
 - Remove unavailable packaged benchmark targets and their unused dependency.
 
 The wrapper in `src/native_terminal_state.rs` owns input modes, safe resource
